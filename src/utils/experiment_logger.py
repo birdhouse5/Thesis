@@ -179,30 +179,16 @@ class ExperimentLogger:
             self.logger.info(f"  {name}: {info['n_days']} days "
                            f"({info['start_date']} to {info['end_date']})")
     
-    def log_episode_results(self, episodes: Dict[str, List[Dict]]):
-        """Log episode creation results."""
-        episode_summary = {}
-        
-        for split_name, episode_list in episodes.items():
-            if episode_list:
-                task_ids = [ep['task_id'] for ep in episode_list]
-                unique_tasks = list(set(task_ids))
-                
-                episode_summary[split_name] = {
-                    'n_episodes': len(episode_list),
-                    'unique_tasks': unique_tasks,
-                    'n_unique_tasks': len(unique_tasks),
-                    'episodes_per_task': len(episode_list) / len(unique_tasks) if unique_tasks else 0
-                }
-        
-        self.log_data['episode_results'] = episode_summary
-        
-        self.logger.info("\nEpisode Results:")
-        for split_name, info in episode_summary.items():
-            self.logger.info(f"  {split_name}:")
-            self.logger.info(f"    Episodes: {info['n_episodes']}")
-            self.logger.info(f"    Unique tasks: {info['n_unique_tasks']}")
-            self.logger.info(f"    Tasks: {info['unique_tasks']}")
+def log_episode_results(self, episodes_collected: int, 
+                       avg_return: float, 
+                       sampled_from: str):
+    """Log episode collection results"""
+    self.log_metric(f'episodes_collected_{sampled_from}', episodes_collected)
+    self.log_metric(f'avg_return_{sampled_from}', avg_return)
+    self.log_observation(
+        f"Collected {episodes_collected} episodes from {sampled_from} data, "
+        f"average return: {avg_return:.4f}"
+    )
     
     def log_metric(self, name: str, value: Any):
         """Log a single metric."""

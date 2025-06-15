@@ -1,0 +1,320 @@
+checkpoints:
+- details:
+    status: started
+  name: data_loading
+  timestamp: '2025-06-15T11:18:39.957199'
+- details:
+    clean_data_shape: !!python/tuple
+    - 1577
+    - 25
+    status: completed
+  name: data_loading
+  timestamp: '2025-06-15T11:18:40.849963'
+- details:
+    status: started
+  name: splitting
+  timestamp: '2025-06-15T11:18:40.889409'
+- details:
+    status: started
+  name: episode_creation
+  timestamp: '2025-06-15T11:18:40.895514'
+- details:
+    status: started
+  name: visualization
+  timestamp: '2025-06-15T11:18:40.932476'
+- details:
+    status: completed
+    success: true
+  name: experiment
+  timestamp: '2025-06-15T11:18:42.780408'
+data_summary:
+  assets: &id003
+  - SPY
+  - QQQ
+  - TLT
+  - GLD
+  - VNQ
+  date_range: 2017-09-25 to 2023-12-29
+  total_days_fetched: 1577
+  validation:
+    assets:
+      GLD:
+        coverage: !!python/object/apply:numpy.core.multiarray.scalar
+        - &id002 !!python/object/apply:numpy.dtype
+          args:
+          - f8
+          - false
+          - true
+          state: !!python/tuple
+          - 3
+          - <
+          - null
+          - null
+          - null
+          - -1
+          - -1
+          - 0
+        - !!binary |
+          AAAAAAAA8D8=
+        non_null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - &id001 !!python/object/apply:numpy.dtype
+          args:
+          - i8
+          - false
+          - true
+          state: !!python/tuple
+          - 3
+          - <
+          - null
+          - null
+          - null
+          - -1
+          - -1
+          - 0
+        - !!binary |
+          KQYAAAAAAAA=
+        null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id001
+        - !!binary |
+          AAAAAAAAAAA=
+      QQQ:
+        coverage: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id002
+        - !!binary |
+          AAAAAAAA8D8=
+        non_null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id001
+        - !!binary |
+          KQYAAAAAAAA=
+        null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id001
+        - !!binary |
+          AAAAAAAAAAA=
+      SPY:
+        coverage: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id002
+        - !!binary |
+          AAAAAAAA8D8=
+        non_null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id001
+        - !!binary |
+          KQYAAAAAAAA=
+        null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id001
+        - !!binary |
+          AAAAAAAAAAA=
+      TLT:
+        coverage: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id002
+        - !!binary |
+          AAAAAAAA8D8=
+        non_null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id001
+        - !!binary |
+          KQYAAAAAAAA=
+        null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id001
+        - !!binary |
+          AAAAAAAAAAA=
+      VNQ:
+        coverage: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id002
+        - !!binary |
+          AAAAAAAA8D8=
+        non_null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id001
+        - !!binary |
+          KQYAAAAAAAA=
+        null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id001
+        - !!binary |
+          AAAAAAAAAAA=
+    common_coverage: !!python/object/apply:numpy.core.multiarray.scalar
+    - *id002
+    - !!binary |
+      AAAAAAAA8D8=
+    common_trading_days: !!python/object/apply:numpy.core.multiarray.scalar
+    - *id001
+    - !!binary |
+      KQYAAAAAAAA=
+    issues: []
+    total_days: 1577
+decision_variables:
+  buffer_days: 20
+  episode_length: 252
+  min_history: 60
+  split_method: continuous
+  stride: 21
+  task_boundaries: year
+  test_ratio: 0.15
+  train_ratio: 0.7
+  val_ratio: 0.15
+description: Testing temporal split strategy with continuous method
+duration_seconds: 2.851813
+end_time: '2025-06-15T11:18:42.786974'
+episode_results:
+  train:
+    episodes_per_task: 7.6
+    n_episodes: 38
+    n_unique_tasks: 5
+    unique_tasks:
+    - 2017
+    - 2018
+    - 2019
+    - 2020
+    - 2021
+errors: []
+experiment_id: temporal_split_20250615_111839
+input_config:
+  assets: *id003
+  end_date: '2023-12-31'
+  handle_missing: forward_fill
+  min_common_dates: 0.95
+  start_date: '2018-01-01'
+metrics:
+  date_range: 2017-09-25 to 2023-12-29
+  max_correlation: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    sDlYapjN7T8=
+  max_daily_return: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    0ESFLcQxtz8=
+  mean_correlation: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    RxJnK42x0D8=
+  mean_daily_return: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    7a3hnnDmOT8=
+  mean_daily_volatility: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    soi/DmpYiT8=
+  min_daily_return: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    TNQbywWxxr8=
+  missing_percentage: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    AAAAAAAAAAA=
+  missing_values: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id001
+  - !!binary |
+    AAAAAAAAAAA=
+  n_days: 1577
+  n_features: 25
+  n_unique_tasks: 5
+  test_mean_return: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    JZutJnyeRD8=
+  test_percentage: 13.823715916296766
+  test_unique_tasks: 0
+  test_volatility: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    aod8nFnehD8=
+  total_episodes: 38
+  train_mean_return: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    MmVdeITRQT8=
+  train_percentage: 69.94292961318959
+  train_unique_tasks: 5
+  train_volatility: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    ggb1O0LSiD8=
+  val_mean_return: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    2i7jdTp2PL8=
+  val_percentage: 13.696892834495877
+  val_unique_tasks: 0
+  val_volatility: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    fTmjNL6Ijj8=
+next_steps:
+- Consider reducing episode_length or stride to create more test episodes
+- Some splits have no episodes - adjust split ratios or episode parameters
+- Try different task_boundaries (quarter, month) to test granularity
+- Experiment with different buffer_days to measure impact
+- Test with overlapping episodes (reduce stride)
+observations:
+- No task leakage detected between splits
+- Temporal split created 38 training episodes covering 5 unique tasks
+- Buffer of 20 days prevents information leakage between splits
+split_results:
+  splits:
+    test:
+      end_date: '2023-12-29 00:00:00'
+      n_assets: 25
+      n_days: 218
+      start_date: '2023-02-17 00:00:00'
+    train:
+      end_date: '2022-02-09 00:00:00'
+      n_assets: 25
+      n_days: 1103
+      start_date: '2017-09-25 00:00:00'
+    val:
+      end_date: '2023-01-19 00:00:00'
+      n_assets: 25
+      n_days: 216
+      start_date: '2022-03-11 00:00:00'
+  summary:
+    end_date:
+      0: !!python/object/apply:pandas._libs.tslibs.timestamps._unpickle_timestamp
+      - 1644364800000000000
+      - null
+      - null
+      - 10
+      1: !!python/object/apply:pandas._libs.tslibs.timestamps._unpickle_timestamp
+      - 1674086400000000000
+      - null
+      - null
+      - 10
+      2: !!python/object/apply:pandas._libs.tslibs.timestamps._unpickle_timestamp
+      - 1703808000000000000
+      - null
+      - null
+      - 10
+    num_episodes:
+      0: 38
+      1: 0
+      2: 0
+    split:
+      0: train
+      1: val
+      2: test
+    start_date:
+      0: !!python/object/apply:pandas._libs.tslibs.timestamps._unpickle_timestamp
+      - 1506297600000000000
+      - null
+      - null
+      - 10
+      1: !!python/object/apply:pandas._libs.tslibs.timestamps._unpickle_timestamp
+      - 1646956800000000000
+      - null
+      - null
+      - 10
+      2: !!python/object/apply:pandas._libs.tslibs.timestamps._unpickle_timestamp
+      - 1676592000000000000
+      - null
+      - null
+      - 10
+    total_days:
+      0: 1103
+      1: 216
+      2: 218
+    unique_tasks:
+      0: 5
+      1: 0
+      2: 0
+start_time: '2025-06-15T11:18:39.935161'
+timestamp: '20250615_111839'
+warnings: []

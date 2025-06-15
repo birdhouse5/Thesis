@@ -1,0 +1,204 @@
+checkpoints:
+- details:
+    status: started
+  name: data_loading
+  timestamp: '2025-06-15T11:00:38.380644'
+- details:
+    clean_data_shape: !!python/tuple
+    - 1577
+    - 25
+    status: completed
+  name: data_loading
+  timestamp: '2025-06-15T11:00:39.471613'
+- details:
+    status: started
+  name: splitting
+  timestamp: '2025-06-15T11:00:39.504344'
+- details:
+    error: TemporalSplitConfig.__init__() got an unexpected keyword argument 'min_common_dates'
+    status: failed
+  name: experiment
+  timestamp: '2025-06-15T11:00:39.514805'
+data_summary:
+  assets: &id003
+  - SPY
+  - QQQ
+  - TLT
+  - GLD
+  - VNQ
+  date_range: 2017-09-25 to 2023-12-29
+  total_days_fetched: 1577
+  validation:
+    assets:
+      GLD:
+        coverage: !!python/object/apply:numpy.core.multiarray.scalar
+        - &id002 !!python/object/apply:numpy.dtype
+          args:
+          - f8
+          - false
+          - true
+          state: !!python/tuple
+          - 3
+          - <
+          - null
+          - null
+          - null
+          - -1
+          - -1
+          - 0
+        - !!binary |
+          AAAAAAAA8D8=
+        non_null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - &id001 !!python/object/apply:numpy.dtype
+          args:
+          - i8
+          - false
+          - true
+          state: !!python/tuple
+          - 3
+          - <
+          - null
+          - null
+          - null
+          - -1
+          - -1
+          - 0
+        - !!binary |
+          KQYAAAAAAAA=
+        null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id001
+        - !!binary |
+          AAAAAAAAAAA=
+      QQQ:
+        coverage: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id002
+        - !!binary |
+          AAAAAAAA8D8=
+        non_null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id001
+        - !!binary |
+          KQYAAAAAAAA=
+        null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id001
+        - !!binary |
+          AAAAAAAAAAA=
+      SPY:
+        coverage: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id002
+        - !!binary |
+          AAAAAAAA8D8=
+        non_null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id001
+        - !!binary |
+          KQYAAAAAAAA=
+        null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id001
+        - !!binary |
+          AAAAAAAAAAA=
+      TLT:
+        coverage: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id002
+        - !!binary |
+          AAAAAAAA8D8=
+        non_null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id001
+        - !!binary |
+          KQYAAAAAAAA=
+        null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id001
+        - !!binary |
+          AAAAAAAAAAA=
+      VNQ:
+        coverage: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id002
+        - !!binary |
+          AAAAAAAA8D8=
+        non_null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id001
+        - !!binary |
+          KQYAAAAAAAA=
+        null_days: !!python/object/apply:numpy.core.multiarray.scalar
+        - *id001
+        - !!binary |
+          AAAAAAAAAAA=
+    common_coverage: !!python/object/apply:numpy.core.multiarray.scalar
+    - *id002
+    - !!binary |
+      AAAAAAAA8D8=
+    common_trading_days: !!python/object/apply:numpy.core.multiarray.scalar
+    - *id001
+    - !!binary |
+      KQYAAAAAAAA=
+    issues: []
+    total_days: 1577
+decision_variables:
+  buffer_days: 20
+  episode_length: 252
+  handle_missing: forward_fill
+  min_common_dates: 0.95
+  min_history: 60
+  split_method: continuous
+  stride: 21
+  task_boundaries: year
+  test_ratio: 0.15
+  train_ratio: 0.7
+  val_ratio: 0.15
+description: Testing temporal split strategy with continuous method
+duration_seconds: 1.172121
+end_time: '2025-06-15T11:00:39.518807'
+episode_results: {}
+errors:
+- exception: TemporalSplitConfig.__init__() got an unexpected keyword argument 'min_common_dates'
+  message: Experiment failed
+  timestamp: '2025-06-15T11:00:39.510814'
+  traceback: "Traceback (most recent call last):\n  File \"C:\\Users\\Jan\\Documents\\\
+    Uni\\Master\\Abschlussarbeit\\Thesis\\experiments\\test_temporal_split.py\", line\
+    \ 234, in main\n    split_config = TemporalSplitConfig(**config['temporal_split'])\n\
+    TypeError: TemporalSplitConfig.__init__() got an unexpected keyword argument 'min_common_dates'\n"
+experiment_id: temporal_split_20250615_110038
+input_config:
+  assets: *id003
+  end_date: '2023-12-31'
+  start_date: '2018-01-01'
+metrics:
+  date_range: 2017-09-25 to 2023-12-29
+  max_correlation: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    syCJ9pjN7T8=
+  max_daily_return: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    4DAVuMIxtz8=
+  mean_correlation: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    QyFMQ4yx0D8=
+  mean_daily_return: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    MpBzmXDmOT8=
+  mean_daily_volatility: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    azLX6GlYiT8=
+  min_daily_return: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    WJCfGwaxxr8=
+  missing_percentage: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id002
+  - !!binary |
+    AAAAAAAAAAA=
+  missing_values: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id001
+  - !!binary |
+    AAAAAAAAAAA=
+  n_days: 1577
+  n_features: 25
+next_steps: []
+observations: []
+split_results: {}
+start_time: '2025-06-15T11:00:38.346686'
+timestamp: '20250615_110038'
+warnings: []

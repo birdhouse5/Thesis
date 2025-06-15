@@ -1,0 +1,53 @@
+2025-06-15 11:05:01 - INFO - ============================================================
+2025-06-15 11:05:01 - INFO - EXPERIMENT: temporal_split
+2025-06-15 11:05:01 - INFO - ID: temporal_split_20250615_110501
+2025-06-15 11:05:01 - INFO - Started: 2025-06-15T11:05:01.079385
+2025-06-15 11:05:01 - INFO - ============================================================
+2025-06-15 11:05:01 - INFO - Description: Testing temporal split strategy with continuous method
+2025-06-15 11:05:01 - INFO - Input Configuration:
+2025-06-15 11:05:01 - INFO -   assets: ['SPY', 'QQQ', 'TLT', 'GLD', 'VNQ']
+2025-06-15 11:05:01 - INFO -   start_date: 2018-01-01
+2025-06-15 11:05:01 - INFO -   end_date: 2023-12-31
+2025-06-15 11:05:01 - INFO -   min_common_dates: 0.95
+2025-06-15 11:05:01 - INFO -   handle_missing: forward_fill
+2025-06-15 11:05:01 - INFO - Decision Variables:
+2025-06-15 11:05:01 - INFO -   train_ratio: 0.7
+2025-06-15 11:05:01 - INFO -   val_ratio: 0.15
+2025-06-15 11:05:01 - INFO -   test_ratio: 0.15
+2025-06-15 11:05:01 - INFO -   split_method: continuous
+2025-06-15 11:05:01 - INFO -   buffer_days: 20
+2025-06-15 11:05:01 - INFO -   episode_length: 252
+2025-06-15 11:05:01 - INFO -   min_history: 60
+2025-06-15 11:05:01 - INFO -   stride: 21
+2025-06-15 11:05:01 - INFO -   task_boundaries: year
+2025-06-15 11:05:01 - INFO - 
+[CHECKPOINT] data_loading
+2025-06-15 11:05:01 - INFO -   status: started
+2025-06-15 11:05:01 - INFO - 
+Data Summary:
+2025-06-15 11:05:01 - INFO -   assets: ['SPY', 'QQQ', 'TLT', 'GLD', 'VNQ']
+2025-06-15 11:05:01 - INFO -   total_days_fetched: 1577
+2025-06-15 11:05:01 - INFO -   date_range: 2017-09-25 to 2023-12-29
+2025-06-15 11:05:01 - INFO -   validation:
+2025-06-15 11:05:01 - INFO -     total_days: 1577
+2025-06-15 11:05:01 - INFO -     assets: {'SPY': {'non_null_days': 1577, 'null_days': 0, 'coverage': 1.0}, 'QQQ': {'non_null_days': 1577, 'null_days': 0, 'coverage': 1.0}, 'TLT': {'non_null_days': 1577, 'null_days': 0, 'coverage': 1.0}, 'GLD': {'non_null_days': 1577, 'null_days': 0, 'coverage': 1.0}, 'VNQ': {'non_null_days': 1577, 'null_days': 0, 'coverage': 1.0}}
+2025-06-15 11:05:01 - INFO -     issues: []
+2025-06-15 11:05:01 - INFO -     common_trading_days: 1577
+2025-06-15 11:05:01 - INFO -     common_coverage: 1.0
+2025-06-15 11:05:01 - ERROR - ERROR: Experiment failed
+2025-06-15 11:05:01 - ERROR - Exception: 'handle_missing'
+2025-06-15 11:05:01 - DEBUG - Traceback (most recent call last):
+  File "C:\Users\Jan\Documents\Uni\Master\Abschlussarbeit\Thesis\experiments\test_temporal_split.py", line 221, in main
+    clean_data = loader.clean_data(config['temporal_split']['handle_missing'])
+KeyError: 'handle_missing'
+
+2025-06-15 11:05:01 - INFO - 
+[CHECKPOINT] experiment
+2025-06-15 11:05:01 - INFO -   status: failed
+2025-06-15 11:05:01 - INFO -   error: 'handle_missing'
+2025-06-15 11:05:01 - INFO - Summary report saved to results\logs\temporal_split_20250615_110501\SUMMARY.md
+2025-06-15 11:05:01 - INFO - 
+============================================================
+2025-06-15 11:05:01 - INFO - Experiment completed in 0.9 seconds
+2025-06-15 11:05:01 - INFO - Logs saved to: results\logs\temporal_split_20250615_110501
+2025-06-15 11:05:01 - INFO - ============================================================

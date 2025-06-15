@@ -1,0 +1,13 @@
+2025-06-15 18:02:07 - INFO - ============================================================
+2025-06-15 18:02:07 - INFO - EXPERIMENT: varibad_trading
+2025-06-15 18:02:07 - INFO - ID: varibad_trading_20250615_180207
+2025-06-15 18:02:07 - INFO - Started: 2025-06-15T18:02:07.325024
+2025-06-15 18:02:07 - INFO - ============================================================
+2025-06-15 18:02:07 - INFO - Description: Training VariBAD for adaptive portfolio optimization
+2025-06-15 18:02:07 - INFO -   data: {'assets': ['SPY', 'QQQ', 'TLT', 'GLD', 'VNQ'], 'start_date': '2010-01-01', 'end_date': '2023-12-31', 'train_end_date': '2020-12-31'}
+2025-06-15 18:02:07 - INFO -   episodes: {'length': 60, 'batch_size': 32}
+2025-06-15 18:02:07 - INFO -   model: {'latent_dim': 8, 'encoder': {'hidden_size': 64, 'n_layers': 1}, 'policy': {'hidden_size': 128, 'n_layers': 2}}
+2025-06-15 18:02:07 - INFO -   training: {'num_iterations': 10000, 'episodes_per_iteration': 32, 'learning_rate': 0.0003, 'save_every': 100}
+2025-06-15 18:02:11 - INFO - 
+[CHECKPOINT] setup
+2025-06-15 18:02:11 - INFO -   status: complete

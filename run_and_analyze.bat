@@ -1,6 +1,6 @@
 @echo off
 echo ========================================
-echo Running Temporal Split Experiment
+echo VariBAD Trading Experiment
 echo ========================================
 echo.
 
@@ -9,20 +9,33 @@ if exist venv\Scripts\activate.bat (
     call venv\Scripts\activate
 )
 
-REM Run the experiment
-echo Running experiment...
-python experiments/test_temporal_split.py
+REM Test setup first
+echo Testing setup...
+python test_setup.py
+
+if %ERRORLEVEL% NEQ 0 (
+    echo.
+    echo Setup test failed! Fix errors above.
+    pause
+    exit /b 1
+)
 
 echo.
 echo ========================================
-echo Analyzing Results
+echo Starting Training
 echo ========================================
 echo.
 
-REM Analyze the results
+python train_varibad.py
+
+echo.
+echo ========================================
+echo Training Complete
+echo ========================================
+echo.
+
+REM Analyze results
 python -c "from src.utils.analyze_logs import analyze_latest_experiment; analyze_latest_experiment()"
 
-echo.
-echo Check the results folder for detailed logs!
 echo.
 pause

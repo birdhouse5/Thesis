@@ -226,7 +226,15 @@ def analyze_latest_experiment():
         print("No experiments found!")
         return
     
-    latest = analyzer.experiments[-1]
+    # Filter for variBAD experiments
+    varibad_experiments = [exp for exp in analyzer.experiments 
+                          if 'varibad' in exp['experiment_id'].lower()]
+    
+    if varibad_experiments:
+        latest = varibad_experiments[-1]
+    else:
+        latest = analyzer.experiments[-1]
+    
     print(f"\nLatest Experiment: {latest['experiment_id']}")
     print(f"Description: {latest.get('description', 'N/A')}")
     print(f"Success: {len(latest.get('errors', [])) == 0}")
