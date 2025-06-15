@@ -1,0 +1,34 @@
+# Temporal Split Configuration
+
+data:
+  # Assets to use for testing
+  assets: ['SPY', 'QQQ', 'TLT', 'GLD', 'VNQ']  # Stocks, Bonds, Gold, Real Estate
+  start_date: '2018-01-01'
+  end_date: '2023-12-31'
+  
+temporal_split:
+  # Core split ratios
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+  
+  # Strategy
+  split_method: 'continuous'
+  buffer_days: 20
+  
+  # Episode construction
+  episode_length: 252  # 1 trading year
+  min_history: 60      # Need 60 days for indicators
+  stride: 21           # New episode every month
+  
+  # Data handling
+  min_common_dates: 0.95
+  handle_missing: 'forward_fill'
+  
+  # Task definition
+  task_boundaries: 'year'  # Each year is a different "task"
+
+# For logging
+experiment:
+  name: 'temporal_split_v1'
+  description: 'Simple continuous temporal split'
