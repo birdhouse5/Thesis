@@ -16,7 +16,7 @@ set filename=logs\!year!-!month!-!day!.md
 
 :: Check if today's log exists
 if not exist !filename! (
-    echo No log file found for today. Run start-day.bat first.
+    echo No log file found for today. Run start-session.bat first.
     pause
     exit /b
 )
@@ -34,19 +34,20 @@ set hour=!hour: =!
 :: Format timestamp
 set timestamp=!hour!:!min!:!sec!
 
-:: Add session header to log
+:: Add session ended marker
 echo. >> !filename!
-echo --- >> !filename!
-echo. >> !filename!
-echo ## Session Ended: !timestamp! >> !filename!
-echo. >> !filename!
-echo ### What I worked on: >> !filename!
+echo ### Session Ended: !timestamp! >> !filename!
 echo - >> !filename!
 
 :: Open file for editing
-echo Opening log to add session notes...
+echo.
+echo Update your task checkboxes and add session notes:
+echo   [ ] = pending
+echo   [x] = done
+echo   [~] = in progress
+echo.
 notepad !filename!
 
 echo.
-echo Session logged at !timestamp!
+echo Session ended at !timestamp!
 pause
