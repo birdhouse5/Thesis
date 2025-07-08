@@ -1,4 +1,4 @@
-# sp500_loader.py
+# loader.py
 """
 Minimal S&P 500 historical data loader.
 Single file module that can be easily integrated into larger projects.
@@ -12,7 +12,7 @@ from pathlib import Path
 import logging
 
 # Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
@@ -45,6 +45,8 @@ def load_sp500_history(
     
     # Create date range
     dates = pd.date_range(start=start_date, end=end_date, freq='B')
+    global_start = pd.to_datetime(start_date)
+    global_end = pd.to_datetime(end_date)
     
     # Get unique tickers
     tickers = members['ticker'].unique()
@@ -87,28 +89,55 @@ def load_sp500_history(
                 )
                 
                 if not data.empty:
-                    # Filter to only include dates within our range
-                    data = data.loc[data.index >= period_start]
-                    data = data.loc[data.index <= period_end]
+                    logger.debug(f"Downloaded {len(data)} rows for {ticker}")
+                    logger.debug(f"Columns available: {data.columns.tolist()}")
+                    logger.debug(f"Date range: {data.index[0]} to {data.index[-1]}")
+                    
+                    # Filter to only include dates within our global range
+                    data = data[(data.index >= global_start) & 
+                               (data.index <= global_end)]
+                    
+                    if data.empty:
+                        logger.warning(f"No data for {ticker} after filtering to global date range")
+                        continue
                     
                     # Only update for dates that exist in both indices
                     common_dates = ticker_data.index.intersection(data.index)
                     
+                    logger.debug(f"Common dates found: {len(common_dates)}")
+                    
                     if len(common_dates) > 0:
-                        # Check which columns are available
-                        if 'Adj Close' in data.columns:
-                            ticker_data.loc[common_dates, 'adj_close'] = data.loc[common_dates, 'Adj Close']
-                        elif 'Close' in data.columns:
-                            # If auto_adjust=True by default, use Close (which is already adjusted)
-                            ticker_data.loc[common_dates, 'adj_close'] = data.loc[common_dates, 'Close']
+                        # Handle multi-level columns from yfinance
+                        if isinstance(data.columns, pd.MultiIndex):
+                            # Multi-level columns: ('Adj Close', 'AAPL')
+                            adj_close_col = ('Adj Close', ticker)
+                            close_col = ('Close', ticker)
+                            volume_col = ('Volume', ticker)
+                        else:
+                            # Single-level columns
+                            adj_close_col = 'Adj Close'
+                            close_col = 'Close'
+                            volume_col = 'Volume'
                         
-                        if 'Volume' in data.columns:
-                            ticker_data.loc[common_dates, 'volume'] = data.loc[common_dates, 'Volume']
+                        # Check which columns are available and update
+                        if adj_close_col in data.columns:
+                            ticker_data.loc[common_dates, 'adj_close'] = data.loc[common_dates, adj_close_col]
+                            logger.debug(f"Updated {ticker} with Adj Close data")
+                        elif close_col in data.columns:
+                            ticker_data.loc[common_dates, 'adj_close'] = data.loc[common_dates, close_col]
+                            logger.debug(f"Updated {ticker} with Close data")
+                        else:
+                            logger.warning(f"No Close or Adj Close column found for {ticker}")
+                        
+                        if volume_col in data.columns:
+                            ticker_data.loc[common_dates, 'volume'] = data.loc[common_dates, volume_col]
                         
                         # Mark as active during this period
                         active_mask = (ticker_data.index >= period_start) & (ticker_data.index <= period_end)
                         ticker_data.loc[active_mask, 'is_active'] = 1
                         got_data = True
+                else:
+                    logger.warning(f"No data downloaded for {ticker}")
                     
             except Exception as e:
                 logger.warning(f"Error downloading {ticker}: {e}")

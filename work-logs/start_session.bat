@@ -1,36 +1,46 @@
 @echo off
 setlocal enabledelayedexpansion
 
-:: Get current date in YYYY-MM-DD format
+:: Get current date and time
 for /f "tokens=1-3 delims=/ " %%a in ('date /t') do (
     set year=%%c
     set month=%%a
     set day=%%b
 )
 
-:: Pad single digits with zero
 if !month! lss 10 set month=0!month:~-1!
 if !day! lss 10 set day=0!day:~-1!
 
 set filename=logs\!year!-!month!-!day!.md
+set tasksfile=tasks.md
+set handofffile=logs\handoff.md
 
-:: Get current time
 for /f "tokens=1-4 delims=:. " %%a in ('echo %time%') do (
     set hour=%%a
     set min=%%b
     set sec=%%c
 )
 
-:: Remove leading space from hour if present
 set hour=!hour: =!
 set timestamp=!hour!:!min!:!sec!
 
-:: Create logs directory if it doesn't exist
 if not exist logs mkdir logs
 
-:: Check if file already exists
+:: Initialize tasks.md if it doesn't exist
+if not exist !tasksfile! (
+    echo # Tasks > !tasksfile!
+    echo. >> !tasksfile!
+    echo ## Active >> !tasksfile!
+    echo. >> !tasksfile!
+    echo ## Completed >> !tasksfile!
+    echo. >> !tasksfile!
+    echo ## On Hold >> !tasksfile!
+    echo. >> !tasksfile!
+)
+
+:: Check if daily log exists
 if exist !filename! (
-    :: Add new session marker
+    :: Add new session to existing log
     echo. >> !filename!
     echo --- >> !filename!
     echo. >> !filename!
@@ -38,42 +48,53 @@ if exist !filename! (
     echo. >> !filename!
     
     echo Session started at !timestamp!
+    
+    :: Show handoff note if exists
+    if exist !handofffile! (
+        echo.
+        echo ===== HANDOFF NOTE FROM LAST SESSION =====
+        type !handofffile!
+        echo ==========================================
+        echo.
+        pause
+    )
+    
+    :: Open tasks and log
+    start notepad !tasksfile!
+    timeout /t 1 /nobreak >nul
     notepad !filename!
     exit /b
 )
 
-:: Create new log file for the day
+:: Create new daily log
 echo # Work Log - !date! > !filename!
 echo. >> !filename!
 echo ## Day Started: !timestamp! >> !filename!
 echo. >> !filename!
-echo ## Tasks >> !filename!
-echo - [ ] >> !filename!
-echo - [ ] >> !filename!
-echo - [ ] >> !filename!
-echo. >> !filename!
-
-:: Check for previous logs and open the most recent one
-set lastlog=
-for /f "tokens=*" %%f in ('dir /b /o-d logs\*.md 2^>nul') do (
-    set testlog=%%f
-    if not "!testlog!"=="!filename:logs\=!" (
-        set lastlog=%%f
-        goto :found_previous
-    )
-)
-:found_previous
 
 echo New day! Log created at !timestamp!
 
-if defined lastlog (
+:: Show handoff note if exists
+if exist !handofffile! (
     echo.
-    echo Opening previous log (!lastlog:~0,-3!) for reference...
-    start notepad "logs\!lastlog!"
-    timeout /t 1 /nobreak >nul
+    echo ===== HANDOFF NOTE FROM LAST SESSION =====
+    type !handofffile!
+    echo ==========================================
+    echo.
+    
+    :: Add handoff note to new log
+    echo ## Previous Session Summary >> !filename!
+    type !handofffile! >> !filename!
+    echo. >> !filename!
+    echo --- >> !filename!
+    echo. >> !filename!
+    
+    pause
 )
 
-:: Open today's new log
+:: Open tasks and log
+start notepad !tasksfile!
+timeout /t 1 /nobreak >nul
 notepad !filename!
 
 pause
