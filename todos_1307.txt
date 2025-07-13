@@ -1,0 +1,6 @@
+TODOs für nach dem Schwimmen:
+
+
+-> technical indicators und market metrics berechnen
+-> normalisieren
+-> weiterdenken
