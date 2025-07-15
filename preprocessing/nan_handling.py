@@ -139,8 +139,8 @@ def save_cleaned_data(df_cleaned: pd.DataFrame, output_path: str):
     else:
         print(f"⚠️  Warning: {final_nans} NaNs still present")
 
-def main_cleaning(input_path: str = 'data/sp500_rl_ready.parquet', 
-                  output_path: str = 'data/sp500_rl_ready_cleaned.parquet'):
+def main_cleaning(input_path: str = '../data/sp500_rl_ready.parquet', 
+                  output_path: str = '../data/sp500_rl_ready_cleaned.parquet'):
     """
     Main cleaning function - load, clean, verify, save.
     """

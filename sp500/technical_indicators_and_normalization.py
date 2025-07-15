@@ -329,7 +329,7 @@ def create_rl_dataset():
     
     # 1. Load data
     print("\n1. Loading cleaned S&P 500 dataset...")
-    df = pd.read_parquet("data/cleaned_sp500_dataset.parquet")
+    df = pd.read_parquet("../data/cleaned_sp500_dataset.parquet")
     print(f"   Loaded {df.shape[0]:,} rows, {df.shape[1]} columns")
     print(f"   Date range: {df['date'].min()} to {df['date'].max()}")
     print(f"   Tickers: {df['ticker'].nunique()} ({', '.join(sorted(df['ticker'].unique())[:10])}...)")
@@ -367,15 +367,15 @@ def create_rl_dataset():
     
     # 6. Save datasets
     print("\n6. Saving datasets...")
-    df_with_indicators.to_parquet('data/sp500_with_technical_indicators_robust.parquet')
-    df_normalized.to_parquet('data/sp500_normalized_for_rl.parquet')
-    df_rl_ready.to_parquet('data/sp500_rl_ready.parquet')
+    df_with_indicators.to_parquet('../data/sp500_with_technical_indicators_robust.parquet')
+    df_normalized.to_parquet('../data/sp500_normalized_for_rl.parquet')
+    df_rl_ready.to_parquet('../data/sp500_rl_ready.parquet')
     
     # Save feature list and scalers
     import pickle
-    with open('data/rl_feature_list.pkl', 'wb') as f:
+    with open('../data/rl_feature_list.pkl', 'wb') as f:
         pickle.dump(feature_list, f)
-    with open('data/rl_scalers.pkl', 'wb') as f:
+    with open('../data/rl_scalers.pkl', 'wb') as f:
         pickle.dump(scalers, f)
     
     print("   ✅ sp500_with_technical_indicators_robust.parquet")

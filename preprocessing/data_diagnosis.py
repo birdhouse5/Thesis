@@ -8,7 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-def load_and_basic_info(file_path: str = 'data/sp500_rl_ready.parquet'):
+def load_and_basic_info(file_path: str = '../data/sp500_rl_ready.parquet'):
     """Load data and show basic information."""
     print("=== LOADING DATA ===")
     df = pd.read_parquet(file_path)
@@ -208,7 +208,7 @@ def diagnose_specific_examples(df: pd.DataFrame):
         print(f"\nFirst 5 non-NaN values: {non_nan_values.tolist()}")
         print(f"Range: {non_nan_values.min():.6f} to {non_nan_values.max():.6f}")
 
-def main_diagnosis(file_path: str = 'data/sp500_rl_ready.parquet'):
+def main_diagnosis(file_path: str = '../data/sp500_rl_ready.parquet'):
     """Run complete NaN diagnosis."""
     print("SP500 RL-READY DATA - NaN DIAGNOSIS")
     print("=" * 50)

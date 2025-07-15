@@ -1,5 +1,5 @@
 import pandas as pd
-df = pd.read_parquet("data/sp500_ohlcv_dataset.parquet")
+df = pd.read_parquet("../data/sp500_ohlcv_dataset.parquet")
 df = df.reset_index()
 
 # Select only the price columns you're interested in
@@ -18,4 +18,4 @@ print(f"First complete date: {first_complete_date}")
 
 # Now drop all rows before that date
 df_filtered = df[df['date'] >= first_complete_date]
-df_filtered.to_parquet('data/cleaned_sp500_dataset.parquet')
+df_filtered.to_parquet('../data/cleaned_sp500_dataset.parquet')
