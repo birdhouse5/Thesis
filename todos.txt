@@ -1,0 +1,4 @@
+-> technical indicators and market metrics calcualtion [x] done
+-> normalise [x] done
+-> basic MDP setup + tests [x] done
+-> develop a strategy for H+
