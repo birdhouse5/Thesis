@@ -2,4 +2,4 @@ venv/
 __pycache__/
 *.pyc
 .env
-sp500_loader/data
+sp500/data
