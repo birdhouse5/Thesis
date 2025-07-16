@@ -1,4 +1,103 @@
--> technical indicators and market metrics calcualtion [x] done
--> normalise [x] done
--> basic MDP setup + tests [x] done
--> develop a strategy for H+
+# VariBAD Portfolio Optimization - Progress Summary
+
+## **Project Overview**
+Implementing regime-agnostic reinforcement learning for portfolio optimization using variBAD (Variational Bayes for Adaptive Deep RL). The goal is to let the agent implicitly learn market structure without explicit regime classification, allowing for DSR-maximizing behavior across different market conditions.
+
+## **✅ Completed Components**
+
+### **1. Data Infrastructure** (COMPLETE)
+- **Dataset**: 30 S&P 500 companies, 1990-2025, no survivorship bias
+- **Features**: 22 technical indicators with robust implementations (RSI, MACD, Bollinger Bands, ATR, etc.)
+- **Normalization**: Differentiated strategies (MinMax for prices, robust standardization for oscillators)
+- **Missing values**: Cleaned 744 NaNs (0.01% of data) using feature-appropriate imputation
+- **Final output**: `data/sp500_rl_ready_cleaned.parquet`
+
+### **2. Base MDP Framework** (COMPLETE)
+- **File**: `sp500/test_MPD_setup.py` (to be refactored to `sp500/base_mdp.py`)
+- **Implementation**: MetaTrader-style portfolio MDP with DSR rewards
+- **State space**: s_t = {x_t^s; x_t^m; x_t^a} (asset features, market features, account features)
+- **Action space**: a_t = [w_t^+; w_t^-] (long/short weights with realistic constraints)
+- **Reward**: DSR_t = (β_{t-1}Δα_t - 0.5α_{t-1}Δβ_t)/(β_{t-1} - α_{t-1}²)^{3/2}
+- **Testing**: Comprehensive constraint validation and episode execution tests completed
+
+### **3. Trajectory Buffer** (COMPLETE ✨)
+- **File**: `sp500/trajectory_buffer.py` 
+- **Purpose**: Store and manage trajectory sequences τ:t = (s₀, a₀, r₁, s₁, ..., sₜ) for variBAD
+- **Features**: Episode-aware storage, on-demand sequence construction, batch sampling
+- **Testing**: All functionality verified and working
+
+## **🎯 Next Step: Neural Network Models**
+
+### **What to Implement Next**
+Create `sp500/models.py` with three neural network components following variBAD paper specifications:
+
+#### **1. TrajectoryEncoder (Priority 1)**
+```python
+class TrajectoryEncoder(nn.Module):
+    """RNN encoder: q_φ(m|τ:t) - trajectory → belief parameters"""
+```
+- **Input**: Trajectory sequences from buffer (concatenated [s_t, a_t, r_t] per timestep)
+- **Architecture**: LSTM/GRU processing sequences 
+- **Output**: Parameters (μ, σ) of posterior distribution q(m|τ:t), where m ∈ ℝ⁵
+- **Purpose**: Learn market regime representations
+
+#### **2. TrajectoryDecoder (Priority 2)**  
+```python
+class TrajectoryDecoder(nn.Module):
+    """Decoder: p_θ(τ_{t+1:H+}|m) - belief → future predictions"""
+```
+- **Input**: Task embedding m + current state/action
+- **Output**: Predictions for future states and rewards
+- **Purpose**: VAE reconstruction loss (training only)
+
+#### **3. VariBADPolicy (Priority 3)**
+```python
+class VariBADPolicy(nn.Module):
+    """Policy: π_ψ(a_t|s_t, q(m|τ:t)) - state + belief → portfolio weights"""  
+```
+- **Input**: Current state s_t + belief parameters from encoder
+- **Output**: Portfolio allocation weights [w_+; w_-] 
+- **Purpose**: Regime-aware portfolio decisions
+
+### **Key Implementation Specifications**
+- **Latent dimension**: m ∈ ℝ⁵ (from variBAD paper financial experiments)
+- **Encoder architecture**: LSTM with trajectory input concatenation
+- **Policy integration**: Extend existing state space with belief parameters
+- **Training**: Joint VAE loss (encoder+decoder) + RL loss (policy)
+
+## **📁 Current File Structure** (Simplified)
+```
+sp500/
+├── data_pipeline.py              # [RENAME from data_loader.py]
+├── features.py                   # [RENAME from technical_indicators...]  
+├── base_mdp.py                   # [REFACTOR from test_MPD_setup.py]
+├── trajectory_buffer.py          # ✅ COMPLETE
+├── models.py                     # 🎯 NEXT TO IMPLEMENT
+├── varibad_mdp.py               # [Future: VariBAD wrapper]
+├── trainer.py                   # [Future: Training loop]
+└── config.py                    # [Future: Hyperparameters]
+```
+
+## **🔬 Key Theoretical Decisions Made**
+1. **Single Horizon H+**: No artificial H vs H+ distinction - continuous regime identification + optimization
+2. **p(M) via Sliding Windows**: Sample different start dates from historical data as different "tasks"
+3. **Regime-Agnostic Learning**: Let agent discover latent market structure organically through VAE posterior
+
+## **💡 Instructions for Next Implementation**
+1. **Start with TrajectoryEncoder**: This is the foundation that everything else builds on
+2. **Use existing trajectory_buffer.py**: Integration points are clearly defined
+3. **Follow variBAD paper Figure 2**: Architecture specifications are explicit
+4. **Test incrementally**: Each model component should have standalone tests
+5. **Keep it simple**: Single file for all models, minimal complexity
+
+## **🚀 Status**
+**The trajectory buffer is ready and tested - the neural networks are the next critical component for bringing variBAD to life!**
+
+---
+
+## **Key Files for Reference**
+- `sp500/trajectory_buffer.py` - Completed trajectory management
+- `sp500/test_MPD_setup.py` - Completed base MDP implementation
+- `data/sp500_rl_ready_cleaned.parquet` - Clean dataset ready for training
+- VariBAD paper (provided) - Architecture specifications
+- MetaTrader paper (provided) - Portfolio MDP formulation
