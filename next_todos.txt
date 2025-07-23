@@ -1,0 +1,1 @@
+- set everything up so we can just clone and run the entire training setup including data download and cleaning.
