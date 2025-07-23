@@ -311,8 +311,10 @@ EOF
     # Create quick training script based on mode
     cat > start_training.sh << EOF
 #!/bin/bash
-# Quick training script for VariBAD
-echo "🏋️ Starting VariBAD Training..."
+# Fixed VariBAD Training Script with proper tmux handling
+set -e  # Exit on any error
+
+echo "🏋️ Starting VariBAD Training with tmux..."
 
 # Activate environment
 source venv/bin/activate
@@ -323,45 +325,155 @@ if [ ! -f "data/sp500_rl_ready_cleaned.parquet" ]; then
     python varibad/main.py --mode data_only
 fi
 
-# Training parameters based on setup mode
-MODE="gpu"  # Change to "cpu" if no GPU
-if [ "$MODE" = "gpu" ]; then
-    # GPU-optimized parameters
-    PARAMS="--mode train --num_iterations 500 --episode_length 60 --episodes_per_iteration 10 --vae_updates 15 --latent_dim 8 --device cuda --short_selling"
-    echo "🔥 Starting GPU training (estimated 30-45 minutes)..."
-else
-    # CPU-optimized parameters  
-    PARAMS="--mode train --num_iterations 200 --episode_length 30 --episodes_per_iteration 5 --vae_updates 8 --latent_dim 5 --device cpu"
-    echo "💻 Starting CPU training (estimated 2-3 hours)..."
-fi
-
-# Define session name
+# Set session name (this was the bug - shell variable scope)
 SESSION_NAME="varibad_training"
 
-# Kill any existing session with the same name
-tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
-
-# Start training in tmux session
-echo "🚀 Starting tmux session: $SESSION_NAME"
-tmux new-session -d -s "$SESSION_NAME"
-tmux send-keys -t "$SESSION_NAME" "cd $(pwd)" Enter  
-tmux send-keys -t "$SESSION_NAME" "source venv/bin/activate" Enter
-tmux send-keys -t "$SESSION_NAME" "python varibad/main.py $PARAMS" Enter
-
-echo "✅ Training started in tmux session '$SESSION_NAME'"
-echo ""
-echo "📊 Monitoring options:"
-echo "  tmux attach-session -t $SESSION_NAME     # Attach to training"
-echo "  python monitor_training.py --mode realtime # Real-time plots"
-echo "  tail -f logs/varibad_pipeline_*.log        # View logs"
-if [ "$MODE" = "gpu" ]; then
-echo "  watch -n 1 nvidia-smi                      # Monitor GPU"
+# Check if we have GPU
+if nvidia-smi &> /dev/null; then
+    echo "🔥 GPU detected - using GPU training parameters"
+    DEVICE="cuda"
+    PARAMS="--mode train --num_iterations 500 --episode_length 60 --episodes_per_iteration 10 --vae_updates 15 --latent_dim 8 --device cuda --short_selling"
+    ESTIMATED_TIME="30-45 minutes"
+else
+    echo "💻 No GPU detected - using CPU training parameters"
+    DEVICE="cpu"
+    PARAMS="--mode train --num_iterations 200 --episode_length 30 --episodes_per_iteration 5 --vae_updates 8 --latent_dim 5 --device cpu"
+    ESTIMATED_TIME="2-3 hours"
 fi
+
+echo "Parameters: $PARAMS"
+echo "Estimated time: $ESTIMATED_TIME"
+echo "Session name: $SESSION_NAME"
+
+# Kill any existing session with same name
+if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+    echo "⚠️  Killing existing session: $SESSION_NAME"
+    tmux kill-session -t "$SESSION_NAME"
+fi
+
+# Create new tmux session
+echo "🚀 Creating tmux session: $SESSION_NAME"
+tmux new-session -d -s "$SESSION_NAME"
+
+# Send commands to the session
+echo "📡 Setting up session environment..."
+tmux send-keys -t "$SESSION_NAME" "cd $(pwd)" C-m
+tmux send-keys -t "$SESSION_NAME" "source venv/bin/activate" C-m
+
+# Small delay to ensure environment is activated
+sleep 1
+
+# Start the training
+echo "🎯 Starting training in session..."
+tmux send-keys -t "$SESSION_NAME" "python varibad/main.py $PARAMS" C-m
+
+# Verify session is running
+if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+    echo "✅ Training started successfully in tmux session: $SESSION_NAME"
+else
+    echo "❌ Failed to create tmux session"
+    exit 1
+fi
+
 echo ""
-echo "🛑 To stop: tmux kill-session -t $SESSION_NAME"
+echo "📊 Monitoring & Control:"
+echo "  tmux attach-session -t $SESSION_NAME     # Attach to training (see live output)"
+echo "  tmux detach                              # Detach without stopping (Ctrl+B, then D)"
+echo "  tmux list-sessions                       # List all sessions"  
+echo "  tail -f logs/varibad_pipeline_*.log      # View logs in separate terminal"
+echo ""
+echo "🖥️  System Monitoring:"
+if [ "$DEVICE" = "cuda" ]; then
+echo "  watch -n 1 nvidia-smi                   # Monitor GPU usage"
+fi
+echo "  htop                                     # Monitor CPU/RAM usage"
+echo ""
+echo "🛑 Stop Training:"
+echo "  tmux kill-session -t $SESSION_NAME      # Stop training"
+echo "  tmux attach -t $SESSION_NAME            # Attach and press Ctrl+C"
+echo ""
+echo "🔄 Quick Commands:"
+echo "  tmux attach -t $SESSION_NAME            # Attach to see training"
+echo "  # Press Ctrl+B, then D to detach"
+echo "  tmux kill-session -t $SESSION_NAME      # Stop training"
 EOF
     chmod +x start_training.sh
+
+    # Create tmux monitoring script
+    cat > monitor_tmux.sh << 'EOF'
+#!/bin/bash
+# VariBAD Training Monitor for tmux
+
+SESSION_NAME="varibad_training"
+
+echo "🔍 VariBAD Training Monitor"
+echo "=========================="
+
+# Check if session exists
+if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+    echo "❌ No training session found ($SESSION_NAME)"
+    echo "Start training with: ./start_training.sh"
+    exit 1
+fi
+
+echo "✅ Training session active: $SESSION_NAME"
+echo ""
+
+while true; do
+    echo "Choose an option:"
+    echo "1) Attach to training session (see live output)"
+    echo "2) View recent logs"
+    echo "3) Check GPU usage" 
+    echo "4) List tmux sessions"
+    echo "5) Stop training"
+    echo "6) Exit monitor"
+    echo ""
+    read -p "Enter choice (1-6): " choice
     
+    case $choice in
+        1)
+            echo "🔗 Attaching to session (Ctrl+B then D to detach)"
+            sleep 2
+            tmux attach-session -t "$SESSION_NAME"
+            ;;
+        2)
+            echo "📋 Recent logs:"
+            tail -20 logs/varibad_pipeline_*.log 2>/dev/null || echo "No logs found yet"
+            echo ""
+            ;;
+        3)
+            if command -v nvidia-smi &> /dev/null; then
+                nvidia-smi
+            else
+                echo "nvidia-smi not available"
+            fi
+            echo ""
+            ;;
+        4)
+            echo "📋 Active tmux sessions:"
+            tmux list-sessions
+            echo ""
+            ;;
+        5)
+            read -p "⚠️  Really stop training? (y/N): " confirm
+            if [[ $confirm =~ ^[Yy]$ ]]; then
+                tmux kill-session -t "$SESSION_NAME"
+                echo "🛑 Training stopped"
+                exit 0
+            fi
+        ;;
+        6)
+            echo "👋 Exiting monitor"
+            exit 0
+            ;;
+        *)
+            echo "Invalid choice"
+            ;;
+    esac
+done
+EOF
+    chmod +x monitor_tmux.sh
+
     # Create monitoring script
     cat > quick_monitor.sh << 'EOF'
 #!/bin/bash
