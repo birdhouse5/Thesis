@@ -297,14 +297,14 @@ source venv/bin/activate
 echo "✅ Environment activated"
 echo "📊 System Information:"
 echo "  Python: $(python --version)"
-python -c "import torch; print(f'  PyTorch: {torch.__version__} ({'GPU' if torch.cuda.is_available() else 'CPU'})')"
+python -c "import torch; print('  PyTorch: ' + torch.__version__ + ' (' + ('GPU' if torch.cuda.is_available() else 'CPU') + ')')"
 echo ""
 echo "🚀 Available commands:"
-echo "  python varibad/scripts/main.py --help                    # Show help"
-echo "  python varibad/scripts/main.py --mode data_only          # Process data"
-echo "  python varibad/scripts/main.py --mode train              # Start training"
-echo "  python monitor_training.py --mode realtime               # Monitor training"
-echo "  ./start_training.sh                                      # Quick training"
+echo "  python varibad/main.py --help                        # Show help"
+echo "  python varibad/main.py --mode data_only              # Process data"  
+echo "  python varibad/main.py --mode train                  # Start training"
+echo "  python monitor_training.py --mode realtime           # Monitor training"
+echo "  ./start_training.sh                                  # Quick training"
 EOF
     chmod +x activate_varibad.sh
     
@@ -320,10 +320,11 @@ source venv/bin/activate
 # Check if data exists
 if [ ! -f "data/sp500_rl_ready_cleaned.parquet" ]; then
     echo "📊 Processing data first..."
-    python varibad/scripts/main.py --mode data_only
+    python varibad/main.py --mode data_only
 fi
 
 # Training parameters based on setup mode
+MODE="gpu"  # Change to "cpu" if no GPU
 if [ "$MODE" = "gpu" ]; then
     # GPU-optimized parameters
     PARAMS="--mode train --num_iterations 500 --episode_length 60 --episodes_per_iteration 10 --vae_updates 15 --latent_dim 8 --device cuda --short_selling"
@@ -336,22 +337,22 @@ fi
 
 # Start training in tmux session
 SESSION_NAME="varibad_training"
-tmux new-session -d -s \$SESSION_NAME
-tmux send-keys -t \$SESSION_NAME "cd \$(pwd)" Enter  
-tmux send-keys -t \$SESSION_NAME "source venv/bin/activate" Enter
-tmux send-keys -t \$SESSION_NAME "python varibad/scripts/main.py \$PARAMS" Enter
+tmux new-session -d -s $SESSION_NAME
+tmux send-keys -t $SESSION_NAME "cd $(pwd)" Enter  
+tmux send-keys -t $SESSION_NAME "source venv/bin/activate" Enter
+tmux send-keys -t $SESSION_NAME "python varibad/main.py $PARAMS" Enter
 
-echo "✅ Training started in tmux session '\$SESSION_NAME'"
+echo "✅ Training started in tmux session '$SESSION_NAME'"
 echo ""
 echo "📊 Monitoring options:"
-echo "  tmux attach-session -t \$SESSION_NAME     # Attach to training"
+echo "  tmux attach-session -t $SESSION_NAME     # Attach to training"
 echo "  python monitor_training.py --mode realtime # Real-time plots"
 echo "  tail -f logs/varibad_pipeline_*.log        # View logs"
 if [ "$MODE" = "gpu" ]; then
 echo "  watch -n 1 nvidia-smi                      # Monitor GPU"
 fi
 echo ""
-echo "🛑 To stop: tmux kill-session -t \$SESSION_NAME"
+echo "🛑 To stop: tmux kill-session -t $SESSION_NAME"
 EOF
     chmod +x start_training.sh
     
@@ -391,7 +392,7 @@ EOF
 echo "📊 Processing S&P 500 Data for VariBAD..."
 
 source venv/bin/activate
-python varibad/scripts/main.py --mode data_only
+python varibad/main.py --mode data_only
 
 echo "✅ Data processing complete!"
 echo "📁 Processed data saved to: data/sp500_rl_ready_cleaned.parquet"
