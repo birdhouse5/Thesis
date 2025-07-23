@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
 """
-Complete VariBAD Portfolio Optimization Pipeline
-Single entry point for data processing, training, and evaluation on cloud instances.
-
-Usage:
-    python main.py --mode data_only                    # Just process data
-    python main.py --mode train --epochs 100           # Process data + train
-    python main.py --mode resume --checkpoint path     # Resume training
-    python main.py --mode evaluate --checkpoint path   # Evaluate model
+Simplified VariBAD Portfolio Optimization Pipeline
+Works with the current project structure
 """
 
 import argparse
@@ -41,10 +35,10 @@ def setup_logging(log_level="INFO"):
     return logger
 
 def check_dependencies():
-    """Check if all required packages are installed."""
+    """Check if all required packages are installed with correct import names."""
     required_packages = [
-    'pandas', 'numpy', 'torch', 'yfinance', 'sklearn',  
-    'matplotlib', 'seaborn', 'gym'
+        'pandas', 'numpy', 'torch', 'yfinance', 'sklearn',
+        'matplotlib', 'seaborn', 'gym'
     ]
     
     missing = []
@@ -56,7 +50,12 @@ def check_dependencies():
     
     if missing:
         print(f"❌ Missing required packages: {', '.join(missing)}")
-        print(f"Install with: pip install {' '.join(missing)}")
+        print("Install with:")
+        for pkg in missing:
+            if pkg == 'sklearn':
+                print(f"  pip install scikit-learn  # imports as 'sklearn'")
+            else:
+                print(f"  pip install {pkg}")
         sys.exit(1)
     
     print("✅ All dependencies satisfied")
@@ -73,136 +72,49 @@ def create_directory_structure():
     print("✅ Directory structure created")
 
 def download_and_clean_data(logger):
-    """Complete data processing pipeline."""
+    """Simplified data processing pipeline."""
     logger.info("Starting data processing pipeline...")
     
-    # Step 1: Check if we need to download raw data
-    raw_data_path = "data/sp500_ohlcv_dataset.parquet"
-    
-    if not os.path.exists(raw_data_path):
-        logger.info("Raw data not found - downloading S&P 500 data...")
-        
-        # Import and run data loader
-        try:
-            from sp500.data_loader import MemoryEfficientOHLCVLoader
-            
-            # Create constituents if needed
-            constituents_path = "data/sp500_constituents.csv"
-            if not os.path.exists(constituents_path):
-                logger.info("Creating S&P 500 constituents list...")
-                # Create a minimal constituents file for your 30 companies
-                tickers = [
-                    'IBM', 'MSFT', 'ORCL', 'INTC', 'HPQ', 'CSCO',  # Tech
-                    'JPM', 'BAC', 'WFC', 'C', 'AXP',              # Financial
-                    'JNJ', 'PFE', 'MRK', 'ABT',                   # Healthcare
-                    'KO', 'PG', 'WMT', 'PEP',                     # Consumer Staples
-                    'XOM', 'CVX', 'COP',                          # Energy
-                    'GE', 'CAT', 'BA',                            # Industrials
-                    'HD', 'MCD',                                  # Consumer Disc
-                    'SO', 'D',                                    # Utilities
-                    'DD'                                          # Materials
-                ]
-                
-                constituents_df = pd.DataFrame({
-                    'ticker': tickers,
-                    'start_date': '1990-01-01',
-                    'end_date': '2025-01-01'
-                })
-                constituents_df.to_csv(constituents_path, index=False)
-                logger.info(f"Created constituents file with {len(tickers)} tickers")
-            
-            # Download OHLCV data
-            loader = MemoryEfficientOHLCVLoader(
-                constituents_file=constituents_path,
-                output_file=raw_data_path,
-                batch_size=30,  # Process all at once since we only have 30
-                delay_between_requests=0.1
-            )
-            
-            loader.load_sp500_history_efficient(
-                start_date='1990-01-01',
-                end_date='2025-01-01'
-            )
-            
-            logger.info(f"✅ Raw data downloaded to {raw_data_path}")
-            
-        except Exception as e:
-            logger.error(f"Data download failed: {e}")
-            raise
-    else:
-        logger.info(f"✅ Raw data already exists at {raw_data_path}")
-    
-    # Step 2: Clean data (remove incomplete dates)
-    cleaned_path = "data/cleaned_sp500_dataset.parquet"
-    
-    if not os.path.exists(cleaned_path):
-        logger.info("Cleaning raw data...")
-        
-        try:
-            from preprocessing.data_cleaning import main as clean_data
-            # The data_cleaning.py needs to be run to create cleaned dataset
-            os.system("cd preprocessing && python data_cleaning.py")
-            logger.info(f"✅ Data cleaned and saved to {cleaned_path}")
-        except Exception as e:
-            logger.error(f"Data cleaning failed: {e}")
-            raise
-    else:
-        logger.info(f"✅ Cleaned data already exists at {cleaned_path}")
-    
-    # Step 3: Add technical indicators and normalize
-    rl_ready_path = "data/sp500_rl_ready.parquet"
-    
-    if not os.path.exists(rl_ready_path):
-        logger.info("Adding technical indicators and normalizing...")
-        
-        try:
-            from sp500.technical_indicators_and_normalization import create_rl_dataset
-            create_rl_dataset()
-            logger.info(f"✅ RL-ready dataset created at {rl_ready_path}")
-        except Exception as e:
-            logger.error(f"Feature engineering failed: {e}")
-            raise
-    else:
-        logger.info(f"✅ RL-ready data already exists at {rl_ready_path}")
-    
-    # Step 4: Handle NaNs
     final_path = "data/sp500_rl_ready_cleaned.parquet"
     
-    if not os.path.exists(final_path):
-        logger.info("Handling missing values...")
+    # Check if data already exists
+    if os.path.exists(final_path):
+        logger.info(f"✅ Data already exists at {final_path}")
         
+        # Validate existing data
         try:
-            from preprocessing.nan_handling import main_cleaning
-            main_cleaning(
-                input_path=rl_ready_path,
-                output_path=final_path
-            )
-            logger.info(f"✅ Final clean dataset created at {final_path}")
+            df = pd.read_parquet(final_path)
+            nan_count = df.isnull().sum().sum()
+            
+            logger.info(f"✅ Data validation complete!")
+            logger.info(f"   Dataset shape: {df.shape}")
+            logger.info(f"   Date range: {df['date'].min().date()} to {df['date'].max().date()}")
+            logger.info(f"   Tickers: {df['ticker'].nunique()}")
+            logger.info(f"   Features: {len(df.columns)}")
+            logger.info(f"   Missing values: {nan_count}")
+            
+            return final_path
+            
         except Exception as e:
-            logger.error(f"NaN handling failed: {e}")
-            raise
-    else:
-        logger.info(f"✅ Final clean dataset already exists at {final_path}")
+            logger.warning(f"Existing data file is corrupted: {e}. Will recreate.")
     
-    # Validate final dataset
+    # Create new data
+    logger.info("Creating new dataset from scratch...")
+    
     try:
-        df = pd.read_parquet(final_path)
-        nan_count = df.isnull().sum().sum()
+        # Import the data pipeline
+        from varibad.data_pipeline import create_rl_dataset
         
-        logger.info(f"✅ Data processing complete!")
-        logger.info(f"   Final dataset shape: {df.shape}")
-        logger.info(f"   Date range: {df['date'].min().date()} to {df['date'].max().date()}")
-        logger.info(f"   Tickers: {df['ticker'].nunique()}")
-        logger.info(f"   Features: {len(df.columns)}")
-        logger.info(f"   Missing values: {nan_count}")
+        # Create the dataset
+        final_path = create_rl_dataset()
         
-        if nan_count > 0:
-            logger.warning(f"⚠️ Still have {nan_count} missing values - check nan_handling.py")
-        
+        logger.info(f"✅ Data processing complete! Dataset saved to: {final_path}")
         return final_path
         
     except Exception as e:
-        logger.error(f"Final dataset validation failed: {e}")
+        logger.error(f"Data processing failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         raise
 
 def train_varibad_model(data_path, config, logger):
@@ -210,7 +122,7 @@ def train_varibad_model(data_path, config, logger):
     logger.info("Starting VariBAD training...")
     
     try:
-        from sp500.varibad_trainer import VariBADTrainer
+        from varibad.core.trainer import VariBADTrainer
         
         # Initialize trainer
         trainer = VariBADTrainer(
@@ -246,6 +158,8 @@ def train_varibad_model(data_path, config, logger):
         
     except Exception as e:
         logger.error(f"Training failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         raise
 
 def evaluate_model(checkpoint_path, data_path, logger):
@@ -253,7 +167,7 @@ def evaluate_model(checkpoint_path, data_path, logger):
     logger.info(f"Evaluating model from {checkpoint_path}")
     
     try:
-        from sp500.varibad_trainer import VariBADTrainer
+        from varibad.core.trainer import VariBADTrainer
         import torch
         
         # Load checkpoint
@@ -264,7 +178,7 @@ def evaluate_model(checkpoint_path, data_path, logger):
         trainer = VariBADTrainer(
             data_path=data_path,
             state_dim=config['state_dim'],
-            action_dim=config['actual_action_dim'] // 2,  # Convert back to asset count
+            action_dim=config['actual_action_dim'] // 2,
             device='cpu'
         )
         
@@ -282,6 +196,8 @@ def evaluate_model(checkpoint_path, data_path, logger):
         
     except Exception as e:
         logger.error(f"Evaluation failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         raise
 
 def main():
@@ -374,9 +290,7 @@ def main():
                 logger.info("Data not found, processing first...")
                 args.data_path = download_and_clean_data(logger)
             
-            # Resume training (would need to implement resume functionality)
             logger.warning("Resume functionality not yet implemented")
-            # TODO: Implement resume training
         
         elif args.mode == 'evaluate':
             logger.info("📊 Evaluation mode")
