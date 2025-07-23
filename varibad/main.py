@@ -43,8 +43,8 @@ def setup_logging(log_level="INFO"):
 def check_dependencies():
     """Check if all required packages are installed."""
     required_packages = [
-        'pandas', 'numpy', 'torch', 'yfinance', 'scikit-learn', 
-        'matplotlib', 'seaborn', 'gym'
+    'pandas', 'numpy', 'torch', 'yfinance', 'sklearn',  
+    'matplotlib', 'seaborn', 'gym'
     ]
     
     missing = []
