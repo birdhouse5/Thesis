@@ -335,12 +335,18 @@ else
     echo "💻 Starting CPU training (estimated 2-3 hours)..."
 fi
 
-# Start training in tmux session
+# Define session name
 SESSION_NAME="varibad_training"
-tmux new-session -d -s $SESSION_NAME
-tmux send-keys -t $SESSION_NAME "cd $(pwd)" Enter  
-tmux send-keys -t $SESSION_NAME "source venv/bin/activate" Enter
-tmux send-keys -t $SESSION_NAME "python varibad/main.py $PARAMS" Enter
+
+# Kill any existing session with the same name
+tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
+
+# Start training in tmux session
+echo "🚀 Starting tmux session: $SESSION_NAME"
+tmux new-session -d -s "$SESSION_NAME"
+tmux send-keys -t "$SESSION_NAME" "cd $(pwd)" Enter  
+tmux send-keys -t "$SESSION_NAME" "source venv/bin/activate" Enter
+tmux send-keys -t "$SESSION_NAME" "python varibad/main.py $PARAMS" Enter
 
 echo "✅ Training started in tmux session '$SESSION_NAME'"
 echo ""
