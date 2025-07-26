@@ -251,7 +251,8 @@ create_directories() {
     
     # Create subdirectories
     mkdir -p data/{raw,processed}
-    
+    mkdir -p config
+
     print_success "Directory structure created"
 }
 
@@ -311,10 +312,10 @@ EOF
     # Create direct training script (no tmux)
     cat > start_training.sh << EOF
 #!/bin/bash
-# Direct VariBAD Training Script (no tmux required)
+# VariBAD Training Script with Config File Support
 set -e
 
-echo "🏋️ Starting VariBAD Training..."
+echo "🏋️ Starting VariBAD Training with Config File..."
 
 # Activate environment
 source venv/bin/activate
@@ -325,36 +326,118 @@ if [ ! -f "data/sp500_rl_ready_cleaned.parquet" ]; then
     python varibad/main.py --mode data_only
 fi
 
-# Determine training parameters
-if nvidia-smi &> /dev/null; then
-    echo "🔥 GPU detected - using GPU training parameters"
-    DEVICE="cuda"
-    PARAMS="--mode train --num_iterations 500 --episode_length 60 --episodes_per_iteration 10 --vae_updates 15 --latent_dim 8 --device cuda --short_selling"
-    ESTIMATED_TIME="30-45 minutes"
+# Load configuration
+CONFIG_FILE="config/training_configs.conf"
+
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "❌ Config file not found: $CONFIG_FILE"
+    echo "Creating default config file..."
+    
+    # Create config directory
+    mkdir -p config
+    
+    # Create default config file
+    cat > "$CONFIG_FILE" << 'CONFIGEOF'
+# VariBAD Training Configuration File
+ACTIVE_CONFIG="POLICY_FOCUSED"
+
+# POLICY_FOCUSED - For when VAE learns but policy doesn't
+POLICY_FOCUSED_NUM_ITERATIONS=300
+POLICY_FOCUSED_EPISODE_LENGTH=60
+POLICY_FOCUSED_EPISODES_PER_ITERATION=12
+POLICY_FOCUSED_VAE_UPDATES=5
+POLICY_FOCUSED_LATENT_DIM=3
+POLICY_FOCUSED_EXTRA_ARGS="--short_selling"
+
+# QUICK_TEST - Fast test run  
+QUICK_TEST_NUM_ITERATIONS=20
+QUICK_TEST_EPISODE_LENGTH=15
+QUICK_TEST_EPISODES_PER_ITERATION=3
+QUICK_TEST_VAE_UPDATES=3
+QUICK_TEST_LATENT_DIM=2
+QUICK_TEST_EXTRA_ARGS=""
+
+# DEFAULT_GPU - Balanced training
+DEFAULT_GPU_NUM_ITERATIONS=500
+DEFAULT_GPU_EPISODE_LENGTH=60
+DEFAULT_GPU_EPISODES_PER_ITERATION=10
+DEFAULT_GPU_VAE_UPDATES=15
+DEFAULT_GPU_LATENT_DIM=8
+DEFAULT_GPU_EXTRA_ARGS="--short_selling"
+
+# Advanced settings
+DEVICE_PREFERENCE="auto"
+EXPERIMENT_NAME="default_experiment"
+EXPERIMENT_DESCRIPTION="VariBAD training run"
+CONFIGEOF
+    
+    echo "✅ Created default config file: $CONFIG_FILE"
+fi
+
+# Source the config file
+echo "📖 Loading configuration from: $CONFIG_FILE"
+source "$CONFIG_FILE"
+
+# Check if ACTIVE_CONFIG is set
+if [ -z "$ACTIVE_CONFIG" ]; then
+    echo "❌ No ACTIVE_CONFIG specified in $CONFIG_FILE"
+    exit 1
+fi
+
+echo "🔧 Using configuration: $ACTIVE_CONFIG"
+
+# Load the active configuration parameters
+CONFIG_PREFIX="${ACTIVE_CONFIG}_"
+
+# Function to get config value
+get_config_value() {
+    local var_name="${CONFIG_PREFIX}${1}"
+    local default_value="$2"
+    local value="${!var_name:-$default_value}"
+    echo "$value"
+}
+
+# Load parameters from active config
+NUM_ITERATIONS=$(get_config_value "NUM_ITERATIONS" "100")
+EPISODE_LENGTH=$(get_config_value "EPISODE_LENGTH" "30")
+EPISODES_PER_ITERATION=$(get_config_value "EPISODES_PER_ITERATION" "5")
+VAE_UPDATES=$(get_config_value "VAE_UPDATES" "10")
+LATENT_DIM=$(get_config_value "LATENT_DIM" "5")
+EXTRA_ARGS=$(get_config_value "EXTRA_ARGS" "")
+
+# Determine device
+if [ "$DEVICE_PREFERENCE" = "auto" ]; then
+    if nvidia-smi &> /dev/null; then
+        DEVICE="cuda"
+        echo "🔥 GPU detected - using CUDA"
+    else
+        DEVICE="cpu"
+        echo "💻 No GPU detected - using CPU"
+    fi
 else
-    echo "💻 No GPU detected - using CPU training parameters"
-    DEVICE="cpu"
-    PARAMS="--mode train --num_iterations 200 --episode_length 30 --episodes_per_iteration 5 --vae_updates 8 --latent_dim 5 --device cpu"
-    ESTIMATED_TIME="2-3 hours"
+    DEVICE="$DEVICE_PREFERENCE"
 fi
 
-echo "Parameters: \$PARAMS"
-echo "Estimated time: \$ESTIMATED_TIME"
-echo ""
-echo "📋 To monitor training in another terminal:"
-echo "  tail -f logs/varibad_pipeline_*.log      # View logs"
-echo "  python monitor_training.py --mode plot   # Generate plots"
-if [ "\$DEVICE" = "cuda" ]; then
-    echo "  watch -n 1 nvidia-smi                   # Monitor GPU"
-fi
-echo ""
-echo "🛑 To stop training: Press Ctrl+C"
-echo ""
+# Build training command
+TRAINING_COMMAND="python varibad/main.py --mode train"
+TRAINING_COMMAND="$TRAINING_COMMAND --num_iterations $NUM_ITERATIONS"
+TRAINING_COMMAND="$TRAINING_COMMAND --episode_length $EPISODE_LENGTH"
+TRAINING_COMMAND="$TRAINING_COMMAND --episodes_per_iteration $EPISODES_PER_ITERATION"
+TRAINING_COMMAND="$TRAINING_COMMAND --vae_updates $VAE_UPDATES"
+TRAINING_COMMAND="$TRAINING_COMMAND --latent_dim $LATENT_DIM"
+TRAINING_COMMAND="$TRAINING_COMMAND --device $DEVICE"
 
-# Start training directly (no tmux)
+if [ ! -z "$EXTRA_ARGS" ]; then
+    TRAINING_COMMAND="$TRAINING_COMMAND $EXTRA_ARGS"
+fi
+
+# Display configuration
+echo "📋 Training Configuration: $ACTIVE_CONFIG"
+echo "  Iterations: $NUM_ITERATIONS | Episodes: $EPISODE_LENGTH | Device: $DEVICE"
+
+# Start training
 echo "🎯 Starting training..."
-python varibad/main.py \$PARAMS
-
+$TRAINING_COMMAND
 echo "✅ Training completed!"
 EOF
     chmod +x start_training.sh
