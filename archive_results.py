@@ -19,6 +19,19 @@ import subprocess
 import sys
 from pathlib import Path
 
+def convert_numpy_types(obj):
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(item) for item in obj]
+    return obj
+
 class VariBADResultsArchiver:
     """
     Complete training results archival system that creates self-contained
@@ -223,7 +236,7 @@ class VariBADResultsArchiver:
         
         # Save data info
         with open(self.archive_dir / "dataset_info.json", 'w') as f:
-            json.dump(data_info, f, indent=2)
+            json.dump(convert_numpy_types(data_info, f, indent=2))
         
         return data_info
     
