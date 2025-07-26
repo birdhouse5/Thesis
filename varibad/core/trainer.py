@@ -52,6 +52,9 @@ class VariBADTrainer:
                  episode_length: int = 30,
                  max_episodes_buffer: int = 200,
                  enable_short_selling: bool = True,
+                 policy_lr: float = 1e-4,
+                 vae_encoder_lr: float = 1e-4,
+                 vae_decoder_lr: float = 1e-4,
                  max_short_ratio: float = 0.3,
                  device: str = 'cuda' if torch.cuda.is_available() else 'cpu'):
         """
@@ -61,6 +64,10 @@ class VariBADTrainer:
         self.episode_length = episode_length
         self.action_dim = action_dim  # Number of assets
         self.enable_short_selling = enable_short_selling
+
+        self.policy_lr = policy_lr
+        self.vae_encoder_lr = vae_encoder_lr
+        self.vae_decoder_lr = vae_decoder_lr
         
         # Load your S&P 500 data
         logger.info(f"Loading S&P 500 data from {data_path}")
@@ -143,12 +150,12 @@ class VariBADTrainer:
         
         # Optimizers
         self.vae_optimizer = optim.Adam([
-            {'params': self.varibad.encoder.parameters(), 'lr': 3e-4},
-            {'params': self.varibad.decoder.parameters(), 'lr': 3e-4}
+            {'params': self.varibad.encoder.parameters(), 'lr': self.vae_encoder_lr},
+            {'params': self.varibad.decoder.parameters(), 'lr': self.vae_decoder_lr}
         ])
         
         self.policy_optimizer = optim.Adam(
-            self.varibad.policy.parameters(), lr=3e-4
+            self.varibad.policy.parameters(), lr=self.policy_lr
         )
         
         # Training statistics
@@ -642,7 +649,10 @@ class VariBADTrainer:
                 'state_dim': self.state_dim,
                 'actual_action_dim': self.actual_action_dim,
                 'encoder_input_dim': self.encoder_input_dim,
-                'enable_short_selling': self.enable_short_selling
+                'enable_short_selling': self.enable_short_selling,
+                'policy_lr': self.policy_lr,
+                'vae_encoder_lr': self.vae_encoder_lr,
+                'vae_decoder_lr': self.vae_decoder_lr
             }
         }
         torch.save(checkpoint, path)

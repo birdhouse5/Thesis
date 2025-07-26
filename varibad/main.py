@@ -200,6 +200,9 @@ def train_varibad_model(data_path, config, logger):
             latent_dim=config.latent_dim,
             max_episodes_buffer=config.buffer_size,
             enable_short_selling=config.short_selling,
+            policy_lr=config.policy_lr,
+            vae_encoder_lr=config.vae_encoder_lr,
+            vae_decoder_lr=config.vae_decoder_lr,
             device=config.device
         )
         
@@ -343,7 +346,13 @@ Examples:
                       help='Enable short selling')
     parser.add_argument('--device', type=str, default='auto',
                       choices=['auto', 'cpu', 'cuda'],
-                      help='Device to use (default: auto)')
+                      help='Device to use (default: auto)'),
+    parser.add_argument('--policy_lr', type=float, default=1e-4,
+                        help='Learning rate for policy network (default: 1e-4)'),
+    parser.add_argument('--vae_encoder_lr', type=float, default=1e-4,
+                        help='Learning rate for VAE encoder network (default: 1e-4)'),
+    parser.add_argument('--vae_decoder_lr', type=float, default=1e-4,
+                        help='Learning rate for VAE decoder network (default: 1e-4)')
     
     # Evaluation parameters
     parser.add_argument('--eval_frequency', type=int, default=50,

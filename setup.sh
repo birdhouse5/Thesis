@@ -571,7 +571,7 @@ cat > start_training.sh << 'EOF'
 set -e
 
 # Check for configuration file
-CONFIG_FILE="config/training_configs.conf"
+CONFIG_FILE="config/training.conf"
 if [ -f "$CONFIG_FILE" ]; then
     echo "📋 Loading configuration from $CONFIG_FILE"
     source "$CONFIG_FILE"
