@@ -390,10 +390,19 @@ echo "🔧 Using configuration: $ACTIVE_CONFIG"
 CONFIG_PREFIX="${ACTIVE_CONFIG}_"
 
 # Function to get config value
+
 get_config_value() {
     local var_name="${CONFIG_PREFIX}${1}"
     local default_value="$2"
-    local value="${!var_name:-$default_value}"
+    
+    # Use eval for indirect expansion (more compatible)
+    local value=$(eval echo \$${var_name})
+    
+    # If empty, use default
+    if [ -z "$value" ]; then
+        value="$default_value"
+    fi
+    
     echo "$value"
 }
 
