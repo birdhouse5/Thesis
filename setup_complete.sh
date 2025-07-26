@@ -312,23 +312,27 @@ EOF
     # Create direct training script (no tmux)
     cat > start_training.sh << EOF
 #!/bin/bash
-# VariBAD Training Script with Config File Support
+# Fixed VariBAD Training Script with Debug Output
 set -e
 
-echo "🏋️ Starting VariBAD Training with Config File..."
+echo "🏋️ Starting VariBAD Training with Fixed Config System..."
+echo "🔍 Debug: Script location: $(pwd)"
+echo "🔍 Debug: Script name: $0"
 
 # Activate environment
-source venv/bin/activate
-
-# Check if data exists
-if [ ! -f "data/sp500_rl_ready_cleaned.parquet" ]; then
-    echo "📊 Processing data first..."
-    python varibad/main.py --mode data_only
+if [ -f "venv/bin/activate" ]; then
+    source venv/bin/activate
+    echo "✅ Virtual environment activated"
+else
+    echo "❌ Virtual environment not found. Run setup_complete.sh first"
+    exit 1
 fi
 
-# Load configuration
+# Define config file path FIRST
 CONFIG_FILE="config/training_configs.conf"
+echo "🔍 Debug: Config file path: $CONFIG_FILE"
 
+# Check if config file exists BEFORE proceeding
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "❌ Config file not found: $CONFIG_FILE"
     echo "Creating default config file..."
@@ -336,12 +340,21 @@ if [ ! -f "$CONFIG_FILE" ]; then
     # Create config directory
     mkdir -p config
     
-    # Create default config file
+    # Create default config file with proper syntax
     cat > "$CONFIG_FILE" << 'CONFIGEOF'
 # VariBAD Training Configuration File
-ACTIVE_CONFIG="POLICY_FOCUSED"
+# Edit this file to change training parameters without modifying scripts
+
+# =============================================================================
+# ACTIVE CONFIGURATION
+# Uncomment ONE configuration block below to use it
+# =============================================================================
 
 # POLICY_FOCUSED - For when VAE learns but policy doesn't
+# Good for: Fixing poor portfolio performance, better reward learning
+ACTIVE_CONFIG="POLICY_FOCUSED"
+
+# POLICY_FOCUSED Configuration
 POLICY_FOCUSED_NUM_ITERATIONS=300
 POLICY_FOCUSED_EPISODE_LENGTH=60
 POLICY_FOCUSED_EPISODES_PER_ITERATION=12
@@ -349,7 +362,7 @@ POLICY_FOCUSED_VAE_UPDATES=5
 POLICY_FOCUSED_LATENT_DIM=3
 POLICY_FOCUSED_EXTRA_ARGS="--short_selling"
 
-# QUICK_TEST - Fast test run  
+# QUICK_TEST - Fast test run
 QUICK_TEST_NUM_ITERATIONS=20
 QUICK_TEST_EPISODE_LENGTH=15
 QUICK_TEST_EPISODES_PER_ITERATION=3
@@ -357,13 +370,29 @@ QUICK_TEST_VAE_UPDATES=3
 QUICK_TEST_LATENT_DIM=2
 QUICK_TEST_EXTRA_ARGS=""
 
-# DEFAULT_GPU - Balanced training
+# DEFAULT_GPU - Balanced training for GPU
 DEFAULT_GPU_NUM_ITERATIONS=500
 DEFAULT_GPU_EPISODE_LENGTH=60
 DEFAULT_GPU_EPISODES_PER_ITERATION=10
 DEFAULT_GPU_VAE_UPDATES=15
 DEFAULT_GPU_LATENT_DIM=8
 DEFAULT_GPU_EXTRA_ARGS="--short_selling"
+
+# VAE_FOCUSED - More VAE training
+VAE_FOCUSED_NUM_ITERATIONS=400
+VAE_FOCUSED_EPISODE_LENGTH=45
+VAE_FOCUSED_EPISODES_PER_ITERATION=8
+VAE_FOCUSED_VAE_UPDATES=25
+VAE_FOCUSED_LATENT_DIM=10
+VAE_FOCUSED_EXTRA_ARGS="--short_selling"
+
+# CPU_OPTIMIZED - For CPU training
+CPU_OPTIMIZED_NUM_ITERATIONS=150
+CPU_OPTIMIZED_EPISODE_LENGTH=30
+CPU_OPTIMIZED_EPISODES_PER_ITERATION=4
+CPU_OPTIMIZED_VAE_UPDATES=6
+CPU_OPTIMIZED_LATENT_DIM=4
+CPU_OPTIMIZED_EXTRA_ARGS=""
 
 # Advanced settings
 DEVICE_PREFERENCE="auto"
@@ -374,49 +403,74 @@ CONFIGEOF
     echo "✅ Created default config file: $CONFIG_FILE"
 fi
 
-# Source the config file
+# Parse config file and load values BEFORE calling python
 echo "📖 Loading configuration from: $CONFIG_FILE"
-source "$CONFIG_FILE"
 
-# Check if ACTIVE_CONFIG is set
-if [ -z "$ACTIVE_CONFIG" ]; then
-    echo "❌ No ACTIVE_CONFIG specified in $CONFIG_FILE"
-    exit 1
-fi
-
-echo "🔧 Using configuration: $ACTIVE_CONFIG"
-
-# Load the active configuration parameters
-CONFIG_PREFIX="${ACTIVE_CONFIG}_"
-
-# Function to get config value
-
-get_config_value() {
-    local var_name="${CONFIG_PREFIX}${1}"
-    local default_value="$2"
+if [ -f "$CONFIG_FILE" ]; then
+    # Extract ACTIVE_CONFIG
+    ACTIVE_CONFIG=$(grep -E "^ACTIVE_CONFIG=" "$CONFIG_FILE" | head -1 | cut -d'=' -f2 | tr -d '"' | tr -d "'")
     
-    # Use eval for indirect expansion (more compatible)
-    local value=$(eval echo \$${var_name})
-    
-    # If empty, use default
-    if [ -z "$value" ]; then
-        value="$default_value"
+    if [ -z "$ACTIVE_CONFIG" ]; then
+        echo "❌ No ACTIVE_CONFIG found in $CONFIG_FILE. Using POLICY_FOCUSED as default."
+        ACTIVE_CONFIG="POLICY_FOCUSED"
     fi
     
-    echo "$value"
-}
-
-# Load parameters from active config
-NUM_ITERATIONS=$(get_config_value "NUM_ITERATIONS" "100")
-EPISODE_LENGTH=$(get_config_value "EPISODE_LENGTH" "30")
-EPISODES_PER_ITERATION=$(get_config_value "EPISODES_PER_ITERATION" "5")
-VAE_UPDATES=$(get_config_value "VAE_UPDATES" "10")
-LATENT_DIM=$(get_config_value "LATENT_DIM" "5")
-EXTRA_ARGS=$(get_config_value "EXTRA_ARGS" "")
+    echo "🔧 Using configuration: $ACTIVE_CONFIG"
+    
+    # Function to extract config values
+    get_config_value() {
+        local param_name="${ACTIVE_CONFIG}_${1}"
+        local default_value="$2"
+        
+        # Look for the parameter in the config file
+        local value=$(grep -E "^${param_name}=" "$CONFIG_FILE" | head -1 | cut -d'=' -f2 | tr -d '"' | tr -d "'")
+        
+        if [ -z "$value" ]; then
+            echo "$default_value"
+        else
+            echo "$value"
+        fi
+    }
+    
+    # Load parameters from active config
+    NUM_ITERATIONS=$(get_config_value "NUM_ITERATIONS" "100")
+    EPISODE_LENGTH=$(get_config_value "EPISODE_LENGTH" "30")
+    EPISODES_PER_ITERATION=$(get_config_value "EPISODES_PER_ITERATION" "5")
+    VAE_UPDATES=$(get_config_value "VAE_UPDATES" "10")
+    LATENT_DIM=$(get_config_value "LATENT_DIM" "5")
+    EXTRA_ARGS=$(get_config_value "EXTRA_ARGS" "")
+    
+    # Load device preference
+    DEVICE_PREFERENCE=$(grep -E "^DEVICE_PREFERENCE=" "$CONFIG_FILE" | head -1 | cut -d'=' -f2 | tr -d '"' | tr -d "'")
+    if [ -z "$DEVICE_PREFERENCE" ]; then
+        DEVICE_PREFERENCE="auto"
+    fi
+    
+    # Debug output
+    echo "🔍 Debug: Loaded config values:"
+    echo "   ACTIVE_CONFIG: $ACTIVE_CONFIG"
+    echo "   NUM_ITERATIONS: $NUM_ITERATIONS"
+    echo "   EPISODE_LENGTH: $EPISODE_LENGTH"
+    echo "   EPISODES_PER_ITERATION: $EPISODES_PER_ITERATION"
+    echo "   VAE_UPDATES: $VAE_UPDATES"
+    echo "   LATENT_DIM: $LATENT_DIM"
+    echo "   EXTRA_ARGS: $EXTRA_ARGS"
+    echo "   DEVICE_PREFERENCE: $DEVICE_PREFERENCE"
+    
+else
+    echo "❌ Config file not found, using defaults"
+    NUM_ITERATIONS=100
+    EPISODE_LENGTH=30
+    EPISODES_PER_ITERATION=5
+    VAE_UPDATES=10
+    LATENT_DIM=5
+    EXTRA_ARGS=""
+    DEVICE_PREFERENCE="auto"
+fi
 
 # Determine device
 if [ "$DEVICE_PREFERENCE" = "auto" ]; then
-    if nvidia-smi &> /dev/null; then
+    if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
         DEVICE="cuda"
         echo "🔥 GPU detected - using CUDA"
     else
@@ -425,9 +479,16 @@ if [ "$DEVICE_PREFERENCE" = "auto" ]; then
     fi
 else
     DEVICE="$DEVICE_PREFERENCE"
+    echo "🎯 Using specified device: $DEVICE"
 fi
 
-# Build training command
+# Check if data exists, if not process it first
+if [ ! -f "data/sp500_rl_ready_cleaned.parquet" ]; then
+    echo "📊 Processing data first..."
+    python varibad/main.py --mode data_only
+fi
+
+# Build training command with loaded config values
 TRAINING_COMMAND="python varibad/main.py --mode train"
 TRAINING_COMMAND="$TRAINING_COMMAND --num_iterations $NUM_ITERATIONS"
 TRAINING_COMMAND="$TRAINING_COMMAND --episode_length $EPISODE_LENGTH"
@@ -436,18 +497,44 @@ TRAINING_COMMAND="$TRAINING_COMMAND --vae_updates $VAE_UPDATES"
 TRAINING_COMMAND="$TRAINING_COMMAND --latent_dim $LATENT_DIM"
 TRAINING_COMMAND="$TRAINING_COMMAND --device $DEVICE"
 
-if [ ! -z "$EXTRA_ARGS" ]; then
+# Add extra arguments if present (this is where --short_selling comes from)
+if [ ! -z "$EXTRA_ARGS" ] && [ "$EXTRA_ARGS" != '""' ] && [ "$EXTRA_ARGS" != "''" ]; then
+    echo "🔍 Debug: Adding extra args: $EXTRA_ARGS"
     TRAINING_COMMAND="$TRAINING_COMMAND $EXTRA_ARGS"
+else
+    echo "🔍 Debug: No extra args to add (EXTRA_ARGS='$EXTRA_ARGS')"
 fi
 
 # Display configuration
+echo ""
 echo "📋 Training Configuration: $ACTIVE_CONFIG"
-echo "  Iterations: $NUM_ITERATIONS | Episodes: $EPISODE_LENGTH | Device: $DEVICE"
+echo "  Iterations: $NUM_ITERATIONS"
+echo "  Episode Length: $EPISODE_LENGTH"
+echo "  Episodes per Iteration: $EPISODES_PER_ITERATION"
+echo "  VAE Updates: $VAE_UPDATES"
+echo "  Latent Dim: $LATENT_DIM"
+echo "  Device: $DEVICE"
+echo "  Extra Args: '$EXTRA_ARGS'"
+echo ""
+echo "🚀 Final Training Command:"
+echo "  $TRAINING_COMMAND"
+echo ""
+
+# Confirm before proceeding
+read -p "🤔 Does this look correct? Press Enter to continue or Ctrl+C to abort..."
 
 # Start training
 echo "🎯 Starting training..."
-$TRAINING_COMMAND
+echo "=========================================="
+
+# Execute the training command
+eval $TRAINING_COMMAND
+
+echo ""
 echo "✅ Training completed!"
+echo "📊 Check logs/ directory for training logs"
+echo "💾 Check checkpoints/ directory for saved models"
+echo "📈 Use ./quick_monitor.sh to analyze results"
 EOF
     chmod +x start_training.sh
 
