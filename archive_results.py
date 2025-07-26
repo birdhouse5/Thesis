@@ -20,17 +20,35 @@ import sys
 from pathlib import Path
 
 def convert_numpy_types(obj):
+    """Convert numpy and pandas types to JSON-serializable Python types."""
     if isinstance(obj, np.integer):
         return int(obj)
     elif isinstance(obj, np.floating):
         return float(obj)
     elif isinstance(obj, np.ndarray):
         return obj.tolist()
+    elif isinstance(obj, pd.Timestamp):
+        return str(obj)
+    elif isinstance(obj, pd.Series):
+        return obj.tolist()
+    elif hasattr(obj, 'item'):  # numpy scalars
+        try:
+            return obj.item()
+        except (ValueError, TypeError):
+            return str(obj)
     elif isinstance(obj, dict):
         return {key: convert_numpy_types(value) for key, value in obj.items()}
-    elif isinstance(obj, list):
+    elif isinstance(obj, (list, tuple)):
         return [convert_numpy_types(item) for item in obj]
-    return obj
+    elif hasattr(obj, '__dict__'):  # Custom objects
+        return str(obj)
+    else:
+        try:
+            # Try to convert to basic Python type
+            return obj
+        except:
+            # If all else fails, convert to string
+            return str(obj)
 
 class VariBADResultsArchiver:
     """

@@ -567,7 +567,7 @@ print_status "Creating helper scripts..."
 # Create training script that uses existing config
 cat > start_training.sh << 'EOF'
 #!/bin/bash
-# start_training.sh - Start VariBAD training with existing configuration
+# start_training.sh - Start VariBAD training with simple configuration
 set -e
 
 # Check for configuration file
@@ -576,31 +576,14 @@ if [ -f "$CONFIG_FILE" ]; then
     echo "📋 Loading configuration from $CONFIG_FILE"
     source "$CONFIG_FILE"
     
-    # Get active configuration
-    if [ -n "$ACTIVE_CONFIG" ]; then
-        # Load parameters for active config
-        NUM_ITERATIONS=$(eval echo \${ACTIVE_CONFIG}_NUM_ITERATIONS)
-        EPISODE_LENGTH=$(eval echo \${ACTIVE_CONFIG}_EPISODE_LENGTH)
-        EPISODES_PER_ITERATION=$(eval echo \${ACTIVE_CONFIG}_EPISODES_PER_ITERATION)
-        VAE_UPDATES=$(eval echo \${ACTIVE_CONFIG}_VAE_UPDATES)
-        LATENT_DIM=$(eval echo \${ACTIVE_CONFIG}_LATENT_DIM)
-        BUFFER_SIZE=$(eval echo \${ACTIVE_CONFIG}_BUFFER_SIZE)
-        EXTRA_ARGS=$(eval echo \${ACTIVE_CONFIG}_EXTRA_ARGS)
-        
-        echo "🏋️ Starting VariBAD Training"
-        echo "Config: $ACTIVE_CONFIG"
-        echo "Iterations: $NUM_ITERATIONS"
-        echo "Episode Length: $EPISODE_LENGTH"
-    else
-        echo "⚠️ ACTIVE_CONFIG not set, using defaults"
-        NUM_ITERATIONS=100
-        EPISODE_LENGTH=30
-        EPISODES_PER_ITERATION=5
-        VAE_UPDATES=10
-        LATENT_DIM=5
-        BUFFER_SIZE=200
-        EXTRA_ARGS=""
-    fi
+    echo "🏋️ Starting VariBAD Training"
+    echo "Iterations: $NUM_ITERATIONS"
+    echo "Episode Length: $EPISODE_LENGTH"
+    echo "Episodes per iteration: $EPISODES_PER_ITERATION"
+    echo "VAE updates: $VAE_UPDATES"
+    echo "Latent dim: $LATENT_DIM"
+    echo "Buffer size: $BUFFER_SIZE"
+    echo "Short selling: $SHORT_SELLING"
 else
     echo "⚠️ Configuration file not found: $CONFIG_FILE"
     echo "Using default parameters"
@@ -610,7 +593,11 @@ else
     VAE_UPDATES=10
     LATENT_DIM=5
     BUFFER_SIZE=200
-    EXTRA_ARGS=""
+    SHORT_SELLING=false
+    DEVICE=auto
+    EVAL_FREQUENCY=25
+    SAVE_FREQUENCY=50
+    LOG_LEVEL=INFO
 fi
 
 # Activate environment
@@ -634,7 +621,28 @@ COMMAND="$COMMAND --vae_updates $VAE_UPDATES"
 COMMAND="$COMMAND --latent_dim $LATENT_DIM"
 COMMAND="$COMMAND --buffer_size $BUFFER_SIZE"
 COMMAND="$COMMAND --device $DEVICE"
-COMMAND="$COMMAND $EXTRA_ARGS"
+
+# Add short selling flag if enabled
+if [ "$SHORT_SELLING" = "true" ]; then
+    COMMAND="$COMMAND --short_selling"
+fi
+
+# Add learning rates if specified
+if [ -n "$POLICY_LR" ]; then
+    COMMAND="$COMMAND --policy_lr $POLICY_LR"
+fi
+
+if [ -n "$VAE_ENCODER_LR" ]; then
+    COMMAND="$COMMAND --vae_encoder_lr $VAE_ENCODER_LR"
+fi
+
+if [ -n "$VAE_DECODER_LR" ]; then
+    COMMAND="$COMMAND --vae_decoder_lr $VAE_DECODER_LR"
+fi
+
+COMMAND="$COMMAND --eval_frequency $EVAL_FREQUENCY"
+COMMAND="$COMMAND --save_frequency $SAVE_FREQUENCY"
+COMMAND="$COMMAND --log_level $LOG_LEVEL"
 
 echo "Command: $COMMAND"
 echo ""
