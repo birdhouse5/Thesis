@@ -312,275 +312,66 @@ EOF
     # Create direct training script (no tmux)
     cat > start_training.sh << EOF
 #!/bin/bash
-# Robust VariBAD Training Script - Fixed Variable Issues
+# Minimal VariBAD Training Script
 set -e
 
-echo "🏋️ Starting VariBAD Training with Robust Config System..."
-
-# Get the directory where this script is located
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-echo "🔍 Debug: Script directory: $SCRIPT_DIR"
-echo "🔍 Debug: Current directory: $(pwd)"
-
-# Change to script directory to ensure relative paths work
-cd "$SCRIPT_DIR"
+echo "🏋️ Starting VariBAD Training..."
 
 # Activate environment
-if [ -f "venv/bin/activate" ]; then
-    source venv/bin/activate
-    echo "✅ Virtual environment activated"
-else
-    echo "❌ Virtual environment not found at $(pwd)/venv/bin/activate"
-    echo "Run setup_complete.sh first"
-    exit 1
-fi
+source venv/bin/activate
 
-# Set config file path with absolute path to avoid issues
-CONFIG_FILE="$(pwd)/config/training_configs.conf"
-echo "🔍 Debug: Config file absolute path: $CONFIG_FILE"
+# Create config directory
+mkdir -p config
 
-# Create config directory if it doesn't exist
-mkdir -p "$(pwd)/config"
-
-# Check if config file exists
+# Create minimal config file if it doesn't exist
+CONFIG_FILE="config/training_configs.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
-    echo "❌ Config file not found at: $CONFIG_FILE"
-    echo "Creating default config file..."
-    
-    # Create config file with absolute path
-    cat > "$CONFIG_FILE" << 'CONFIGEOF'
-# VariBAD Training Configuration File
-# Edit this file to change training parameters without modifying scripts
-
-# =============================================================================
-# ACTIVE CONFIGURATION - Change this line to switch configs
-# =============================================================================
+    cat > "$CONFIG_FILE" << 'EOF'
 ACTIVE_CONFIG="POLICY_FOCUSED"
-
-# =============================================================================
-# CONFIGURATION BLOCKS
-# =============================================================================
-
-# POLICY_FOCUSED - For when VAE learns but policy doesn't
 POLICY_FOCUSED_NUM_ITERATIONS=300
 POLICY_FOCUSED_EPISODE_LENGTH=60
 POLICY_FOCUSED_EPISODES_PER_ITERATION=12
 POLICY_FOCUSED_VAE_UPDATES=5
 POLICY_FOCUSED_LATENT_DIM=3
 POLICY_FOCUSED_EXTRA_ARGS="--short_selling"
-
-# QUICK_TEST - Fast test run
-QUICK_TEST_NUM_ITERATIONS=20
-QUICK_TEST_EPISODE_LENGTH=15
-QUICK_TEST_EPISODES_PER_ITERATION=3
-QUICK_TEST_VAE_UPDATES=3
-QUICK_TEST_LATENT_DIM=2
-QUICK_TEST_EXTRA_ARGS=""
-
-# DEFAULT_GPU - Balanced training for GPU
-DEFAULT_GPU_NUM_ITERATIONS=500
-DEFAULT_GPU_EPISODE_LENGTH=60
-DEFAULT_GPU_EPISODES_PER_ITERATION=10
-DEFAULT_GPU_VAE_UPDATES=15
-DEFAULT_GPU_LATENT_DIM=8
-DEFAULT_GPU_EXTRA_ARGS="--short_selling"
-
-# Advanced settings
 DEVICE_PREFERENCE="auto"
-EXPERIMENT_NAME="policy_focused_experiment"
-EXPERIMENT_DESCRIPTION="VariBAD training with policy focus"
-CONFIGEOF
-    
-    echo "✅ Created default config file at: $CONFIG_FILE"
-else
-    echo "✅ Found existing config file at: $CONFIG_FILE"
+EOF
 fi
 
-# Verify config file exists before parsing
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "❌ FATAL: Config file still doesn't exist after creation attempt"
-    exit 1
-fi
+# Load config
+ACTIVE_CONFIG=$(grep "^ACTIVE_CONFIG=" "$CONFIG_FILE" | cut -d'=' -f2 | tr -d '"')
+NUM_ITERATIONS=$(grep "^${ACTIVE_CONFIG}_NUM_ITERATIONS=" "$CONFIG_FILE" | cut -d'=' -f2)
+EPISODE_LENGTH=$(grep "^${ACTIVE_CONFIG}_EPISODE_LENGTH=" "$CONFIG_FILE" | cut -d'=' -f2)
+EPISODES_PER_ITERATION=$(grep "^${ACTIVE_CONFIG}_EPISODES_PER_ITERATION=" "$CONFIG_FILE" | cut -d'=' -f2)
+VAE_UPDATES=$(grep "^${ACTIVE_CONFIG}_VAE_UPDATES=" "$CONFIG_FILE" | cut -d'=' -f2)
+LATENT_DIM=$(grep "^${ACTIVE_CONFIG}_LATENT_DIM=" "$CONFIG_FILE" | cut -d'=' -f2)
+EXTRA_ARGS=$(grep "^${ACTIVE_CONFIG}_EXTRA_ARGS=" "$CONFIG_FILE" | cut -d'=' -f2 | tr -d '"')
 
-echo "📖 Parsing configuration from: $CONFIG_FILE"
-
-# Parse config file with error checking
-parse_config() {
-    local config_file="$1"
-    
-    # Extract ACTIVE_CONFIG with multiple fallback methods
-    ACTIVE_CONFIG=""
-    
-    # Method 1: Standard grep
-    if [ -z "$ACTIVE_CONFIG" ]; then
-        ACTIVE_CONFIG=$(grep -E "^ACTIVE_CONFIG=" "$config_file" 2>/dev/null | head -1 | cut -d'=' -f2 | tr -d '"' | tr -d "'" | tr -d ' ' || echo "")
-    fi
-    
-    # Method 2: sed fallback
-    if [ -z "$ACTIVE_CONFIG" ]; then
-        ACTIVE_CONFIG=$(sed -n 's/^ACTIVE_CONFIG="\?\([^"]*\)"\?/\1/p' "$config_file" 2>/dev/null | head -1 || echo "")
-    fi
-    
-    # Method 3: awk fallback
-    if [ -z "$ACTIVE_CONFIG" ]; then
-        ACTIVE_CONFIG=$(awk -F'=' '/^ACTIVE_CONFIG=/ {gsub(/["'\'']/,"",$2); print $2; exit}' "$config_file" 2>/dev/null || echo "")
-    fi
-    
-    # Default fallback
-    if [ -z "$ACTIVE_CONFIG" ]; then
-        echo "⚠️  Could not parse ACTIVE_CONFIG, using default: POLICY_FOCUSED"
-        ACTIVE_CONFIG="POLICY_FOCUSED"
-    fi
-    
-    echo "🔧 Using configuration: $ACTIVE_CONFIG"
-    
-    # Function to extract config values with fallbacks
-    get_config_value() {
-        local param_name="${ACTIVE_CONFIG}_${1}"
-        local default_value="$2"
-        local value=""
-        
-        # Try multiple extraction methods
-        value=$(grep -E "^${param_name}=" "$config_file" 2>/dev/null | head -1 | cut -d'=' -f2 | tr -d '"' | tr -d "'" | tr -d ' ' || echo "")
-        
-        if [ -z "$value" ]; then
-            value=$(sed -n "s/^${param_name}="\?\([^"]*\)"\?/\1/p" "$config_file" 2>/dev/null | head -1 || echo "")
-        fi
-        
-        if [ -z "$value" ]; then
-            value=$(awk -F'=' "/^${param_name}=/ {gsub(/[\"']/,\"\",\$2); print \$2; exit}" "$config_file" 2>/dev/null || echo "")
-        fi
-        
-        if [ -z "$value" ]; then
-            echo "$default_value"
-        else
-            echo "$value"
-        fi
-    }
-    
-    # Load all parameters
-    NUM_ITERATIONS=$(get_config_value "NUM_ITERATIONS" "100")
-    EPISODE_LENGTH=$(get_config_value "EPISODE_LENGTH" "30")
-    EPISODES_PER_ITERATION=$(get_config_value "EPISODES_PER_ITERATION" "5")
-    VAE_UPDATES=$(get_config_value "VAE_UPDATES" "10")
-    LATENT_DIM=$(get_config_value "LATENT_DIM" "5")
-    EXTRA_ARGS=$(get_config_value "EXTRA_ARGS" "")
-    
-    # Load device preference
-    DEVICE_PREFERENCE=$(grep -E "^DEVICE_PREFERENCE=" "$config_file" 2>/dev/null | head -1 | cut -d'=' -f2 | tr -d '"' | tr -d "'" | tr -d ' ' || echo "auto")
-    
-    # Export variables to make them available
-    export ACTIVE_CONFIG NUM_ITERATIONS EPISODE_LENGTH EPISODES_PER_ITERATION VAE_UPDATES LATENT_DIM EXTRA_ARGS DEVICE_PREFERENCE
-}
-
-# Parse the config
-parse_config "$CONFIG_FILE"
-
-# Debug output
-echo "🔍 Debug: Parsed config values:"
-echo "   ACTIVE_CONFIG: '$ACTIVE_CONFIG'"
-echo "   NUM_ITERATIONS: '$NUM_ITERATIONS'"
-echo "   EPISODE_LENGTH: '$EPISODE_LENGTH'"
-echo "   EPISODES_PER_ITERATION: '$EPISODES_PER_ITERATION'"
-echo "   VAE_UPDATES: '$VAE_UPDATES'"
-echo "   LATENT_DIM: '$LATENT_DIM'"
-echo "   EXTRA_ARGS: '$EXTRA_ARGS'"
-echo "   DEVICE_PREFERENCE: '$DEVICE_PREFERENCE'"
-
-# Validate that we got reasonable values
-if [ "$NUM_ITERATIONS" -lt 1 ] || [ "$NUM_ITERATIONS" -gt 10000 ]; then
-    echo "⚠️  Invalid NUM_ITERATIONS: $NUM_ITERATIONS, using default 100"
-    NUM_ITERATIONS=100
-fi
-
-if [ "$EPISODE_LENGTH" -lt 1 ] || [ "$EPISODE_LENGTH" -gt 500 ]; then
-    echo "⚠️  Invalid EPISODE_LENGTH: $EPISODE_LENGTH, using default 30"
-    EPISODE_LENGTH=30
-fi
-
-# Determine device
-if [ "$DEVICE_PREFERENCE" = "auto" ]; then
-    if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
-        DEVICE="cuda"
-        echo "🔥 GPU detected - using CUDA"
-    else
-        DEVICE="cpu"
-        echo "💻 No GPU detected - using CPU"
-    fi
-else
-    DEVICE="$DEVICE_PREFERENCE"
-    echo "🎯 Using specified device: $DEVICE"
-fi
-
-# Check if data exists
-if [ ! -f "data/sp500_rl_ready_cleaned.parquet" ]; then
-    echo "📊 Data not found, processing first..."
-    python varibad/main.py --mode data_only
-    
-    if [ ! -f "data/sp500_rl_ready_cleaned.parquet" ]; then
-        echo "❌ Data processing failed - file still doesn't exist"
-        exit 1
-    fi
-    echo "✅ Data processing completed"
-fi
-
-# Build training command
-TRAINING_COMMAND="python varibad/main.py --mode train"
-TRAINING_COMMAND="$TRAINING_COMMAND --num_iterations $NUM_ITERATIONS"
-TRAINING_COMMAND="$TRAINING_COMMAND --episode_length $EPISODE_LENGTH"
-TRAINING_COMMAND="$TRAINING_COMMAND --episodes_per_iteration $EPISODES_PER_ITERATION"
-TRAINING_COMMAND="$TRAINING_COMMAND --vae_updates $VAE_UPDATES"
-TRAINING_COMMAND="$TRAINING_COMMAND --latent_dim $LATENT_DIM"
-TRAINING_COMMAND="$TRAINING_COMMAND --device $DEVICE"
-
-# Handle extra arguments properly
-if [ ! -z "$EXTRA_ARGS" ] && [ "$EXTRA_ARGS" != '""' ] && [ "$EXTRA_ARGS" != "''" ] && [ "$EXTRA_ARGS" != " " ]; then
-    echo "🔍 Debug: Adding extra args: '$EXTRA_ARGS'"
-    TRAINING_COMMAND="$TRAINING_COMMAND $EXTRA_ARGS"
-else
-    echo "🔍 Debug: No extra args to add"
-fi
-
-# Display final configuration
-echo ""
-echo "📋 Final Training Configuration:"
-echo "  Config: $ACTIVE_CONFIG"
+echo "📋 Config: $ACTIVE_CONFIG"
 echo "  Iterations: $NUM_ITERATIONS"
 echo "  Episode Length: $EPISODE_LENGTH"
-echo "  Episodes/Iteration: $EPISODES_PER_ITERATION"
-echo "  VAE Updates: $VAE_UPDATES"
-echo "  Latent Dim: $LATENT_DIM"
-echo "  Device: $DEVICE"
-echo "  Extra Args: '$EXTRA_ARGS'"
-echo ""
-echo "🚀 Training Command:"
-echo "  $TRAINING_COMMAND"
-echo ""
+echo "  Extra Args: $EXTRA_ARGS"
 
-# Ask for confirmation
-echo "🤔 Ready to start training with the above configuration?"
-echo "Press Enter to continue, or Ctrl+C to abort..."
-read -r
-
-# Execute training
-echo "🎯 Starting VariBAD training..."
-echo "========================================"
-
-eval "$TRAINING_COMMAND"
-
-TRAINING_EXIT_CODE=$?
-
-echo ""
-if [ $TRAINING_EXIT_CODE -eq 0 ]; then
-    echo "✅ Training completed successfully!"
-    echo "📊 Check logs/ directory for training logs"
-    echo "💾 Check checkpoints/ directory for saved models"
-    echo "📈 Use python monitor_training.py --mode plot to analyze results"
+# Determine device
+if nvidia-smi &>/dev/null; then
+    DEVICE="cuda"
+    echo "🔥 Using GPU"
 else
-    echo "❌ Training failed with exit code: $TRAINING_EXIT_CODE"
-    echo "📋 Check the logs above for error details"
-    exit $TRAINING_EXIT_CODE
+    DEVICE="cpu"
+    echo "💻 Using CPU"
 fi
+
+# Process data if needed
+if [ ! -f "data/sp500_rl_ready_cleaned.parquet" ]; then
+    echo "📊 Processing data..."
+    python varibad/main.py --mode data_only
+fi
+
+# Build and execute training command
+COMMAND="python varibad/main.py --mode train --num_iterations $NUM_ITERATIONS --episode_length $EPISODE_LENGTH --episodes_per_iteration $EPISODES_PER_ITERATION --vae_updates $VAE_UPDATES --latent_dim $LATENT_DIM --device $DEVICE $EXTRA_ARGS"
+
+echo "🚀 Running: $COMMAND"
+eval $COMMAND
 EOF
     chmod +x start_training.sh
 
