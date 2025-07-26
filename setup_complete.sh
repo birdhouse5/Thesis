@@ -1,6 +1,6 @@
 #!/bin/bash
-# VariBAD Portfolio Optimization - Complete Setup Script
-# One command to set up everything from scratch
+# VariBAD Portfolio Optimization - Simplified Complete Setup Script
+# One command to set up everything from scratch (no tmux dependencies)
 
 set -e
 
@@ -282,7 +282,7 @@ test_installation() {
     print_success "Installation test passed"
 }
 
-# Create helpful scripts
+# Create helper scripts (simplified, no tmux)
 create_scripts() {
     print_status "Creating helper scripts..."
     
@@ -304,17 +304,17 @@ echo "  python varibad/main.py --help                        # Show help"
 echo "  python varibad/main.py --mode data_only              # Process data"  
 echo "  python varibad/main.py --mode train                  # Start training"
 echo "  python monitor_training.py --mode realtime           # Monitor training"
-echo "  ./start_training.sh                                  # Quick training"
+echo "  python monitor_training.py --mode plot               # Generate plots"
 EOF
     chmod +x activate_varibad.sh
     
-    # Create quick training script based on mode
+    # Create direct training script (no tmux)
     cat > start_training.sh << EOF
 #!/bin/bash
-# Fixed VariBAD Training Script with proper tmux handling
-set -e  # Exit on any error
+# Direct VariBAD Training Script (no tmux required)
+set -e
 
-echo "🏋️ Starting VariBAD Training with tmux..."
+echo "🏋️ Starting VariBAD Training..."
 
 # Activate environment
 source venv/bin/activate
@@ -325,10 +325,7 @@ if [ ! -f "data/sp500_rl_ready_cleaned.parquet" ]; then
     python varibad/main.py --mode data_only
 fi
 
-# Set session name (this was the bug - shell variable scope)
-SESSION_NAME="varibad_training"
-
-# Check if we have GPU
+# Determine training parameters
 if nvidia-smi &> /dev/null; then
     echo "🔥 GPU detected - using GPU training parameters"
     DEVICE="cuda"
@@ -341,138 +338,26 @@ else
     ESTIMATED_TIME="2-3 hours"
 fi
 
-echo "Parameters: $PARAMS"
-echo "Estimated time: $ESTIMATED_TIME"
-echo "Session name: $SESSION_NAME"
-
-# Kill any existing session with same name
-if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-    echo "⚠️  Killing existing session: $SESSION_NAME"
-    tmux kill-session -t "$SESSION_NAME"
+echo "Parameters: \$PARAMS"
+echo "Estimated time: \$ESTIMATED_TIME"
+echo ""
+echo "📋 To monitor training in another terminal:"
+echo "  tail -f logs/varibad_pipeline_*.log      # View logs"
+echo "  python monitor_training.py --mode plot   # Generate plots"
+if [ "\$DEVICE" = "cuda" ]; then
+    echo "  watch -n 1 nvidia-smi                   # Monitor GPU"
 fi
-
-# Create new tmux session
-echo "🚀 Creating tmux session: $SESSION_NAME"
-tmux new-session -d -s "$SESSION_NAME"
-
-# Send commands to the session
-echo "📡 Setting up session environment..."
-tmux send-keys -t "$SESSION_NAME" "cd $(pwd)" C-m
-tmux send-keys -t "$SESSION_NAME" "source venv/bin/activate" C-m
-
-# Small delay to ensure environment is activated
-sleep 1
-
-# Start the training
-echo "🎯 Starting training in session..."
-tmux send-keys -t "$SESSION_NAME" "python varibad/main.py $PARAMS" C-m
-
-# Verify session is running
-if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-    echo "✅ Training started successfully in tmux session: $SESSION_NAME"
-else
-    echo "❌ Failed to create tmux session"
-    exit 1
-fi
-
 echo ""
-echo "📊 Monitoring & Control:"
-echo "  tmux attach-session -t $SESSION_NAME     # Attach to training (see live output)"
-echo "  tmux detach                              # Detach without stopping (Ctrl+B, then D)"
-echo "  tmux list-sessions                       # List all sessions"  
-echo "  tail -f logs/varibad_pipeline_*.log      # View logs in separate terminal"
+echo "🛑 To stop training: Press Ctrl+C"
 echo ""
-echo "🖥️  System Monitoring:"
-if [ "$DEVICE" = "cuda" ]; then
-echo "  watch -n 1 nvidia-smi                   # Monitor GPU usage"
-fi
-echo "  htop                                     # Monitor CPU/RAM usage"
-echo ""
-echo "🛑 Stop Training:"
-echo "  tmux kill-session -t $SESSION_NAME      # Stop training"
-echo "  tmux attach -t $SESSION_NAME            # Attach and press Ctrl+C"
-echo ""
-echo "🔄 Quick Commands:"
-echo "  tmux attach -t $SESSION_NAME            # Attach to see training"
-echo "  # Press Ctrl+B, then D to detach"
-echo "  tmux kill-session -t $SESSION_NAME      # Stop training"
+
+# Start training directly (no tmux)
+echo "🎯 Starting training..."
+python varibad/main.py \$PARAMS
+
+echo "✅ Training completed!"
 EOF
     chmod +x start_training.sh
-
-    # Create tmux monitoring script
-    cat > monitor_tmux.sh << 'EOF'
-#!/bin/bash
-# VariBAD Training Monitor for tmux
-
-SESSION_NAME="varibad_training"
-
-echo "🔍 VariBAD Training Monitor"
-echo "=========================="
-
-# Check if session exists
-if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-    echo "❌ No training session found ($SESSION_NAME)"
-    echo "Start training with: ./start_training.sh"
-    exit 1
-fi
-
-echo "✅ Training session active: $SESSION_NAME"
-echo ""
-
-while true; do
-    echo "Choose an option:"
-    echo "1) Attach to training session (see live output)"
-    echo "2) View recent logs"
-    echo "3) Check GPU usage" 
-    echo "4) List tmux sessions"
-    echo "5) Stop training"
-    echo "6) Exit monitor"
-    echo ""
-    read -p "Enter choice (1-6): " choice
-    
-    case $choice in
-        1)
-            echo "🔗 Attaching to session (Ctrl+B then D to detach)"
-            sleep 2
-            tmux attach-session -t "$SESSION_NAME"
-            ;;
-        2)
-            echo "📋 Recent logs:"
-            tail -20 logs/varibad_pipeline_*.log 2>/dev/null || echo "No logs found yet"
-            echo ""
-            ;;
-        3)
-            if command -v nvidia-smi &> /dev/null; then
-                nvidia-smi
-            else
-                echo "nvidia-smi not available"
-            fi
-            echo ""
-            ;;
-        4)
-            echo "📋 Active tmux sessions:"
-            tmux list-sessions
-            echo ""
-            ;;
-        5)
-            read -p "⚠️  Really stop training? (y/N): " confirm
-            if [[ $confirm =~ ^[Yy]$ ]]; then
-                tmux kill-session -t "$SESSION_NAME"
-                echo "🛑 Training stopped"
-                exit 0
-            fi
-        ;;
-        6)
-            echo "👋 Exiting monitor"
-            exit 0
-            ;;
-        *)
-            echo "Invalid choice"
-            ;;
-    esac
-done
-EOF
-    chmod +x monitor_tmux.sh
 
     # Create monitoring script
     cat > quick_monitor.sh << 'EOF'
@@ -488,16 +373,14 @@ echo "1. Real-time plots:     python monitor_training.py --mode realtime"
 echo "2. Generate plots:      python monitor_training.py --mode plot"  
 echo "3. Check checkpoints:   python monitor_training.py --mode checkpoints"
 echo "4. View logs:           tail -f logs/varibad_pipeline_*.log"
-echo "5. Training session:    tmux attach-session -t varibad_training"
 
-read -p "Choose option (1-5): " choice
+read -p "Choose option (1-4): " choice
 
 case $choice in
     1) python monitor_training.py --mode realtime --interval 60 ;;
     2) python monitor_training.py --mode plot ;;
     3) python monitor_training.py --mode checkpoints ;;
     4) tail -f logs/varibad_pipeline_*.log ;;
-    5) tmux attach-session -t varibad_training ;;
     *) echo "Invalid option" ;;
 esac
 EOF
@@ -556,7 +439,7 @@ source activate_varibad.sh
 ./start_training.sh
 \`\`\`
 
-### 4. Monitor Progress
+### 4. Monitor Progress (in another terminal)
 \`\`\`bash
 ./quick_monitor.sh
 \`\`\`
@@ -585,7 +468,7 @@ source activate_varibad.sh
 
 1. **Check logs**: \`tail -f logs/varibad_pipeline_*.log\`
 2. **Monitor training**: \`./quick_monitor.sh\`
-3. **Restart**: \`tmux kill-session -t varibad_training && ./start_training.sh\`
+3. **Restart**: Stop training (Ctrl+C) and run \`./start_training.sh\` again
 
 ---
 *Generated by setup_complete.sh on $(date)*
@@ -629,28 +512,28 @@ main() {
     echo "1. Activate environment:    source activate_varibad.sh"
     echo "2. Process data:           ./process_data.sh"
     echo "3. Start training:         ./start_training.sh"
-    echo "4. Monitor progress:       ./quick_monitor.sh"
+    echo "4. Monitor progress:       ./quick_monitor.sh (in another terminal)"
     
     echo ""
     print_header "🔧 TRAINING OPTIONS:"
     if [ "$MODE" = "gpu" ]; then
-        echo "• Quick test (5 min):      python varibad/scripts/main.py --mode train --num_iterations 10 --device cuda"
+        echo "• Quick test (5 min):      python varibad/main.py --mode train --num_iterations 10 --device cuda"
         echo "• Development (30 min):    ./start_training.sh"
-        echo "• Serious (2 hours):       python varibad/scripts/main.py --mode train --num_iterations 2000 --device cuda --short_selling"
+        echo "• Serious (2 hours):       python varibad/main.py --mode train --num_iterations 2000 --device cuda --short_selling"
     else
-        echo "• Quick test (15 min):     python varibad/scripts/main.py --mode train --num_iterations 10 --device cpu"
+        echo "• Quick test (15 min):     python varibad/main.py --mode train --num_iterations 10 --device cpu"
         echo "• Development (2 hours):   ./start_training.sh"
-        echo "• Serious (8-12 hours):    python varibad/scripts/main.py --mode train --num_iterations 1000 --device cpu"
+        echo "• Serious (8-12 hours):    python varibad/main.py --mode train --num_iterations 1000 --device cpu"
     fi
     
     echo ""
     print_header "📊 MONITORING:"
     echo "• Real-time plots:         python monitor_training.py --mode realtime"
     echo "• Training logs:           tail -f logs/varibad_pipeline_*.log"
-    echo "• Training session:        tmux attach-session -t varibad_training"
     if [ "$MODE" = "gpu" ]; then
         echo "• GPU usage:               watch -n 1 nvidia-smi"
     fi
+    echo "• Generate plots:          python monitor_training.py --mode plot"
     
     echo ""
     print_header "📁 PROJECT STRUCTURE:"
@@ -664,7 +547,7 @@ main() {
     echo ""
     print_header "🚨 IMPORTANT FILES:"
     echo "• activate_varibad.sh      - Activate environment & show info"
-    echo "• start_training.sh        - One-click training start"
+    echo "• start_training.sh        - Direct training start (no tmux)"
     echo "• quick_monitor.sh         - Monitor training progress"
     echo "• process_data.sh          - Standalone data processing"
     echo "• QUICKSTART.md            - Quick reference guide"
