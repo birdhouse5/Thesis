@@ -1,11 +1,22 @@
-﻿"""VariBAD Portfolio Optimization Package"""
+﻿"""
+VariBAD Portfolio Optimization Package
+Restructured for clean experimentation
+"""
 
-# Core components
-from .core.models import VariBADVAE, TrajectoryEncoder, TrajectoryDecoder, VariBADPolicy
-from .core.trainer import VariBADTrainer
-from .core.environment import MetaTraderPortfolioMDP
+# Import main components for easy access
+from .data import load_dataset, create_dataset
+from .models import VariBADVAE, PortfolioEnvironment
+from .trainer import VariBADTrainer
+from .utils import TrajectoryBuffer, get_device, count_parameters
 
-# Utilities
-from .utils.buffer import BlindTrajectoryBuffer, create_trajectory_batch
-
-__version__ = "0.1.0"
+__version__ = "0.2.0"
+__all__ = [
+    'load_dataset',
+    'create_dataset', 
+    'VariBADVAE',
+    'PortfolioEnvironment',
+    'VariBADTrainer',
+    'TrajectoryBuffer',
+    'get_device',
+    'count_parameters'
+]
