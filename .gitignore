@@ -6,3 +6,5 @@ varibad/data
 archive/
 data/
 checkpoints/
+logs/
+results/

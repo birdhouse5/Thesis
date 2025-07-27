@@ -1,462 +1,719 @@
 #!/usr/bin/env python3
 """
-VariBAD Portfolio Optimization Pipeline - Flat Structure Version
-Improved with better import handling and error messages
+Enhanced VariBAD Main Script with Configuration System
+Phase 2: Multi-experiment management and parameter sweeps
 """
 
 import argparse
 import os
 import sys
 import logging
+import json
+import itertools
 from pathlib import Path
 from datetime import datetime
+from typing import Dict, List, Any, Optional
 import pandas as pd
 
-import sys
-import io
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-
-# Add project root to Python path for imports
+# Add project root to Python path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-# Setup logging
+from experiment_database import ExperimentDatabase
+
+class ConfigManager:
+    """Enhanced configuration management for VariBAD experiments"""
+    
+    def __init__(self):
+        self.base_config = None
+        self.current_config = None
+        
+    def load_base_config(self) -> Dict[str, Any]:
+        """Load the base configuration"""
+        base_path = Path("config/base.conf")
+        if not base_path.exists():
+            raise FileNotFoundError(f"Base configuration not found: {base_path}")
+        
+        with open(base_path, 'r') as f:
+            self.base_config = json.load(f)
+        
+        return self.base_config
+    
+    def load_config(self, config_path: str) -> Dict[str, Any]:
+        """Load configuration with inheritance from base"""
+        
+        # Start with base config
+        if self.base_config is None:
+            self.load_base_config()
+        
+        config = self.base_config.copy()
+        
+        # Load specific config if provided
+        if config_path:
+            config_file = Path(config_path)
+            if not config_file.exists():
+                # Try adding .conf extension
+                config_file = Path(f"{config_path}.conf")
+            if not config_file.exists():
+                # Try in config directory
+                config_file = Path(f"config/{config_path}")
+            if not config_file.exists():
+                config_file = Path(f"config/{config_path}.conf")
+            
+            if not config_file.exists():
+                raise FileNotFoundError(f"Configuration file not found: {config_path}")
+            
+            with open(config_file, 'r') as f:
+                override_config = json.load(f)
+            
+            # Merge configurations (deep merge)
+            config = self._deep_merge(config, override_config)
+        
+        self.current_config = config
+        return config
+    
+    def _deep_merge(self, base: Dict, override: Dict) -> Dict:
+        """Deep merge two dictionaries"""
+        result = base.copy()
+        
+        for key, value in override.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = self._deep_merge(result[key], value)
+            else:
+                result[key] = value
+        
+        return result
+    
+    def override_with_args(self, config: Dict[str, Any], args: argparse.Namespace) -> Dict[str, Any]:
+        """Override config with command line arguments"""
+        
+        # Training parameters
+        if hasattr(args, 'num_iterations') and args.num_iterations is not None:
+            config['training']['num_iterations'] = args.num_iterations
+        if hasattr(args, 'episode_length') and args.episode_length is not None:
+            config['training']['episode_length'] = args.episode_length
+        if hasattr(args, 'episodes_per_iteration') and args.episodes_per_iteration is not None:
+            config['training']['episodes_per_iteration'] = args.episodes_per_iteration
+        if hasattr(args, 'vae_updates') and args.vae_updates is not None:
+            config['training']['vae_updates'] = args.vae_updates
+        
+        # VariBAD parameters
+        if hasattr(args, 'latent_dim') and args.latent_dim is not None:
+            config['varibad']['latent_dim'] = args.latent_dim
+        
+        # Portfolio parameters
+        if hasattr(args, 'short_selling') and args.short_selling is not None:
+            config['portfolio']['short_selling'] = args.short_selling
+        
+        # Device
+        if hasattr(args, 'device') and args.device is not None:
+            config['environment']['device'] = args.device
+        
+        # Experiment name override
+        if hasattr(args, 'name') and args.name is not None:
+            config['experiment']['name'] = args.name
+        
+        return config
+    
+    def parse_sweep_parameters(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Parse SWEEP parameters and generate all combinations"""
+        
+        sweep_params = {}
+        
+        # Find all SWEEP parameters
+        def find_sweeps(obj, path=""):
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    current_path = f"{path}.{key}" if path else key
+                    if isinstance(value, str) and value.startswith("SWEEP:"):
+                        # Parse sweep values
+                        sweep_str = value[6:]  # Remove "SWEEP:"
+                        try:
+                            sweep_values = json.loads(sweep_str)
+                            sweep_params[current_path] = sweep_values
+                        except json.JSONDecodeError:
+                            print(f"Warning: Invalid sweep format for {current_path}: {value}")
+                    elif isinstance(value, dict):
+                        find_sweeps(value, current_path)
+        
+        find_sweeps(config)
+        
+        if not sweep_params:
+            return [config]
+        
+        # Generate all combinations
+        param_names = list(sweep_params.keys())
+        param_values = list(sweep_params.values())
+        
+        configs = []
+        for combination in itertools.product(*param_values):
+            new_config = json.loads(json.dumps(config))  # Deep copy
+            
+            for param_name, value in zip(param_names, combination):
+                # Set the parameter value
+                self._set_nested_value(new_config, param_name, value)
+            
+            configs.append(new_config)
+        
+        return configs
+    
+    def _set_nested_value(self, obj: Dict, path: str, value: Any):
+        """Set a nested dictionary value using dot notation"""
+        keys = path.split('.')
+        current = obj
+        
+        for key in keys[:-1]:
+            if key not in current:
+                current[key] = {}
+            current = current[key]
+        
+        current[keys[-1]] = value
+    
+    def generate_experiment_name(self, config: Dict[str, Any], args: argparse.Namespace = None) -> str:
+        """Generate automatic experiment name with key parameters"""
+        
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        # Base name from config
+        base_name = config.get('experiment', {}).get('name', 'exp')
+        
+        # Add key parameters
+        params = []
+        
+        # Latent dimension
+        latent_dim = config.get('varibad', {}).get('latent_dim', 5)
+        params.append(f"latent{latent_dim}")
+        
+        # Episode length if non-standard
+        episode_length = config.get('training', {}).get('episode_length', 30)
+        if episode_length != 30:
+            params.append(f"ep{episode_length}")
+        
+        # Iterations if non-standard
+        num_iterations = config.get('training', {}).get('num_iterations', 1000)
+        if num_iterations != 1000:
+            params.append(f"iter{num_iterations}")
+        
+        # Short selling
+        short_selling = config.get('portfolio', {}).get('short_selling', True)
+        if not short_selling:
+            params.append("longOnly")
+        
+        # Combine parts
+        if params:
+            name = f"{base_name}_{timestamp}_{'_'.join(params)}"
+        else:
+            name = f"{base_name}_{timestamp}"
+        
+        return name
+
+
+class ExperimentRunner:
+    """Run experiments with configuration management"""
+    
+    def __init__(self, config_manager: ConfigManager):
+        self.config_manager = config_manager
+        self.results_db = []
+        self.db = ExperimentDatabase()
+        
+    def run_single_experiment(self, config: Dict[str, Any], experiment_name: str) -> Dict[str, Any]:
+        """Run a single experiment with the given configuration"""
+        
+        print(f"\n🚀 Starting experiment: {experiment_name}")
+        print("=" * 60)
+        
+        # Register experiment in database
+        exp_id = self.db.register_experiment(config, experiment_name)
+        self.db.start_experiment(exp_id)        
+
+        try:
+            # Import training components
+            from varibad.core.trainer import VariBADTrainer
+            
+            # Extract parameters from config
+            training_params = config.get('training', {})
+            varibad_params = config.get('varibad', {})
+            portfolio_params = config.get('portfolio', {})
+            env_params = config.get('environment', {})
+            lr_params = config.get('learning_rates', {})
+            
+            # Initialize trainer
+            trainer = VariBADTrainer(
+                data_path=env_params.get('data_path', 'data/sp500_rl_ready_cleaned.parquet'),
+                episode_length=training_params.get('episode_length', 30),
+                action_dim=30,  # 30 S&P 500 companies
+                latent_dim=varibad_params.get('latent_dim', 5),
+                max_episodes_buffer=training_params.get('buffer_size', 500),
+                enable_short_selling=portfolio_params.get('short_selling', True),
+                policy_lr=lr_params.get('policy_lr', 1e-4),
+                vae_encoder_lr=lr_params.get('vae_encoder_lr', 1e-4),
+                vae_decoder_lr=lr_params.get('vae_decoder_lr', 1e-4),
+                device=env_params.get('device', 'auto')
+            )
+            
+            print(f"✓ Trainer initialized")
+            print(f"  State dimension: {trainer.state_dim}")
+            print(f"  Action dimension: {trainer.actual_action_dim}")
+            print(f"  Model parameters: {sum(p.numel() for p in trainer.varibad.parameters()):,}")
+            
+            # Run training
+            stats = trainer.train(
+                num_iterations=training_params.get('num_iterations', 1000),
+                episodes_per_iteration=training_params.get('episodes_per_iteration', 5),
+                vae_updates_per_iteration=training_params.get('vae_updates', 10),
+                eval_frequency=training_params.get('eval_frequency', 50),
+                save_frequency=training_params.get('save_frequency', 100)
+            )
+            
+            # Save results
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            # Save model checkpoint
+            checkpoint_path = f"checkpoints/{experiment_name}_{timestamp}.pt"
+            trainer.save_checkpoint(checkpoint_path)
+            
+            # Save training statistics
+            stats_path = f"results/experiments/{experiment_name}_{timestamp}.json"
+            os.makedirs("results/experiments", exist_ok=True)
+            
+            # Prepare results
+            experiment_result = {
+                'experiment_name': experiment_name,
+                'timestamp': timestamp,
+                'config': config,
+                'stats': stats,
+                'checkpoint_path': checkpoint_path,
+                'stats_path': stats_path,
+                'status': 'completed'
+            }
+            
+            # Convert numpy arrays to lists for JSON serialization
+            json_stats = {}
+            for key, value in stats.items():
+                if hasattr(value, 'tolist'):
+                    json_stats[key] = value.tolist()
+                elif isinstance(value, (list, tuple)):
+                    json_stats[key] = list(value)
+                else:
+                    json_stats[key] = value
+            
+            with open(stats_path, 'w') as f:
+                json.dump({
+                    'experiment': experiment_result,
+                    'training_stats': json_stats
+                }, f, indent=2)
+            
+            print(f"✅ Experiment completed successfully!")
+            print(f"📊 Results saved to: {stats_path}")
+            print(f"💾 Model saved to: {checkpoint_path}")
+            
+            # Calculate summary metrics
+            if 'avg_episode_reward' in stats and stats['avg_episode_reward']:
+                final_reward = stats['avg_episode_reward'][-1] if stats['avg_episode_reward'] else 0
+                avg_reward = sum(stats['avg_episode_reward']) / len(stats['avg_episode_reward']) if stats['avg_episode_reward'] else 0
+                
+                print(f"📈 Performance Summary:")
+                print(f"  Final episode reward: {final_reward:.4f}")
+                print(f"  Average episode reward: {avg_reward:.4f}")
+                
+                experiment_result['final_reward'] = final_reward
+                experiment_result['avg_reward'] = avg_reward
+            
+            self.db.complete_experiment(
+                exp_id,
+                checkpoint_path=checkpoint_path,
+                results_path=stats_path,
+                final_reward=experiment_result.get('final_reward'),
+                avg_reward=experiment_result.get('avg_reward')
+                )
+
+            return experiment_result
+            
+        except Exception as e:
+            self.db.fail_experiment(exp_id, str(e))
+            print(f"❌ Experiment failed: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            return {
+                'experiment_name': experiment_name,
+                'timestamp': datetime.now().strftime('%Y%m%d_%H%M%S'),
+                'config': config,
+                'status': 'failed',
+                'error': str(e)
+            }
+    
+    def run_experiment_suite(self, configs: List[Dict[str, Any]], base_name: str = None) -> List[Dict[str, Any]]:
+        """Run a suite of experiments (e.g., parameter sweep)"""
+        
+        print(f"\n🧪 Running experiment suite with {len(configs)} configurations")
+        print("=" * 80)
+        
+        results = []
+        
+        for i, config in enumerate(configs):
+            print(f"\n📋 Configuration {i+1}/{len(configs)}")
+            
+            # Generate experiment name
+            if base_name:
+                experiment_name = f"{base_name}_{i+1:03d}"
+            else:
+                experiment_name = self.config_manager.generate_experiment_name(config)
+            
+            # Update config with experiment name
+            config['experiment']['name'] = experiment_name
+            
+            # Run experiment
+            result = self.run_single_experiment(config, experiment_name)
+            results.append(result)
+            
+            # Save intermediate results
+            suite_results_path = f"results/experiments/suite_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            with open(suite_results_path, 'w') as f:
+                json.dump({
+                    'suite_info': {
+                        'total_experiments': len(configs),
+                        'completed': i + 1,
+                        'timestamp': datetime.now().isoformat()
+                    },
+                    'results': results
+                }, f, indent=2)
+        
+        print(f"\n🎉 Experiment suite completed!")
+        print(f"📊 Suite results saved to: {suite_results_path}")
+        
+        # Generate summary
+        successful = [r for r in results if r['status'] == 'completed']
+        failed = [r for r in results if r['status'] == 'failed']
+        
+        print(f"\n📈 Suite Summary:")
+        print(f"  Total experiments: {len(results)}")
+        print(f"  Successful: {len(successful)}")
+        print(f"  Failed: {len(failed)}")
+        
+        if successful:
+            avg_final_rewards = [r.get('final_reward', 0) for r in successful if 'final_reward' in r]
+            if avg_final_rewards:
+                best_reward = max(avg_final_rewards)
+                avg_reward = sum(avg_final_rewards) / len(avg_final_rewards)
+                print(f"  Best final reward: {best_reward:.4f}")
+                print(f"  Average final reward: {avg_reward:.4f}")
+        
+        return results
+
+
 def setup_logging(log_level="INFO"):
-    """Setup comprehensive logging for the pipeline."""
+    """Setup comprehensive logging for the pipeline - WINDOWS ENCODING FIXED"""
     log_dir = Path("logs")
     log_dir.mkdir(exist_ok=True)
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = log_dir / f"varibad_pipeline_{timestamp}.log"
+    log_file = log_dir / f"varibad_enhanced_{timestamp}.log"
+    
+    # FIXED: Use UTF-8 encoding for file handler
+    file_handler = logging.FileHandler(log_file, encoding='utf-8')
+    console_handler = logging.StreamHandler(sys.stdout)
     
     logging.basicConfig(
         level=getattr(logging, log_level.upper()),
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file),
-            logging.StreamHandler(sys.stdout)
-        ]
+        handlers=[file_handler, console_handler]
     )
     
     logger = logging.getLogger(__name__)
-    logger.info(f"VariBAD Pipeline started - logs saved to {log_file}")
+    # FIXED: Remove Unicode symbols for Windows compatibility
+    logger.info(f"Enhanced VariBAD Pipeline started - logs saved to {log_file}")
     logger.info(f"Running from: {os.getcwd()}")
-    logger.info(f"Script location: {Path(__file__).absolute()}")
     return logger
 
-def check_dependencies():
-    """Check if all required packages are installed."""
-    required_packages = [
-        'pandas', 'numpy', 'torch', 'yfinance', 'sklearn',
-        'matplotlib', 'seaborn', 'gym'
-    ]
-    
-    missing = []
-    for package in required_packages:
-        try:
-            if package == 'sklearn':
-                import sklearn
-            else:
-                __import__(package)
-        except ImportError:
-            missing.append(package)
-    
-    if missing:
-        print(f"❌ Missing required packages: {', '.join(missing)}")
-        print("Install with:")
-        for pkg in missing:
-            if pkg == 'sklearn':
-                print(f"  pip install scikit-learn")
-            else:
-                print(f"  pip install {pkg}")
-        sys.exit(1)
-    
-    print("✅ All dependencies satisfied")
 
-def create_directory_structure():
-    """Create necessary directories for the pipeline."""
-    directories = [
-        "data", "logs", "checkpoints", "results", "plots", "config"
-    ]
+def create_parser():
+    """Create enhanced argument parser with configuration support"""
     
-    for dir_name in directories:
-        Path(dir_name).mkdir(exist_ok=True)
-    
-    print("✅ Directory structure created")
-
-def download_and_clean_data(logger):
-    """Data processing pipeline with improved error handling."""
-    logger.info("Starting data processing pipeline...")
-    
-    final_path = "data/sp500_rl_ready_cleaned.parquet"
-    
-    # Check if data already exists
-    if os.path.exists(final_path):
-        logger.info(f"✅ Data already exists at {final_path}")
-        
-        # Validate existing data
-        try:
-            df = pd.read_parquet(final_path)
-            nan_count = df.isnull().sum().sum()
-            
-            logger.info(f"✅ Data validation complete!")
-            logger.info(f"   Dataset shape: {df.shape}")
-            logger.info(f"   Date range: {df['date'].min().date()} to {df['date'].max().date()}")
-            logger.info(f"   Tickers: {df['ticker'].nunique()}")
-            logger.info(f"   Features: {len(df.columns)}")
-            logger.info(f"   Missing values: {nan_count}")
-            
-            return final_path
-            
-        except Exception as e:
-            logger.warning(f"Existing data file is corrupted: {e}. Will recreate.")
-    
-    # Create new data
-    logger.info("Creating new dataset from scratch...")
-    
-    try:
-        # Import the data pipeline with proper error handling
-        logger.info("Attempting to import data pipeline...")
-        
-        # Try multiple import paths
-        data_pipeline_module = None
-        import_attempts = [
-            "varibad.data_pipeline",
-            "data_pipeline",
-            "varibad.data_pipeline"
-        ]
-        
-        for import_path in import_attempts:
-            try:
-                if import_path == "varibad.data_pipeline":
-                    from varibad.data_pipeline import create_rl_dataset
-                elif import_path == "data_pipeline":
-                    from data_pipeline import create_rl_dataset
-                
-                data_pipeline_module = True
-                logger.info(f"✅ Successfully imported from {import_path}")
-                break
-                
-            except ImportError as e:
-                logger.debug(f"Failed to import from {import_path}: {e}")
-                continue
-        
-        if not data_pipeline_module:
-            raise ImportError("Could not import data_pipeline from any location")
-        
-        # Create the dataset
-        final_path = create_rl_dataset()
-        
-        logger.info(f"✅ Data processing complete! Dataset saved to: {final_path}")
-        return final_path
-        
-    except ImportError as e:
-        logger.error(f"Failed to import data pipeline: {e}")
-        logger.error("Available Python path:")
-        for path in sys.path:
-            logger.error(f"  {path}")
-        logger.error("Make sure you're running from the project root directory")
-        logger.error("Current working directory: " + os.getcwd())
-        raise
-    except Exception as e:
-        logger.error(f"Data processing failed: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise
-
-def train_varibad_model(data_path, config, logger):
-    """Train the VariBAD model with comprehensive error handling."""
-    logger.info("Starting VariBAD training...")
-    
-    try:
-        # Import with detailed error handling
-        logger.info("Attempting to import VariBAD trainer...")
-        
-        try:
-            from varibad.core.trainer import VariBADTrainer
-            logger.info("✅ Successfully imported VariBADTrainer")
-        except ImportError as e:
-            logger.error(f"Failed to import VariBADTrainer: {e}")
-            logger.error("This usually means:")
-            logger.error("1. You're not running from the project root directory")
-            logger.error("2. The varibad package is not properly installed")
-            logger.error("3. There are missing dependencies")
-            logger.error(f"Current working directory: {os.getcwd()}")
-            logger.error(f"Python path: {sys.path}")
-            
-            # Try to give more specific help
-            trainer_path = Path("varibad/core/trainer.py")
-            if trainer_path.exists():
-                logger.info(f"✅ Found trainer file at {trainer_path.absolute()}")
-                logger.error("The file exists but can't be imported. Check for syntax errors or missing dependencies in the trainer module.")
-            else:
-                logger.error(f"❌ Trainer file not found at {trainer_path.absolute()}")
-                logger.error("Make sure you're running from the correct directory")
-            
-            raise
-        
-        # Initialize trainer with validation
-        logger.info("Initializing VariBAD trainer...")
-        trainer = VariBADTrainer(
-            data_path=data_path,
-            episode_length=config.episode_length,
-            action_dim=30,  # 30 S&P 500 companies
-            latent_dim=config.latent_dim,
-            max_episodes_buffer=config.buffer_size,
-            enable_short_selling=config.short_selling,
-            policy_lr=config.policy_lr,
-            vae_encoder_lr=config.vae_encoder_lr,
-            vae_decoder_lr=config.vae_decoder_lr,
-            device=config.device
-        )
-        
-        logger.info(f"✅ Trainer initialized successfully")
-        logger.info(f"   State dimension: {trainer.state_dim}")
-        logger.info(f"   Action dimension: {trainer.actual_action_dim}")
-        logger.info(f"   Model parameters: {sum(p.numel() for p in trainer.varibad.parameters()):,}")
-        
-        # Train model
-        logger.info("Starting training loop...")
-        stats = trainer.train(
-            num_iterations=config.num_iterations,
-            episodes_per_iteration=config.episodes_per_iteration,
-            vae_updates_per_iteration=config.vae_updates,
-            eval_frequency=config.eval_frequency,
-            save_frequency=config.save_frequency
-        )
-        
-        # Save final model
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        checkpoint_path = f"checkpoints/varibad_final_{timestamp}.pt"
-        trainer.save_checkpoint(checkpoint_path)
-        
-        logger.info(f"✅ Training complete! Model saved to {checkpoint_path}")
-        
-        # Save training stats
-        stats_path = f"results/training_stats_{timestamp}.json"
-        try:
-            import json
-            with open(stats_path, 'w') as f:
-                # Convert numpy arrays to lists for JSON serialization
-                json_stats = {}
-                for key, value in stats.items():
-                    if hasattr(value, 'tolist'):
-                        json_stats[key] = value.tolist()
-                    elif isinstance(value, (list, tuple)):
-                        json_stats[key] = list(value)
-                    else:
-                        json_stats[key] = value
-                json.dump(json_stats, f, indent=2)
-            
-            logger.info(f"📊 Training statistics saved to {stats_path}")
-        except Exception as e:
-            logger.warning(f"Failed to save training stats: {e}")
-        
-        return checkpoint_path, stats
-        
-    except Exception as e:
-        logger.error(f"Training failed: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise
-
-def evaluate_model(checkpoint_path, data_path, logger):
-    """Evaluate a trained model."""
-    logger.info(f"Evaluating model from {checkpoint_path}")
-    
-    try:
-        from varibad.core.trainer import VariBADTrainer
-        import torch
-        
-        # Load checkpoint
-        if not os.path.exists(checkpoint_path):
-            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-            
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
-        config = checkpoint.get('config', {})
-        
-        # Recreate trainer
-        trainer = VariBADTrainer(
-            data_path=data_path,
-            state_dim=config.get('state_dim'),
-            action_dim=config.get('actual_action_dim', 60) // 2,
-            device='cpu'
-        )
-        
-        # Load model weights
-        trainer.varibad.load_state_dict(checkpoint['varibad_state_dict'])
-        
-        # Run evaluation
-        eval_stats = trainer.evaluate(num_episodes=50)
-        
-        logger.info("✅ Evaluation complete!")
-        for key, value in eval_stats.items():
-            logger.info(f"   {key}: {value:.4f}")
-        
-        # Save evaluation results
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        eval_path = f"results/evaluation_{timestamp}.json"
-        
-        try:
-            import json
-            with open(eval_path, 'w') as f:
-                json.dump(eval_stats, f, indent=2)
-            logger.info(f"📊 Evaluation results saved to {eval_path}")
-        except Exception as e:
-            logger.warning(f"Failed to save evaluation results: {e}")
-        
-        return eval_stats
-        
-    except Exception as e:
-        logger.error(f"Evaluation failed: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise
-
-def main():
-    """Main pipeline entry point with comprehensive error handling."""
     parser = argparse.ArgumentParser(
-        description="VariBAD Portfolio Optimization Pipeline",
+        description="Enhanced VariBAD Portfolio Optimization Pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  python varibad/main.py --mode data_only                    # Process data only
-  python varibad/main.py --mode train --num_iterations 100   # Quick training
-  python varibad/main.py --mode evaluate --checkpoint path   # Evaluate model
+Phase 2 Enhanced Examples:
+
+Profile-based Training:
+  python varibad/main.py --config profiles/debug.conf
+  python varibad/main.py --config profiles/development.conf
+  python varibad/main.py --config profiles/production.conf
+
+Experiment Execution:
+  python varibad/main.py --config experiments/exp_001_baseline.conf
+  python varibad/main.py --config experiments/exp_002_no_short.conf
+
+Parameter Sweeps:
+  python varibad/main.py --sweep latent_dim=3,5,8,12
+  python varibad/main.py --sweep episode_length=30,60,90 vae_updates=5,10,15
+  python varibad/main.py --config profiles/development.conf --sweep latent_dim=5,8
+
+Automatic Naming:
+  python varibad/main.py --config profiles/debug.conf --name my_test
         """
     )
     
     # Mode selection
-    parser.add_argument('--mode', type=str, required=True,
-                      choices=['data_only', 'train', 'resume', 'evaluate'],
-                      help='Pipeline mode to run')
+    parser.add_argument('--mode', type=str, default='train',
+                      choices=['data_only', 'train', 'resume', 'evaluate', 'sweep'],
+                      help='Pipeline mode to run (default: train)')
     
-    # Training parameters
-    parser.add_argument('--num_iterations', type=int, default=1000,
-                      help='Number of training iterations (default: 1000)')
-    parser.add_argument('--episode_length', type=int, default=30,
-                      help='Length of each trading episode (default: 30)')
-    parser.add_argument('--episodes_per_iteration', type=int, default=5,
-                      help='Episodes to collect per iteration (default: 5)')
-    parser.add_argument('--vae_updates', type=int, default=10,
-                      help='VAE updates per iteration (default: 10)')
-    parser.add_argument('--latent_dim', type=int, default=5,
-                      help='Latent dimension for VariBAD (default: 5)')
-    parser.add_argument('--buffer_size', type=int, default=500,
-                      help='Max episodes in trajectory buffer (default: 500)')
+    # Configuration system
+    parser.add_argument('--config', type=str,
+                      help='Configuration file (profiles/debug.conf, experiments/exp_001.conf, etc.)')
+    parser.add_argument('--base', type=str, default='config/base.conf',
+                      help='Base configuration file (default: config/base.conf)')
     
-    # Model parameters
+    # Parameter sweeps
+    parser.add_argument('--sweep', nargs='+', 
+                      help='Parameter sweep: latent_dim=3,5,8 episode_length=30,60')
+    
+    # Experiment management
+    parser.add_argument('--name', type=str,
+                      help='Experiment name (overrides config)')
+    parser.add_argument('--tags', nargs='+',
+                      help='Experiment tags for organization')
+    parser.add_argument('--description', type=str,
+                      help='Experiment description')
+    
+    # Training parameters (can override config)
+    parser.add_argument('--num_iterations', type=int,
+                      help='Number of training iterations')
+    parser.add_argument('--episode_length', type=int,
+                      help='Length of each trading episode')
+    parser.add_argument('--episodes_per_iteration', type=int,
+                      help='Episodes to collect per iteration')
+    parser.add_argument('--vae_updates', type=int,
+                      help='VAE updates per iteration')
+    parser.add_argument('--latent_dim', type=int,
+                      help='Latent dimension for VariBAD')
+    
+    # Portfolio parameters
     parser.add_argument('--short_selling', action='store_true',
                       help='Enable short selling')
-    parser.add_argument('--device', type=str, default='auto',
+    parser.add_argument('--no_short_selling', dest='short_selling', action='store_false',
+                      help='Disable short selling')
+    parser.set_defaults(short_selling=None)
+    
+    # Environment
+    parser.add_argument('--device', type=str,
                       choices=['auto', 'cpu', 'cuda'],
-                      help='Device to use (default: auto)'),
-    parser.add_argument('--policy_lr', type=float, default=1e-4,
-                        help='Learning rate for policy network (default: 1e-4)'),
-    parser.add_argument('--vae_encoder_lr', type=float, default=1e-4,
-                        help='Learning rate for VAE encoder network (default: 1e-4)'),
-    parser.add_argument('--vae_decoder_lr', type=float, default=1e-4,
-                        help='Learning rate for VAE decoder network (default: 1e-4)')
+                      help='Device to use')
+    parser.add_argument('--data_path', type=str,
+                      help='Path to processed dataset')
     
-    # Evaluation parameters
-    parser.add_argument('--eval_frequency', type=int, default=50,
-                      help='Evaluate every N iterations (default: 50)')
-    parser.add_argument('--save_frequency', type=int, default=100,
-                      help='Save checkpoint every N iterations (default: 100)')
-    
-    # File paths
+    # Evaluation
     parser.add_argument('--checkpoint', type=str,
                       help='Path to checkpoint for resume/evaluate modes')
-    parser.add_argument('--data_path', type=str, default='data/sp500_rl_ready_cleaned.parquet',
-                      help='Path to processed dataset')
     
     # Logging
     parser.add_argument('--log_level', type=str, default='INFO',
                       choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
                       help='Logging level (default: INFO)')
     
+    return parser
+
+
+def parse_sweep_arguments(sweep_args: List[str]) -> Dict[str, List[Any]]:
+    """Parse parameter sweep arguments from command line"""
+    
+    sweep_params = {}
+    
+    for arg in sweep_args:
+        if '=' not in arg:
+            print(f"Warning: Invalid sweep format '{arg}'. Use param=val1,val2,val3")
+            continue
+        
+        param_name, values_str = arg.split('=', 1)
+        
+        try:
+            # Try to parse as JSON first
+            if values_str.startswith('[') and values_str.endswith(']'):
+                values = json.loads(values_str)
+            else:
+                # Parse comma-separated values
+                values = []
+                for val_str in values_str.split(','):
+                    val_str = val_str.strip()
+                    # Try to convert to appropriate type
+                    try:
+                        if val_str.lower() in ['true', 'false']:
+                            values.append(val_str.lower() == 'true')
+                        elif '.' in val_str:
+                            values.append(float(val_str))
+                        else:
+                            values.append(int(val_str))
+                    except ValueError:
+                        values.append(val_str)  # Keep as string
+            
+            sweep_params[param_name] = values
+            
+        except Exception as e:
+            print(f"Warning: Could not parse sweep values for {param_name}: {e}")
+    
+    return sweep_params
+
+
+def apply_sweep_to_config(config: Dict[str, Any], sweep_params: Dict[str, List[Any]]) -> List[Dict[str, Any]]:
+    """Apply parameter sweep to configuration"""
+    
+    if not sweep_params:
+        return [config]
+    
+    # Generate all combinations
+    param_names = list(sweep_params.keys())
+    param_values = list(sweep_params.values())
+    
+    configs = []
+    for combination in itertools.product(*param_values):
+        new_config = json.loads(json.dumps(config))  # Deep copy
+        
+        for param_name, value in zip(param_names, combination):
+            # Map parameter names to config structure
+            if param_name == 'latent_dim':
+                new_config['varibad']['latent_dim'] = value
+            elif param_name == 'episode_length':
+                new_config['training']['episode_length'] = value
+            elif param_name == 'episodes_per_iteration':
+                new_config['training']['episodes_per_iteration'] = value
+            elif param_name == 'vae_updates':
+                new_config['training']['vae_updates'] = value
+            elif param_name == 'short_selling':
+                new_config['portfolio']['short_selling'] = value
+            elif param_name == 'policy_lr':
+                new_config['learning_rates']['policy_lr'] = value
+            elif param_name == 'vae_encoder_lr':
+                new_config['learning_rates']['vae_encoder_lr'] = value
+            elif param_name == 'vae_decoder_lr':
+                new_config['learning_rates']['vae_decoder_lr'] = value
+            elif param_name == 'num_iterations':
+                new_config['training']['num_iterations'] = value
+            else:
+                print(f"Warning: Unknown sweep parameter '{param_name}' - ignoring")
+        
+        configs.append(new_config)
+    
+    return configs
+
+
+def main():
+    """Enhanced main function with configuration management"""
+    
+    parser = create_parser()
     args = parser.parse_args()
     
-    # Setup
+    # Setup logging
     logger = setup_logging(args.log_level)
     
     try:
-        check_dependencies()
-        create_directory_structure()
+        # Initialize configuration manager
+        config_manager = ConfigManager()
         
-        # Auto-detect device
-        if args.device == 'auto':
+        # Load configuration
+        if args.config:
+            config = config_manager.load_config(args.config)
+            logger.info(f"✓ Loaded configuration: {args.config}")
+        else:
+            config = config_manager.load_base_config()
+            logger.info("✓ Using base configuration")
+        
+        # Override with command line arguments
+        config = config_manager.override_with_args(config, args)
+        
+        # Auto-detect device if needed
+        if config['environment']['device'] == 'auto':
             try:
                 import torch
-                args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-                logger.info(f"Auto-detected device: {args.device}")
+                config['environment']['device'] = 'cuda' if torch.cuda.is_available() else 'cpu'
+                logger.info(f"Auto-detected device: {config['environment']['device']}")
             except ImportError:
-                args.device = 'cpu'
+                config['environment']['device'] = 'cpu'
                 logger.warning("PyTorch not found, using CPU")
         
-        logger.info(f"🚀 Starting VariBAD pipeline in '{args.mode}' mode")
-        logger.info(f"Configuration:")
-        for key, value in vars(args).items():
-            logger.info(f"  {key}: {value}")
+        logger.info(f"🚀 Starting Enhanced VariBAD Pipeline")
+        logger.info(f"Mode: {args.mode}")
         
-        # Execute based on mode
+        # Handle different modes
         if args.mode == 'data_only':
             logger.info("📊 Data processing mode")
-            final_data_path = download_and_clean_data(logger)
+            from varibad.data_pipeline import create_rl_dataset
+            final_data_path = create_rl_dataset()
             logger.info(f"✅ Data processing complete! Dataset ready at: {final_data_path}")
         
-        elif args.mode == 'train':
+        elif args.mode == 'train' or args.mode == 'sweep':
             logger.info("🏋️ Training mode")
-            # Process data first if needed
-            if not os.path.exists(args.data_path):
-                logger.info("Data not found, processing first...")
-                args.data_path = download_and_clean_data(logger)
             
-            # Then train
-            checkpoint_path, stats = train_varibad_model(args.data_path, args, logger)
-            logger.info(f"✅ Training complete! Model saved to: {checkpoint_path}")
-        
-        elif args.mode == 'resume':
-            logger.info("🔄 Resume training mode")
-            if not args.checkpoint:
-                logger.error("--checkpoint required for resume mode")
-                logger.error("Example: python varibad/main.py --mode resume --checkpoint checkpoints/model.pt")
-                sys.exit(1)
+            # Check for parameter sweeps
+            configs_to_run = []
             
-            # Ensure data exists
-            if not os.path.exists(args.data_path):
-                logger.info("Data not found, processing first...")
-                args.data_path = download_and_clean_data(logger)
+            # Handle config-based sweeps (SWEEP: syntax)
+            if args.config:
+                config_sweeps = config_manager.parse_sweep_parameters(config)
+                configs_to_run.extend(config_sweeps)
+            else:
+                configs_to_run.append(config)
             
-            logger.warning("Resume functionality not yet implemented")
-            logger.info("Use the train mode with different parameters instead")
+            # Handle command-line sweeps
+            if args.sweep:
+                sweep_params = parse_sweep_arguments(args.sweep)
+                if sweep_params:
+                    logger.info(f"🧪 Parameter sweep detected: {sweep_params}")
+                    
+                    # Apply sweep to all configs
+                    swept_configs = []
+                    for cfg in configs_to_run:
+                        swept_configs.extend(apply_sweep_to_config(cfg, sweep_params))
+                    configs_to_run = swept_configs
+            
+            # Initialize experiment runner
+            runner = ExperimentRunner(config_manager)
+            
+            if len(configs_to_run) == 1:
+                # Single experiment
+                config = configs_to_run[0]
+                experiment_name = config_manager.generate_experiment_name(config, args)
+                if args.name:
+                    experiment_name = args.name
+                
+                result = runner.run_single_experiment(config, experiment_name)
+                
+            else:
+                # Experiment suite
+                logger.info(f"🧪 Running experiment suite with {len(configs_to_run)} configurations")
+                base_name = args.name or config.get('experiment', {}).get('name', 'sweep')
+                results = runner.run_experiment_suite(configs_to_run, base_name)
         
         elif args.mode == 'evaluate':
             logger.info("📊 Evaluation mode")
             if not args.checkpoint:
                 logger.error("--checkpoint required for evaluate mode")
-                logger.error("Example: python varibad/main.py --mode evaluate --checkpoint checkpoints/model.pt")
                 sys.exit(1)
             
-            # Ensure data exists
-            if not os.path.exists(args.data_path):
-                logger.info("Data not found, processing first...")
-                args.data_path = download_and_clean_data(logger)
+            # Evaluation logic (implement as needed)
+            logger.info("Evaluation functionality will be implemented")
+        
+        elif args.mode == 'resume':
+            logger.info("🔄 Resume mode")
+            if not args.checkpoint:
+                logger.error("--checkpoint required for resume mode")
+                sys.exit(1)
             
-            eval_stats = evaluate_model(args.checkpoint, args.data_path, logger)
-            logger.info("✅ Evaluation complete!")
+            # Resume logic (implement as needed)
+            logger.info("Resume functionality will be implemented")
     
     except KeyboardInterrupt:
         logger.info("⏹️  Training interrupted by user")
         sys.exit(0)
     except Exception as e:
         logger.error(f"❌ Pipeline failed: {e}")
-        logger.error("For debugging, try running with --log_level DEBUG")
         import traceback
         logger.error(traceback.format_exc())
         sys.exit(1)
     
-    logger.info("🎉 Pipeline completed successfully!")
+    logger.info("🎉 Enhanced Pipeline completed successfully!")
+
 
 if __name__ == "__main__":
     main()
