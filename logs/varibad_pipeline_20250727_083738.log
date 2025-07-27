@@ -1,0 +1,4 @@
+2025-07-27 08:37:38,586 - __main__ - INFO - VariBAD Pipeline started - logs saved to logs\varibad_pipeline_20250727_083738.log
+2025-07-27 08:37:38,594 - __main__ - INFO - Running from: C:\Users\Jan\Documents\Uni\Master\Abschlussarbeit\Thesis
+2025-07-27 08:37:38,595 - __main__ - INFO - Script location: C:\Users\Jan\Documents\Uni\Master\Abschlussarbeit\Thesis\varibad\main.py
+2025-07-27 08:38:08,065 - __main__ - ERROR - For debugging, try running with --log_level DEBUG

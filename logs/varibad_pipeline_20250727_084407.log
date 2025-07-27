@@ -1,0 +1,60 @@
+2025-07-27 08:44:07,928 - __main__ - INFO - VariBAD Pipeline started - logs saved to logs\varibad_pipeline_20250727_084407.log
+2025-07-27 08:44:07,928 - __main__ - INFO - Running from: C:\Users\Jan\Documents\Uni\Master\Abschlussarbeit\Thesis
+2025-07-27 08:44:07,928 - __main__ - INFO - Script location: C:\Users\Jan\Documents\Uni\Master\Abschlussarbeit\Thesis\varibad\main.py
+2025-07-27 08:44:19,116 - __main__ - INFO - Auto-detected device: cpu
+2025-07-27 08:44:19,126 - __main__ - INFO - Configuration:
+2025-07-27 08:44:19,126 - __main__ - INFO -   mode: train
+2025-07-27 08:44:19,139 - __main__ - INFO -   num_iterations: 3
+2025-07-27 08:44:19,139 - __main__ - INFO -   episode_length: 5
+2025-07-27 08:44:19,139 - __main__ - INFO -   episodes_per_iteration: 2
+2025-07-27 08:44:19,139 - __main__ - INFO -   vae_updates: 2
+2025-07-27 08:44:19,139 - __main__ - INFO -   latent_dim: 5
+2025-07-27 08:44:19,139 - __main__ - INFO -   buffer_size: 500
+2025-07-27 08:44:19,139 - __main__ - INFO -   short_selling: False
+2025-07-27 08:44:19,139 - __main__ - INFO -   device: cpu
+2025-07-27 08:44:19,139 - __main__ - INFO -   policy_lr: 0.0001
+2025-07-27 08:44:19,139 - __main__ - INFO -   vae_encoder_lr: 0.0001
+2025-07-27 08:44:19,139 - __main__ - INFO -   vae_decoder_lr: 0.0001
+2025-07-27 08:44:19,139 - __main__ - INFO -   eval_frequency: 50
+2025-07-27 08:44:19,139 - __main__ - INFO -   save_frequency: 100
+2025-07-27 08:44:19,139 - __main__ - INFO -   checkpoint: None
+2025-07-27 08:44:19,139 - __main__ - INFO -   data_path: data/sp500_rl_ready_cleaned.parquet
+2025-07-27 08:44:19,139 - __main__ - INFO -   log_level: INFO
+2025-07-27 08:44:19,139 - __main__ - INFO - Starting VariBAD training...
+2025-07-27 08:44:19,144 - __main__ - INFO - Attempting to import VariBAD trainer...
+2025-07-27 08:44:19,156 - __main__ - INFO - Initializing VariBAD trainer...
+2025-07-27 08:44:19,156 - varibad.core.trainer - INFO - Loading S&P 500 data from data/sp500_rl_ready_cleaned.parquet
+2025-07-27 08:44:19,886 - varibad.core.trainer - INFO - Loaded data: 264447 rows, 36 columns
+2025-07-27 08:44:19,886 - varibad.core.trainer - INFO - Date range: 1990-01-03 to 2024-12-31
+2025-07-27 08:44:19,935 - varibad.core.trainer - INFO - Tickers: 30 unique (ABT, AXP, BA, BAC, C, CAT, COP, CSCO, CVX, D...)
+2025-07-27 08:44:19,935 - varibad.core.trainer - INFO - Creating portfolio MDP to determine state dimensions...
+2025-07-27 08:44:20,285 - varibad.core.trainer - INFO - Detected state dimension: 544
+2025-07-27 08:44:20,286 - varibad.core.trainer - INFO - Detected action dimension: 30
+2025-07-27 08:44:20,286 - varibad.core.trainer - INFO - Assets: 30, Short selling: False
+2025-07-27 08:44:20,286 - varibad.core.trainer - INFO - Encoder input dimension: 575
+2025-07-27 08:44:20,286 - varibad.core.trainer - INFO -   State: 544
+2025-07-27 08:44:20,286 - varibad.core.trainer - INFO -   Action: 30
+2025-07-27 08:44:20,286 - varibad.core.trainer - INFO -   Reward: 1
+2025-07-27 08:44:20,286 - varibad.core.trainer - INFO - Initializing VariBAD components...
+2025-07-27 08:44:20,466 - varibad.core.trainer - INFO - Encoder expects input_dim: 575
+2025-07-27 08:44:20,466 - varibad.core.trainer - INFO - Calculated input_dim: 575
+2025-07-27 08:44:42,954 - varibad.core.trainer - INFO - VariBAD trainer initialized on cpu
+2025-07-27 08:44:42,954 - varibad.core.trainer - INFO - Model parameters: 813,513
+2025-07-27 08:44:42,956 - __main__ - INFO -    State dimension: 544
+2025-07-27 08:44:42,958 - __main__ - INFO -    Action dimension: 30
+2025-07-27 08:44:42,958 - __main__ - INFO -    Model parameters: 813,513
+2025-07-27 08:44:42,958 - __main__ - INFO - Starting training loop...
+2025-07-27 08:44:42,958 - varibad.core.trainer - INFO - Starting VariBAD training...
+2025-07-27 08:44:42,958 - varibad.core.trainer - INFO - Training for 3 iterations
+2025-07-27 08:44:42,958 - varibad.core.trainer - INFO - Iteration 0: Collecting 2 episodes...
+2025-07-27 08:44:43,655 - varibad.core.trainer - INFO - Iteration 0: Training VAE...
+2025-07-27 08:44:44,508 - varibad.core.trainer - INFO - Iteration 0:
+2025-07-27 08:44:44,508 - varibad.core.trainer - INFO -   Episode reward: -0.0786
+2025-07-27 08:44:44,508 - varibad.core.trainer - INFO -   VAE loss: 0.7388
+2025-07-27 08:44:44,508 - varibad.core.trainer - INFO -   Buffer episodes: 2
+2025-07-27 08:44:44,508 - varibad.core.trainer - INFO - Iteration 1: Collecting 2 episodes...
+2025-07-27 08:44:45,044 - varibad.core.trainer - INFO - Iteration 1: Training VAE...
+2025-07-27 08:44:45,836 - varibad.core.trainer - INFO - Iteration 2: Collecting 2 episodes...
+2025-07-27 08:44:46,416 - varibad.core.trainer - INFO - Iteration 2: Training VAE...
+2025-07-27 08:44:47,114 - varibad.core.trainer - INFO - Training completed!
+2025-07-27 08:44:47,196 - varibad.core.trainer - INFO - Checkpoint saved to checkpoints/varibad_final_20250727_084447.pt
