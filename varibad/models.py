@@ -306,25 +306,35 @@ class VariBADVAE(nn.Module):
         return self.policy(state, belief_mu, belief_logvar)
     
     def compute_elbo(self, states, actions, rewards, lengths, next_states, next_rewards):
-        """Compute ELBO loss with numerical stability"""
+        """Compute ELBO loss with proper gradient flow"""
         batch_size = states.shape[0]
+        
+        # Ensure model is in training mode
+        self.train()
         
         # Encode trajectory
         belief_mu, belief_logvar, sampled_belief = self.encode_trajectory(states, actions, rewards, lengths)
         
         # Clamp belief parameters for numerical stability
-        belief_mu = torch.clamp(belief_mu, -10, 10)
-        belief_logvar = torch.clamp(belief_logvar, -10, 10)
+        belief_mu = torch.clamp(belief_mu, -5, 5)
+        belief_logvar = torch.clamp(belief_logvar, -5, 5)
         
         # Check for NaN values
         if torch.isnan(belief_mu).any() or torch.isnan(belief_logvar).any():
-            # Return dummy loss to continue training
+            # Create fallback tensors with gradients
+            device = belief_mu.device
+            elbo = torch.tensor(0.0, device=device, requires_grad=True)
+            reconstruction_loss = torch.tensor(0.0, device=device, requires_grad=True)
+            kl_loss = torch.tensor(0.0, device=device, requires_grad=True)
+            state_loss = torch.tensor(0.0, device=device, requires_grad=True)
+            reward_loss = torch.tensor(0.0, device=device, requires_grad=True)
+            
             return {
-                'elbo': torch.tensor(0.0, device=belief_mu.device),
-                'reconstruction_loss': torch.tensor(0.0, device=belief_mu.device),
-                'kl_loss': torch.tensor(0.0, device=belief_mu.device),
-                'state_loss': torch.tensor(0.0, device=belief_mu.device),
-                'reward_loss': torch.tensor(0.0, device=belief_mu.device)
+                'elbo': elbo,
+                'reconstruction_loss': reconstruction_loss,
+                'kl_loss': kl_loss,
+                'state_loss': state_loss,
+                'reward_loss': reward_loss
             }
         
         # Use last state/action for decoding
@@ -335,7 +345,7 @@ class VariBADVAE(nn.Module):
         # Decode predictions
         pred_states, pred_rewards = self.decoder(current_states, current_actions, sampled_belief)
         
-        # Reconstruction loss with clamping
+        # Reconstruction loss
         state_loss = F.mse_loss(pred_states, next_states, reduction='mean')
         reward_loss = F.mse_loss(pred_rewards.squeeze(-1), next_rewards, reduction='mean')
         reconstruction_loss = state_loss + reward_loss
@@ -343,18 +353,20 @@ class VariBADVAE(nn.Module):
         # KL divergence with numerical stability
         try:
             belief_dist = Normal(belief_mu, torch.exp(0.5 * belief_logvar) + 1e-6)
-            prior_dist = Normal(self.prior_mu.expand_as(belief_mu), self.prior_std.expand_as(belief_mu))
+            prior_dist = Normal(
+                self.prior_mu.expand_as(belief_mu), 
+                self.prior_std.expand_as(belief_mu)
+            )
             kl_loss = torch.distributions.kl_divergence(belief_dist, prior_dist).sum(dim=-1).mean()
             
-            # Check for NaN in KL
-            if torch.isnan(kl_loss):
-                kl_loss = torch.tensor(0.0, device=belief_mu.device)
+            # Clamp KL loss
+            kl_loss = torch.clamp(kl_loss, 0, 10)
                 
         except Exception:
-            kl_loss = torch.tensor(0.0, device=belief_mu.device)
+            kl_loss = torch.tensor(0.0, device=belief_mu.device, requires_grad=True)
         
         # ELBO (negative because we minimize)
-        elbo = -(reconstruction_loss + kl_loss)
+        elbo = -(reconstruction_loss + 0.1 * kl_loss)  # Reduce KL weight
         
         return {
             'elbo': elbo,
