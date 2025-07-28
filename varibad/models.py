@@ -206,9 +206,30 @@ class VariBADPolicy(nn.Module):
     def forward(self, states, belief_mu, belief_logvar):
         """Forward pass: state + belief → portfolio weights"""
         
-        # Combine inputs
-        belief_std = torch.exp(0.5 * belief_logvar)
+        # Check for NaN inputs
+        if torch.isnan(states).any() or torch.isnan(belief_mu).any() or torch.isnan(belief_logvar).any():
+            # Return uniform weights if NaN detected
+            batch_size = states.shape[0]
+            if self.enable_short_selling:
+                uniform_weights = torch.zeros(batch_size, self.action_dim, device=states.device)
+                uniform_weights[:, :self.num_assets] = 1.0 / self.num_assets  # Equal long weights
+                return uniform_weights
+            else:
+                return torch.ones(batch_size, self.action_dim, device=states.device) / self.action_dim
+        
+        # Combine inputs with clamping
+        belief_std = torch.exp(0.5 * torch.clamp(belief_logvar, -10, 10))
         policy_input = torch.cat([states, belief_mu, belief_std], dim=-1)
+        
+        # Check for NaN after concatenation
+        if torch.isnan(policy_input).any():
+            batch_size = states.shape[0]
+            if self.enable_short_selling:
+                uniform_weights = torch.zeros(batch_size, self.action_dim, device=states.device)
+                uniform_weights[:, :self.num_assets] = 1.0 / self.num_assets
+                return uniform_weights
+            else:
+                return torch.ones(batch_size, self.action_dim, device=states.device) / self.action_dim
         
         # Process through shared layers
         features = self.shared_layers(policy_input)
@@ -216,8 +237,12 @@ class VariBADPolicy(nn.Module):
         # Generate portfolio weights
         long_logits = self.long_head(features)
         
+        # Clamp logits to prevent overflow
+        long_logits = torch.clamp(long_logits, -10, 10)
+        
         if self.enable_short_selling:
             short_logits = self.short_head(features)
+            short_logits = torch.clamp(short_logits, -10, 10)
             
             # Apply constraints
             long_weights = F.softmax(long_logits, dim=-1)  # Sum to 1
@@ -226,6 +251,16 @@ class VariBADPolicy(nn.Module):
             portfolio_weights = torch.cat([long_weights, short_weights], dim=-1)
         else:
             portfolio_weights = F.softmax(long_logits, dim=-1)
+        
+        # Final NaN check
+        if torch.isnan(portfolio_weights).any():
+            batch_size = states.shape[0]
+            if self.enable_short_selling:
+                uniform_weights = torch.zeros(batch_size, self.action_dim, device=states.device)
+                uniform_weights[:, :self.num_assets] = 1.0 / self.num_assets
+                return uniform_weights
+            else:
+                return torch.ones(batch_size, self.action_dim, device=states.device) / self.action_dim
         
         return portfolio_weights
 
