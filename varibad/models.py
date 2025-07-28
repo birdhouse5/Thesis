@@ -17,7 +17,9 @@ from torch.distributions import Normal
 class TrajectoryEncoder(nn.Module):
     """Encoder q_φ(m|τ:t): Trajectory sequences → Belief parameters"""
     
-    def __init__(self, state_dim: int, action_dim: int, latent_dim: int = 5, hidden_dim: int = 128):
+    def __init__(self, state_dim: int, action_dim: int, latent_dim: int = 5, 
+                hidden_dim: int = 128, num_layers: int = 2, rnn_type: str = 'GRU', 
+                dropout: float = 0.1, bidirectional: bool = False):
         super().__init__()
         
         self.state_dim = state_dim
@@ -28,17 +30,31 @@ class TrajectoryEncoder(nn.Module):
         self.input_dim = state_dim + action_dim + 1
         
         # RNN for trajectory processing
-        self.rnn = nn.GRU(
-            input_size=self.input_dim,
-            hidden_size=hidden_dim,
-            num_layers=2,
-            batch_first=True,
-            dropout=0.1
-        )
+        if rnn_type.upper() == 'LSTM':
+            self.rnn = nn.LSTM(
+                input_size=self.input_dim,
+                hidden_size=hidden_dim,
+                num_layers=num_layers,
+                batch_first=True,
+                dropout=dropout if num_layers > 1 else 0,
+                bidirectional=bidirectional
+            )
+        else:  # Default to GRU
+            self.rnn = nn.GRU(
+                input_size=self.input_dim,
+                hidden_size=hidden_dim,
+                num_layers=num_layers,
+                batch_first=True,
+                dropout=dropout if num_layers > 1 else 0,
+                bidirectional=bidirectional
+            )
+        
+        # Adjust output dimension for bidirectional
+        rnn_output_dim = hidden_dim * (2 if bidirectional else 1)
         
         # Output layers
-        self.fc_mu = nn.Linear(hidden_dim, latent_dim)
-        self.fc_logvar = nn.Linear(hidden_dim, latent_dim)
+        self.fc_mu = nn.Linear(rnn_output_dim, latent_dim)
+        self.fc_logvar = nn.Linear(rnn_output_dim, latent_dim)
         
         self._init_weights()
     
@@ -206,8 +222,10 @@ class VariBADVAE(nn.Module):
     """Complete VariBAD VAE system"""
     
     def __init__(self, state_dim: int, action_dim: int, latent_dim: int = 5, 
-                 encoder_hidden: int = 128, decoder_hidden: int = 128, 
-                 policy_hidden: int = 256, enable_short_selling: bool = True):
+                encoder_hidden: int = 128, decoder_hidden: int = 128, 
+                policy_hidden: int = 256, enable_short_selling: bool = True,
+                encoder_layers: int = 2, encoder_rnn_type: str = 'GRU',
+                encoder_dropout: float = 0.1, encoder_bidirectional: bool = False):
         super().__init__()
         
         self.state_dim = state_dim
@@ -215,8 +233,11 @@ class VariBADVAE(nn.Module):
         self.latent_dim = latent_dim
         self.enable_short_selling = enable_short_selling
         
-        # Components
-        self.encoder = TrajectoryEncoder(state_dim, action_dim, latent_dim, encoder_hidden)
+        # Components with enhanced parameters
+        self.encoder = TrajectoryEncoder(
+            state_dim, action_dim, latent_dim, encoder_hidden,
+            encoder_layers, encoder_rnn_type, encoder_dropout, encoder_bidirectional
+        )
         self.decoder = TrajectoryDecoder(state_dim, action_dim, latent_dim, decoder_hidden)
         self.policy = VariBADPolicy(state_dim, action_dim, latent_dim, policy_hidden, enable_short_selling)
         
@@ -254,7 +275,7 @@ class VariBADVAE(nn.Module):
         
         # Reconstruction loss
         state_loss = F.mse_loss(pred_states, next_states, reduction='mean')
-        reward_loss = F.mse_loss(pred_rewards.squeeze(), next_rewards, reduction='mean')
+        reward_loss = F.mse_loss(pred_rewards.squeeze(-1), next_rewards, reduction='mean')
         reconstruction_loss = state_loss + reward_loss
         
         # KL divergence

@@ -3,7 +3,7 @@
 Simple experiment runner for VariBAD portfolio optimization
 Creates complete experimental archives with all results
 
-FIXED: String formatting error in README generation
+ENHANCED: Now supports parameter sweeps with SWEEP: syntax
 """
 
 import argparse
@@ -15,24 +15,55 @@ from datetime import datetime
 import zipfile
 import sys
 import os
+import itertools
 
-def run_experiment(config_path: str):
+def parse_sweep_config(config):
+    """Parse SWEEP: syntax and return list of configs"""
+    sweep_params = {}
+    
+    def find_sweeps(obj, path=""):
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                current_path = f"{path}.{key}" if path else key
+                if isinstance(value, str) and value.startswith("SWEEP:"):
+                    sweep_str = value[6:]  # Remove "SWEEP:"
+                    try:
+                        sweep_values = json.loads(sweep_str)
+                        sweep_params[current_path] = sweep_values
+                    except:
+                        print(f"Invalid sweep format: {value}")
+                elif isinstance(value, dict):
+                    find_sweeps(value, current_path)
+    
+    find_sweeps(config)
+    
+    if not sweep_params:
+        return [config]
+    
+    # Generate all combinations
+    param_names = list(sweep_params.keys())
+    param_values = list(sweep_params.values())
+    
+    configs = []
+    for combination in itertools.product(*param_values):
+        new_config = json.loads(json.dumps(config))  # Deep copy
+        
+        for param_name, value in zip(param_names, combination):
+            keys = param_name.split('.')
+            current = new_config
+            for key in keys[:-1]:
+                current = current[key]
+            current[keys[-1]] = value
+        
+        configs.append(new_config)
+    
+    return configs
+
+def run_single_experiment(config, config_name):
     """Run single experiment and save complete results as zip"""
     
-    print(f"🚀 Starting VariBAD experiment")
-    print(f"Config: {config_path}")
-    
-    # Load config
-    config_file = Path(config_path)
-    if not config_file.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
-    
-    with open(config_file, 'r') as f:
-        config = json.load(f)
-    
-    # Create results directory structure
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     exp_name = config.get('experiment_name', 'experiment')
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
     # Create results/ directory if it doesn't exist
     results_base = Path("results")
@@ -63,13 +94,12 @@ def run_experiment(config_path: str):
         checkpoint_path = exp_dir / "model_checkpoint.pt"
         trainer.save_checkpoint(str(checkpoint_path))
         
-        # Save configuration (original + resolved)
+        # Save configuration
         with open(exp_dir / "config.json", 'w') as f:
             json.dump(config, f, indent=2)
         
         # Save training statistics
         with open(exp_dir / "training_stats.json", 'w') as f:
-            # Convert numpy arrays to lists for JSON serialization
             json_stats = {}
             for key, value in stats.items():
                 if hasattr(value, 'tolist'):
@@ -84,7 +114,7 @@ def run_experiment(config_path: str):
         metadata = {
             'experiment_name': exp_name,
             'timestamp': timestamp,
-            'config_file': str(config_file),
+            'config_name': config_name,
             'total_iterations': len(stats.get('iteration', [])),
             'model_parameters': trainer.get_parameter_count(),
             'device_used': str(trainer.device),
@@ -97,12 +127,11 @@ def run_experiment(config_path: str):
         with open(exp_dir / "experiment_metadata.json", 'w') as f:
             json.dump(metadata, f, indent=2)
         
-        # Create README for the experiment (FIXED: String formatting)
+        # Create README
         total_iterations = metadata.get('total_iterations', 'N/A')
         model_parameters = metadata.get('model_parameters', 'N/A')
         device_used = metadata.get('device_used', 'N/A')
         
-        # Safe formatting for numerical values
         final_reward = metadata['final_performance']['avg_episode_reward']
         final_vae_loss = metadata['final_performance']['avg_vae_loss']
         
@@ -113,30 +142,20 @@ def run_experiment(config_path: str):
         readme_content = f"""# VariBAD Experiment: {exp_name}
 
 **Timestamp:** {timestamp}
-**Config File:** {config_file}
+**Config:** {config_name}
 
-## Files in this archive:
-- `config.json` - Experiment configuration
-- `model_checkpoint.pt` - Trained model checkpoint
-- `training_stats.json` - Complete training statistics
-- `experiment_metadata.json` - Experiment summary
-- `README.md` - This file
-
-## Key Results:
+## Results:
 - Total iterations: {total_iterations}
 - Model parameters: {model_params_str}
 - Device used: {device_used}
 - Final avg episode reward: {final_reward_str}
 - Final VAE loss: {final_vae_loss_str}
 
-## Usage:
-To resume or analyze this experiment, load the checkpoint:
-```python
-import torch
-checkpoint = torch.load('model_checkpoint.pt')
-# Model state: checkpoint['model_state_dict']
-# Training stats: checkpoint['training_stats']
-```
+## Files:
+- `config.json` - Experiment configuration
+- `model_checkpoint.pt` - Trained model checkpoint
+- `training_stats.json` - Complete training statistics
+- `experiment_metadata.json` - Experiment summary
 """
         
         with open(exp_dir / "README.md", 'w') as f:
@@ -144,35 +163,30 @@ checkpoint = torch.load('model_checkpoint.pt')
         
         print("🗜️  Creating zip archive...")
         
-        # Create zip archive with all results
+        # Create zip archive
         zip_path = results_base / f"{exp_name}_{timestamp}.zip"
         
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             for file_path in exp_dir.rglob('*'):
                 if file_path.is_file():
-                    # Add file to zip with relative path
                     arcname = file_path.relative_to(exp_dir)
                     zf.write(file_path, arcname)
         
-        # Get zip file size
         zip_size_mb = zip_path.stat().st_size / (1024 * 1024)
         
         print("✅ Experiment completed successfully!")
-        print(f"📦 Archive created: {zip_path} ({zip_size_mb:.1f} MB)")
-        print(f"📊 Training iterations: {total_iterations}")
+        print(f"📦 Archive: {zip_path} ({zip_size_mb:.1f} MB)")
+        print(f"📊 Iterations: {total_iterations}")
         
         if final_reward is not None:
             print(f"🎯 Final performance: {final_reward:.4f}")
-        
-        # Clean up temporary directory (optional - keep for debugging)
-        # shutil.rmtree(exp_dir)
         
         return str(zip_path)
         
     except Exception as e:
         print(f"❌ Experiment failed: {e}")
         
-        # Save error information
+        # Save error info
         error_info = {
             'error': str(e),
             'experiment_name': exp_name,
@@ -183,7 +197,6 @@ checkpoint = torch.load('model_checkpoint.pt')
         with open(exp_dir / "error_log.json", 'w') as f:
             json.dump(error_info, f, indent=2)
         
-        # Still create zip with error info
         zip_path = results_base / f"{exp_name}_{timestamp}_FAILED.zip"
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             for file_path in exp_dir.rglob('*'):
@@ -191,9 +204,81 @@ checkpoint = torch.load('model_checkpoint.pt')
                     arcname = file_path.relative_to(exp_dir)
                     zf.write(file_path, arcname)
         
-        print(f"💾 Error information saved to: {zip_path}")
+        print(f"💾 Error info saved: {zip_path}")
         raise
 
+def run_sweep_experiments(configs, config_path):
+    """Run parameter sweep"""
+    print(f"🧪 Running parameter sweep: {len(configs)} configurations")
+    
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    base_name = Path(config_path).stem
+    
+    results = []
+    
+    for i, config in enumerate(configs):
+        print(f"\n{'='*60}")
+        print(f"Configuration {i+1}/{len(configs)}")
+        
+        # Generate unique name
+        config['experiment_name'] = f"{base_name}_sweep_{i+1:03d}"
+        
+        try:
+            result_path = run_single_experiment(config, f"{config_path}_sweep_{i+1}")
+            results.append({'config': config, 'result': result_path, 'status': 'success'})
+        except Exception as e:
+            print(f"❌ Configuration {i+1} failed: {e}")
+            results.append({'config': config, 'error': str(e), 'status': 'failed'})
+    
+    # Create sweep summary
+    sweep_path = Path("results") / f"{base_name}_sweep_{timestamp}.json"
+    with open(sweep_path, 'w') as f:
+        json.dump({
+            'sweep_info': {
+                'total_configs': len(configs),
+                'successful': len([r for r in results if r['status'] == 'success']),
+                'failed': len([r for r in results if r['status'] == 'failed']),
+                'timestamp': timestamp
+            },
+            'results': results
+        }, f, indent=2)
+    
+        # Auto-analyze results if we have enough successful experiments
+    successful_count = len([r for r in results if r['status'] == 'success'])
+    if successful_count >= 3:
+        print(f"\n🔍 Auto-analyzing {successful_count} successful experiments...")
+        try:
+            from analyze_sweep_results import generate_analysis_report
+            analysis_dir = sweep_path.parent / f"{base_name}_analysis_{timestamp}"
+            generate_analysis_report(str(sweep_path), str(analysis_dir))
+        except Exception as e:
+            print(f"Auto-analysis failed: {e}")
+
+
+    print(f"\n🎉 Sweep completed! Summary: {sweep_path}")
+    return str(sweep_path)
+
+def run_experiment(config_path: str):
+    """Run experiment(s) - handles both single configs and sweeps"""
+    
+    print(f"🚀 Starting VariBAD experiment")
+    print(f"Config: {config_path}")
+    
+    # Load config
+    config_file = Path(config_path)
+    if not config_file.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    
+    with open(config_file, 'r') as f:
+        base_config = json.load(f)
+    
+    # Parse for sweeps
+    configs = parse_sweep_config(base_config)
+    
+    if len(configs) == 1:
+        return run_single_experiment(configs[0], config_path)
+    else:
+        return run_sweep_experiments(configs, config_path)
 
 def run_multiple_experiments(config_paths):
     """Run multiple experiments sequentially"""
@@ -221,7 +306,6 @@ def run_multiple_experiments(config_paths):
     
     return results
 
-
 def main():
     parser = argparse.ArgumentParser(
         description="VariBAD Portfolio Optimization Experiment Runner",
@@ -229,8 +313,8 @@ def main():
         epilog="""
 Examples:
   python run_experiment.py config/experiment1.conf
+  python run_experiment.py config/experiment_sweep.conf
   python run_experiment.py config/experiment1.conf config/experiment2.conf
-  python run_experiment.py config/*.conf
         """
     )
     
@@ -265,7 +349,6 @@ Examples:
         run_experiment(config_files[0])
     else:
         run_multiple_experiments(config_files)
-
 
 if __name__ == "__main__":
     main()

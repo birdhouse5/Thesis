@@ -58,7 +58,7 @@ class VariBADTrainer:
         logger.info(f"  Action dimension: {self.action_dim}")
         logger.info(f"  Assets: {self.env.n_assets}")
         logger.info(f"  Short selling: {self.env.enable_short_selling}")
-        
+
         # Create VariBAD model
         self.varibad = VariBADVAE(
             state_dim=self.state_dim,
@@ -67,7 +67,11 @@ class VariBADTrainer:
             encoder_hidden=model_config.get('encoder_hidden', 128),
             decoder_hidden=model_config.get('decoder_hidden', 128),
             policy_hidden=model_config.get('policy_hidden', 256),
-            enable_short_selling=portfolio_config.get('short_selling', True)
+            enable_short_selling=portfolio_config.get('short_selling', True),
+            encoder_layers=model_config.get('encoder_layers', 2),
+            encoder_rnn_type=model_config.get('encoder_rnn_type', 'GRU'),
+            encoder_dropout=model_config.get('encoder_dropout', 0.1),
+            encoder_bidirectional=model_config.get('encoder_bidirectional', False)
         ).to(self.device)
         
         # Trajectory buffer
@@ -88,6 +92,13 @@ class VariBADTrainer:
             lr=learning_rates.get('policy_lr', 1e-4)
         )
         
+        # Training schedules
+        self.training_schedules = self._setup_training_schedules()
+
+        # Warm-up tracking
+        self.warmup_steps = training_config.get('warmup_steps', 0)
+        self.current_iteration = 0
+
         # Training statistics
         self.stats = defaultdict(list)
         
@@ -114,6 +125,9 @@ class VariBADTrainer:
         episode_reward = 0.0
         episode_returns = []
         
+        # Get current exploration noise
+        current_noise = 0.0 if deterministic else self.get_current_exploration_noise()
+        
         # Trajectory for belief computation
         trajectory_states = []
         trajectory_actions = []
@@ -127,7 +141,8 @@ class VariBADTrainer:
             if len(trajectory_states) > 0:
                 try:
                     # Use recent trajectory for belief
-                    recent_len = min(10, len(trajectory_states))
+                    memory_length = self.config.get('model', {}).get('trajectory_memory', 10)
+                    recent_len = min(memory_length, len(trajectory_states))
                     traj_states = torch.stack([torch.FloatTensor(s) for s in trajectory_states[-recent_len:]]).unsqueeze(0).to(self.device)
                     traj_actions = torch.stack([torch.FloatTensor(a) for a in trajectory_actions[-recent_len:]]).unsqueeze(0).to(self.device)
                     traj_rewards = torch.FloatTensor(trajectory_rewards[-recent_len:]).unsqueeze(0).to(self.device)
@@ -150,9 +165,9 @@ class VariBADTrainer:
             with torch.no_grad():
                 action_tensor = self.varibad.get_policy_action(state_tensor, belief_mu, belief_logvar)
                 
-                if not deterministic:
+                if not deterministic and current_noise > 0:
                     # Add exploration noise
-                    noise = torch.randn_like(action_tensor) * 0.01
+                    noise = torch.randn_like(action_tensor) * current_noise
                     action_tensor = action_tensor + noise
                 
                 action = action_tensor.squeeze(0).cpu().numpy()
@@ -183,7 +198,8 @@ class VariBADTrainer:
             'total_return': sum(episode_returns),
             'average_return': np.mean(episode_returns),
             'volatility': np.std(episode_returns),
-            'steps': step + 1
+            'steps': step + 1,
+            'exploration_noise': current_noise
         }
         
         return episode_stats
@@ -402,6 +418,7 @@ class VariBADTrainer:
         logger.info(f"Training for {num_iterations} iterations")
         
         for iteration in range(num_iterations):
+            self.current_iteration = iteration
             iteration_stats = {'iteration': iteration}
             
             # 1. Collect episodes
@@ -410,6 +427,9 @@ class VariBADTrainer:
                 try:
                     episode_stats = self.collect_episode(deterministic=False)
                     episode_rewards.append(episode_stats['total_reward'])
+                    # Log exploration noise from first episode
+                    if len(episode_rewards) == 1:
+                        iteration_stats['exploration_noise'] = episode_stats['exploration_noise']
                 except Exception as e:
                     logger.warning(f"Episode collection failed: {e}")
                     continue
@@ -420,39 +440,58 @@ class VariBADTrainer:
             
             # 2. Train VAE
             vae_losses = []
-            for _ in range(vae_updates_per_iteration):
-                try:
-                    vae_stats = self.train_vae(batch_size=8, max_seq_length=15)
-                    if vae_stats['vae_loss'] > 0:
-                        vae_losses.append(vae_stats)
-                except Exception as e:
-                    logger.warning(f"VAE training failed: {e}")
-                    continue
+            # Adaptive VAE updates based on buffer size
+            buffer_stats = self.buffer.get_buffer_stats()
+            if buffer_stats['num_sequences'] >= 2:  # Need at least 2 episodes
+                for _ in range(vae_updates_per_iteration):
+                    try:
+                        batch_size = min(8, buffer_stats['num_sequences'])
+                        max_seq_length = self.config.get('model', {}).get('max_sequence_length', 15)
+                        vae_stats = self.train_vae(batch_size=batch_size, max_seq_length=max_seq_length)
+                        if vae_stats['vae_loss'] > 0:
+                            vae_losses.append(vae_stats)
+                    except Exception as e:
+                        logger.warning(f"VAE training failed: {e}")
+                        continue
             
             if vae_losses:
                 iteration_stats['avg_vae_loss'] = np.mean([s['vae_loss'] for s in vae_losses])
                 iteration_stats['avg_elbo'] = np.mean([s['elbo'] for s in vae_losses])
+                iteration_stats['avg_kl_loss'] = np.mean([s['kl_loss'] for s in vae_losses])
             
-            # 3. Train policy
-            try:
-                policy_stats = self.train_policy(num_episodes=3)
-                iteration_stats.update(policy_stats)
-            except Exception as e:
-                logger.warning(f"Policy training failed: {e}")
+            # 3. Train policy (skip during warmup if configured)
+            if not self.should_skip_policy_training():
+                try:
+                    policy_episodes = max(2, episodes_per_iteration // 2)  # Fewer episodes for policy
+                    policy_stats = self.train_policy(num_episodes=policy_episodes)
+                    iteration_stats.update(policy_stats)
+                except Exception as e:
+                    logger.warning(f"Policy training failed: {e}")
+            else:
+                iteration_stats['policy_status'] = 'warmup_skip'
             
-            # 4. Store statistics
+            # 4. Update learning rate schedules
+            if 'vae_lr' in self.training_schedules:
+                self.training_schedules['vae_lr'].step()
+                iteration_stats['vae_lr'] = self.vae_optimizer.param_groups[0]['lr']
+            if 'policy_lr' in self.training_schedules:
+                self.training_schedules['policy_lr'].step()
+                iteration_stats['policy_lr'] = self.policy_optimizer.param_groups[0]['lr']
+            
+            # 5. Store statistics
             for key, value in iteration_stats.items():
                 self.stats[key].append(value)
             
-            # 5. Logging
+            # 6. Logging
             if iteration % 10 == 0:
                 logger.info(f"Iteration {iteration}:")
                 logger.info(f"  Episode reward: {iteration_stats.get('avg_episode_reward', 0):.4f}")
                 logger.info(f"  VAE loss: {iteration_stats.get('avg_vae_loss', 0):.4f}")
+                logger.info(f"  Exploration noise: {iteration_stats.get('exploration_noise', 0):.4f}")
                 buffer_stats = self.buffer.get_buffer_stats()
                 logger.info(f"  Buffer episodes: {buffer_stats['num_sequences']}")
             
-            # 6. Evaluation
+            # 7. Evaluation
             if iteration % eval_frequency == 0 and iteration > 0:
                 try:
                     eval_stats = self.evaluate(num_episodes=5)
@@ -463,7 +502,7 @@ class VariBADTrainer:
         
         logger.info("Training completed!")
         return dict(self.stats)
-    
+        
     def save_checkpoint(self, path: str):
         """Save training checkpoint"""
         
@@ -499,3 +538,51 @@ class VariBADTrainer:
         logger.info(f"Resumed from iteration: {checkpoint.get('iteration', 0)}")
         
         return checkpoint
+    
+    def _setup_training_schedules(self):
+        """Setup learning rate and exploration schedules"""
+        training_config = self.config.get('training', {})
+        schedules_config = self.config.get('schedules', {})
+        
+        schedules = {}
+        
+        # Learning rate schedules
+        lr_schedule_type = schedules_config.get('lr_schedule', 'constant')
+        if lr_schedule_type == 'cosine':
+            total_iterations = training_config.get('num_iterations', 1000)
+            schedules['vae_lr'] = optim.lr_scheduler.CosineAnnealingLR(self.vae_optimizer, total_iterations)
+            schedules['policy_lr'] = optim.lr_scheduler.CosineAnnealingLR(self.policy_optimizer, total_iterations)
+        elif lr_schedule_type == 'step':
+            step_size = schedules_config.get('lr_step_size', 500)
+            gamma = schedules_config.get('lr_gamma', 0.5)
+            schedules['vae_lr'] = optim.lr_scheduler.StepLR(self.vae_optimizer, step_size, gamma)
+            schedules['policy_lr'] = optim.lr_scheduler.StepLR(self.policy_optimizer, step_size, gamma)
+        
+        # Exploration schedule
+        self.initial_noise = schedules_config.get('initial_exploration_noise', 0.05)
+        self.final_noise = schedules_config.get('final_exploration_noise', 0.01)
+        self.noise_decay = schedules_config.get('exploration_decay', 'linear')
+        
+        return schedules
+
+    def get_current_exploration_noise(self):
+        """Get current exploration noise level"""
+        training_config = self.config.get('training', {})
+        total_iterations = training_config.get('num_iterations', 1000)
+        
+        if self.current_iteration < self.warmup_steps:
+            return self.initial_noise
+        
+        progress = min(1.0, (self.current_iteration - self.warmup_steps) / (total_iterations - self.warmup_steps))
+        
+        if self.noise_decay == 'exponential':
+            noise = self.initial_noise * (self.final_noise / self.initial_noise) ** progress
+        else:  # linear
+            noise = self.initial_noise + (self.final_noise - self.initial_noise) * progress
+        
+        return noise
+
+    def should_skip_policy_training(self):
+        """Check if we should skip policy training during warmup"""
+        vae_only_steps = self.config.get('schedules', {}).get('vae_only_steps', 0)
+        return self.current_iteration < vae_only_steps
