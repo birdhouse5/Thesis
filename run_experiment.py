@@ -2,6 +2,8 @@
 """
 Simple experiment runner for VariBAD portfolio optimization
 Creates complete experimental archives with all results
+
+FIXED: String formatting error in README generation
 """
 
 import argparse
@@ -95,7 +97,19 @@ def run_experiment(config_path: str):
         with open(exp_dir / "experiment_metadata.json", 'w') as f:
             json.dump(metadata, f, indent=2)
         
-        # Create README for the experiment
+        # Create README for the experiment (FIXED: String formatting)
+        total_iterations = metadata.get('total_iterations', 'N/A')
+        model_parameters = metadata.get('model_parameters', 'N/A')
+        device_used = metadata.get('device_used', 'N/A')
+        
+        # Safe formatting for numerical values
+        final_reward = metadata['final_performance']['avg_episode_reward']
+        final_vae_loss = metadata['final_performance']['avg_vae_loss']
+        
+        final_reward_str = f"{final_reward:.4f}" if final_reward is not None else 'N/A'
+        final_vae_loss_str = f"{final_vae_loss:.4f}" if final_vae_loss is not None else 'N/A'
+        model_params_str = f"{model_parameters:,}" if isinstance(model_parameters, int) else str(model_parameters)
+        
         readme_content = f"""# VariBAD Experiment: {exp_name}
 
 **Timestamp:** {timestamp}
@@ -109,11 +123,11 @@ def run_experiment(config_path: str):
 - `README.md` - This file
 
 ## Key Results:
-- Total iterations: {metadata.get('total_iterations', 'N/A')}
-- Model parameters: {metadata.get('model_parameters', 'N/A'):,}
-- Device used: {metadata.get('device_used', 'N/A')}
-- Final avg episode reward: {metadata['final_performance']['avg_episode_reward']:.4f if metadata['final_performance']['avg_episode_reward'] else 'N/A'}
-- Final VAE loss: {metadata['final_performance']['avg_vae_loss']:.4f if metadata['final_performance']['avg_vae_loss'] else 'N/A'}
+- Total iterations: {total_iterations}
+- Model parameters: {model_params_str}
+- Device used: {device_used}
+- Final avg episode reward: {final_reward_str}
+- Final VAE loss: {final_vae_loss_str}
 
 ## Usage:
 To resume or analyze this experiment, load the checkpoint:
@@ -145,10 +159,10 @@ checkpoint = torch.load('model_checkpoint.pt')
         
         print("✅ Experiment completed successfully!")
         print(f"📦 Archive created: {zip_path} ({zip_size_mb:.1f} MB)")
-        print(f"📊 Training iterations: {metadata.get('total_iterations', 'N/A')}")
+        print(f"📊 Training iterations: {total_iterations}")
         
-        if metadata['final_performance']['avg_episode_reward']:
-            print(f"🎯 Final performance: {metadata['final_performance']['avg_episode_reward']:.4f}")
+        if final_reward is not None:
+            print(f"🎯 Final performance: {final_reward:.4f}")
         
         # Clean up temporary directory (optional - keep for debugging)
         # shutil.rmtree(exp_dir)
