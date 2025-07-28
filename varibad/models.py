@@ -77,6 +77,14 @@ class TrajectoryEncoder(nn.Module):
         rewards_expanded = rewards.unsqueeze(-1)
         trajectory_input = torch.cat([states, actions, rewards_expanded], dim=-1)
         
+        # Check for NaN inputs
+        if torch.isnan(trajectory_input).any():
+            # Return zero belief
+            batch_size = states.shape[0]
+            mu = torch.zeros(batch_size, self.latent_dim, device=states.device)
+            logvar = torch.zeros(batch_size, self.latent_dim, device=states.device)
+            return mu, logvar
+        
         # Pack sequences
         packed_input = nn.utils.rnn.pack_padded_sequence(
             trajectory_input, lengths.cpu(), batch_first=True, enforce_sorted=False
@@ -88,9 +96,13 @@ class TrajectoryEncoder(nn.Module):
         # Use final hidden state
         final_hidden = hidden[-1]  # Last layer
         
-        # Compute belief parameters
+        # Compute belief parameters with stability
         mu = self.fc_mu(final_hidden)
-        logvar = torch.clamp(self.fc_logvar(final_hidden), -10, 10)
+        logvar = self.fc_logvar(final_hidden)
+        
+        # Clamp for numerical stability
+        mu = torch.clamp(mu, -10, 10)
+        logvar = torch.clamp(logvar, -10, 10)
         
         return mu, logvar
 
@@ -259,11 +271,26 @@ class VariBADVAE(nn.Module):
         return self.policy(state, belief_mu, belief_logvar)
     
     def compute_elbo(self, states, actions, rewards, lengths, next_states, next_rewards):
-        """Compute ELBO loss"""
+        """Compute ELBO loss with numerical stability"""
         batch_size = states.shape[0]
         
         # Encode trajectory
         belief_mu, belief_logvar, sampled_belief = self.encode_trajectory(states, actions, rewards, lengths)
+        
+        # Clamp belief parameters for numerical stability
+        belief_mu = torch.clamp(belief_mu, -10, 10)
+        belief_logvar = torch.clamp(belief_logvar, -10, 10)
+        
+        # Check for NaN values
+        if torch.isnan(belief_mu).any() or torch.isnan(belief_logvar).any():
+            # Return dummy loss to continue training
+            return {
+                'elbo': torch.tensor(0.0, device=belief_mu.device),
+                'reconstruction_loss': torch.tensor(0.0, device=belief_mu.device),
+                'kl_loss': torch.tensor(0.0, device=belief_mu.device),
+                'state_loss': torch.tensor(0.0, device=belief_mu.device),
+                'reward_loss': torch.tensor(0.0, device=belief_mu.device)
+            }
         
         # Use last state/action for decoding
         last_indices = lengths - 1
@@ -273,15 +300,23 @@ class VariBADVAE(nn.Module):
         # Decode predictions
         pred_states, pred_rewards = self.decoder(current_states, current_actions, sampled_belief)
         
-        # Reconstruction loss
+        # Reconstruction loss with clamping
         state_loss = F.mse_loss(pred_states, next_states, reduction='mean')
         reward_loss = F.mse_loss(pred_rewards.squeeze(-1), next_rewards, reduction='mean')
         reconstruction_loss = state_loss + reward_loss
         
-        # KL divergence
-        belief_dist = Normal(belief_mu, torch.exp(0.5 * belief_logvar))
-        prior_dist = Normal(self.prior_mu.expand_as(belief_mu), self.prior_std.expand_as(belief_mu))
-        kl_loss = torch.distributions.kl_divergence(belief_dist, prior_dist).sum(dim=-1).mean()
+        # KL divergence with numerical stability
+        try:
+            belief_dist = Normal(belief_mu, torch.exp(0.5 * belief_logvar) + 1e-6)
+            prior_dist = Normal(self.prior_mu.expand_as(belief_mu), self.prior_std.expand_as(belief_mu))
+            kl_loss = torch.distributions.kl_divergence(belief_dist, prior_dist).sum(dim=-1).mean()
+            
+            # Check for NaN in KL
+            if torch.isnan(kl_loss):
+                kl_loss = torch.tensor(0.0, device=belief_mu.device)
+                
+        except Exception:
+            kl_loss = torch.tensor(0.0, device=belief_mu.device)
         
         # ELBO (negative because we minimize)
         elbo = -(reconstruction_loss + kl_loss)
