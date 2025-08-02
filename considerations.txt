@@ -1,0 +1,20 @@
+Environment:
+- only SNP500
+- additional technical indicators or none
+- market structure or none
+- increase number of asset features and market features. Start with simple measures.
+
+Action space:
+- leverage
+- cash position?
+- fixed vs. continuous allocation
+
+Task sampling:
+- random time window
+- trajectory length
+- create volatility clusters as tasks? Compare against temporal sampling
+
+VAE:
+- how to do the pre-collection
+- pre-train the VAE?
+- encoder: GRU or LSTM, hidden size and other parameters

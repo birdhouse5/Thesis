@@ -4,7 +4,8 @@ varibad/data
 archive/
 checkpoints/
 logs/
-
+environments/data/
+varibad/
 # Python
 __pycache__/
 *.py[cod]

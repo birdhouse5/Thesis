@@ -10,9 +10,9 @@ from typing import Dict, Tuple, Optional, Any
 import numpy as np
 from torch.distributions import Normal
 
-from vae_encoder import PortfolioEncoder
-from vae_decoder import PortfolioDecoder 
-from policy_network import PortfolioPolicy
+from varibad.encoder import PortfolioEncoder
+from varibad.decoder import PortfolioDecoder 
+from varibad.models.policy import PortfolioPolicy
 
 
 class PortfolioVariBAD(pl.LightningModule):
@@ -141,20 +141,20 @@ class PortfolioVariBAD(pl.LightningModule):
             'policy_values': policy_values,
             'states': states,
             'actions': actions,
-            'rewards': rewards
+            'rewards': rewards,
+            'trajectory': trajectory  # Include original trajectory
         }
     
-    def compute_vae_loss(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def compute_vae_loss(self, outputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """Compute VAE reconstruction and KL losses."""
-        trajectory = batch['trajectory']
-        mu = batch['mu']
-        logvar = batch['logvar']
-        z = batch['z']
-        states = batch['states']
-        actions = batch['actions']
-        rewards = batch['rewards']
+        mu = outputs['mu']
+        logvar = outputs['logvar']
+        z = outputs['z']
+        states = outputs['states']
+        actions = outputs['actions']
+        rewards = outputs['rewards']
         
-        batch_size, seq_len, _ = trajectory.shape
+        batch_size, seq_len, _ = states.shape
         
         # Reconstruction losses
         recon_losses = []
@@ -189,12 +189,12 @@ class PortfolioVariBAD(pl.LightningModule):
             'kl_loss': kl_loss
         }
     
-    def compute_policy_loss(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def compute_policy_loss(self, outputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """Compute policy loss (simplified actor-critic)."""
-        rewards = batch['rewards']
-        policy_values = batch['policy_values']
-        policy_actions = batch['policy_actions']
-        actions = batch['actions']
+        rewards = outputs['rewards']
+        policy_values = outputs['policy_values']
+        policy_actions = outputs['policy_actions']
+        actions = outputs['actions']
         
         batch_size, seq_len, _ = rewards.shape
         
@@ -236,12 +236,18 @@ class PortfolioVariBAD(pl.LightningModule):
             'avg_return': returns.mean()
         }
     
-    def training_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
+    def training_step(self, batch, batch_idx: int) -> torch.Tensor:
         """Training step with separate encoder, decoder, and policy optimization."""
         encoder_opt, decoder_opt, policy_opt = self.optimizers()
         
+        # Extract trajectory tensor from batch (Lightning returns tuple/list)
+        if isinstance(batch, (list, tuple)):
+            trajectory = batch[0]
+        else:
+            trajectory = batch
+        
         # Forward pass
-        outputs = self.forward(batch)
+        outputs = self.forward(trajectory)
         
         # Compute VAE loss
         vae_losses = self.compute_vae_loss(outputs)
@@ -258,7 +264,7 @@ class PortfolioVariBAD(pl.LightningModule):
         
         # Compute policy loss (detach VAE components)
         with torch.no_grad():
-            outputs_detached = self.forward(batch)  # Fresh forward pass
+            outputs_detached = self.forward(trajectory)  # Fresh forward pass
             
         policy_losses = self.compute_policy_loss(outputs_detached)
         
@@ -282,9 +288,15 @@ class PortfolioVariBAD(pl.LightningModule):
         
         return vae_losses['vae_loss'] + policy_losses['policy_loss']
     
-    def validation_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
+    def validation_step(self, batch, batch_idx: int) -> torch.Tensor:
         """Validation step."""
-        outputs = self.forward(batch, deterministic=True)
+        # Extract trajectory tensor from batch (Lightning returns tuple/list)
+        if isinstance(batch, (list, tuple)):
+            trajectory = batch[0]
+        else:
+            trajectory = batch
+            
+        outputs = self.forward(trajectory, deterministic=True)
         vae_losses = self.compute_vae_loss(outputs)
         policy_losses = self.compute_policy_loss(outputs)
         
@@ -314,6 +326,20 @@ class PortfolioVariBAD(pl.LightningModule):
             action, _ = self.policy(state, z, prev_action, deterministic)
             
         return action
+    
+    def compute_losses_standalone(self, trajectory: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """
+        Compute losses without Lightning trainer (for testing).
+        This method can be called directly without needing optimizers() method.
+        """
+        # Forward pass
+        outputs = self.forward(trajectory)
+        
+        # Compute losses
+        vae_losses = self.compute_vae_loss(outputs)
+        policy_losses = self.compute_policy_loss(outputs)
+        
+        return {**vae_losses, **policy_losses}
 
 
 # Example usage and testing
@@ -348,18 +374,46 @@ if __name__ == "__main__":
     print(f"Task embedding shape: {outputs['z'].shape}")
     print(f"Policy actions shape: {outputs['policy_actions'].shape}")
     
-    # Test loss computation (without actual training step)
+    # Test loss computation using standalone method (no trainer needed)
     model.train()
     
-    # Test VAE loss
-    outputs = model(batch)
-    vae_losses = model.compute_vae_loss(outputs)
-    policy_losses = model.compute_policy_loss(outputs)
+    # Use the standalone loss computation method
+    all_losses = model.compute_losses_standalone(batch)
     
-    print(f"VAE loss: {vae_losses['vae_loss']:.4f}")
-    print(f"Reconstruction loss: {vae_losses['recon_loss']:.4f}")
-    print(f"KL loss: {vae_losses['kl_loss']:.4f}")
-    print(f"Policy loss: {policy_losses['policy_loss']:.4f}")
-    print(f"Average return: {policy_losses['avg_return']:.4f}")
+    print(f"VAE loss: {all_losses['vae_loss']:.4f}")
+    print(f"Reconstruction loss: {all_losses['recon_loss']:.4f}")
+    print(f"KL loss: {all_losses['kl_loss']:.4f}")
+    print(f"Policy loss: {all_losses['policy_loss']:.4f}")
+    print(f"Average return: {all_losses['avg_return']:.4f}")
     
     print("\nModel ready for Lightning Trainer!")
+    
+    # Test with actual Lightning trainer
+    print("\nTesting with Lightning Trainer...")
+    trainer = pl.Trainer(
+        max_epochs=1,
+        accelerator='cpu',
+        devices=1,
+        logger=False,
+        enable_checkpointing=False,
+        enable_progress_bar=False,
+        max_steps=2  # Just test a few steps
+    )
+    
+    # Create a simple dataset
+    from torch.utils.data import TensorDataset, DataLoader
+    
+    # Generate some dummy data - each sample should be a full trajectory
+    num_samples = 100
+    dummy_trajectories = torch.randn(num_samples, sequence_length, trajectory_dim)
+    dataset = TensorDataset(dummy_trajectories)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    
+    # Test training step with real trainer
+    try:
+        trainer.fit(model, dataloader)
+        print("✅ Lightning training successful!")
+    except Exception as e:
+        print(f"❌ Lightning training failed: {e}")
+        import traceback
+        traceback.print_exc()
