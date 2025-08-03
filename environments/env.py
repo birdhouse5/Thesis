@@ -1,8 +1,8 @@
 import numpy as np
-
 import logging
-logger = logging.getLogger(__name__)
+from logger_config import experiment_logger
 
+logger = logging.getLogger(__name__)
 
 class Environment:
     def __init__(self, dataset, episode_length=60, num_assets=30):
@@ -11,7 +11,8 @@ class Environment:
         self.num_assets = num_assets
         self.current_step = 0
         self.episode_data = None
-    
+        self.episode_count = 0
+        
     def reset(self):
         """Sample new 60-day episode and return initial observation"""
         self._sample_episode()
@@ -21,29 +22,42 @@ class Environment:
         self.episode_info = {
             'start_idx': self.episode_start_idx,
             'start_date': start_date,
-            'end_date': end_date
+            'end_date': end_date,
+            'episode_id': self.episode_count
         }
         
-        logger.info(f"Episode reset: {start_date} to {end_date}")
+        logger.info(f"Episode {self.episode_count}: {start_date} to {end_date}")
         
+        # Log to TensorBoard
+        if experiment_logger:
+            experiment_logger.log_scalar('environment/episode_start_idx', self.episode_start_idx, self.episode_count)
+        
+        self.episode_count += 1
         return self.episode_data[0]
     
     def step(self, action):
         """Take action, return next_obs, reward, done, info"""
-        # Discretize and normalize action
         portfolio_weights = self._discretize_action(action)
-        
-        # Calculate reward using current and next observations
         reward = self._calculate_reward(portfolio_weights)
         
-        # Move to next timestep
         self.current_step += 1
         done = self.current_step >= self.episode_length - 1
         
-        # Get next observation (if not done)
         next_obs = self.episode_data[self.current_step] if not done else None
         
-        info = {'portfolio_weights': portfolio_weights}
+        # Log metrics
+        if experiment_logger:
+            step_id = self.episode_count * self.episode_length + self.current_step
+            experiment_logger.log_scalar('environment/reward', reward, step_id)
+            experiment_logger.log_histogram('environment/portfolio_weights', portfolio_weights, step_id)
+            experiment_logger.log_scalar('environment/portfolio_concentration', 
+                                        (portfolio_weights**2).sum(), step_id)  # Concentration metric
+        
+        info = {
+            'portfolio_weights': portfolio_weights,
+            'step': self.current_step,
+            'episode_id': self.episode_info['episode_id']
+        }
         
         return next_obs, reward, done, info
     
