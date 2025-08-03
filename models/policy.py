@@ -116,21 +116,23 @@ class Policy(nn.Module):
         value = output['value']
         
         # Log action statistics
-        if experiment_logger and not deterministic:
+        if experiment_logger is not None and not deterministic:
             decisions = action['decisions']
             long_count = (decisions == 0).sum().item()
             short_count = (decisions == 1).sum().item()
             neutral_count = (decisions == 2).sum().item()
-
-        experiment_logger.log_scalars('policy/action_distribution', {
-            'long_positions': long_count,
-            'short_positions': short_count,
-            'neutral_positions': neutral_count
-        }, getattr(self, 'action_count', 0))
-        
-        experiment_logger.log_scalar('policy/value_estimate', value.mean().item(), 
+            
+            experiment_logger.log_scalars('policy/action_distribution', {
+                'long_positions': long_count,
+                'short_positions': short_count,
+                'neutral_positions': neutral_count
+            }, getattr(self, 'action_count', 0))
+            
+            experiment_logger.log_scalar('policy/value_estimate', value.mean().item(), 
                                     getattr(self, 'action_count', 0))
-        
+
+            self.action_count = getattr(self, 'action_count', 0) + 1
+
         return action, value
 
     

@@ -31,7 +31,11 @@ class Config:
         self.log_interval = 10
         self.save_interval = 100
 
+        # Device
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+
 def main():
+
     # Setup logging
     exp_logger = setup_experiment_logging("portfolio_varibad")
     
@@ -54,10 +58,13 @@ def main():
     logger.info(f"Environment initialized: obs_shape={obs_shape}")
     
     # Initialize models
+
+    device = torch.device(config.device)
+
     logger.info("Initializing models...")
-    vae = VAE(obs_dim=obs_shape, latent_dim=config.latent_dim, hidden_dim=config.hidden_dim)
+    vae = VAE(obs_dim=obs_shape, latent_dim=config.latent_dim, hidden_dim=config.hidden_dim).to(device)
     policy = Policy(obs_shape=obs_shape, latent_dim=config.latent_dim, 
-                   num_assets=config.num_assets, hidden_dim=config.hidden_dim)
+                   num_assets=config.num_assets, hidden_dim=config.hidden_dim).to(device)
     
     # Initialize trainer
     trainer = Trainer(env, vae, policy, config)
