@@ -1,0 +1,9 @@
+- understand and develop buffer system
+- understand training pipeline
+- build and run
+
+
+
+
+Training:
+    

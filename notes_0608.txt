@@ -1,0 +1,7 @@
+todos:
+
+- make sure that dataset is [T x N x F]
+- do we need done?
+- what input shape does Env.compute_reward() need?
+
+- we could build parts of the trajectory easily by copying the data tensor (steps are deterministic irrespective of the actions)

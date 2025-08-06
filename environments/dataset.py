@@ -46,6 +46,10 @@ class Dataset:
         """Return data shaped as (days, assets, features)"""
         window_dates = self.dates[start_day_idx:end_day_idx]
         window_data = self.data[self.data['date'].isin(window_dates)]
+
+        # Sort by date then ticker to ensure consistent ordering
+        window_data = window_data.sort_values(['date', 'ticker'])
+
         features = window_data[self.feature_cols].values
         
         # Reshape to (T, N, F)

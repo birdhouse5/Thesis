@@ -33,6 +33,8 @@ class VAE(nn.Module):
                 'vae/action_dim': action_dim
             })
 
+        self.training_step = 0
+
     def reparameterize(self, mu, logvar):
         """Reparameterization trick for backpropagation through sampling"""
         std = torch.exp(0.5 * logvar)

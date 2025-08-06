@@ -3,6 +3,8 @@ Environment:
 - additional technical indicators or none
 - market structure or none
 - increase number of asset features and market features. Start with simple measures.
+- implement Sharpe ratio for now and test DSR later. Metatrader has a different learning setup, our might not require DSR (no sparse rewar problem due to rollout strategy)
+
 
 Action space:
 - leverage
@@ -16,8 +18,16 @@ Task sampling:
 
 VAE:
 - how to do the pre-collection
-- pre-train the VAE?
-- encoder: GRU or LSTM, hidden size and other parameters
+- pre-train the VAE? (in variBAD: " In practice, we may subsample a
+fixed number of ELBO terms (for random time steps t) for computational efficiency if H+ is large.")
+- encoder: GRU or LSTM, vary hidden size and other parameters. Potentially try out other architectures (e.g.  Zaheer et al. (2017); Garnelo
+et al. (2018); Rakelly et al. (2019))
+- perhaps involve some kind of convolutional net like in metatrader
 
 Policy:
 - use variBAD policy networks first, then apply Temporal Attention from metatrader. Compare
+- in variBAD the policy in conditioned on the current state. However since our portfolio context involved time series,
+    we perhaps should encode state information a bit differently. In fact, we already do: we include SMA's and other technical
+    indicators and market state in the state space. Perhaps we should try to also involve some kind of temporal convolution
+    somewhere to see if there is improvement.
+- try large vs. small buffer size: variance-bias trade-off

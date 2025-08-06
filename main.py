@@ -62,7 +62,8 @@ def main():
     device = torch.device(config.device)
 
     logger.info("Initializing models...")
-    vae = VAE(obs_dim=obs_shape, latent_dim=config.latent_dim, hidden_dim=config.hidden_dim).to(device)
+    action_dim = config.num_assets * 3  # Fixed size for consistency
+    vae = VAE(obs_dim=obs_shape, action_dim=action_dim, latent_dim=config.latent_dim, hidden_dim=config.hidden_dim).to(device)
     policy = Policy(obs_shape=obs_shape, latent_dim=config.latent_dim, 
                    num_assets=config.num_assets, hidden_dim=config.hidden_dim).to(device)
     

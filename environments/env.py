@@ -1,178 +1,217 @@
+import torch
 import numpy as np
 import logging
-from logger_config import experiment_logger
-import torch
 
 logger = logging.getLogger(__name__)
 
-class Environment:
-    def __init__(self, dataset, episode_length=60, num_assets=30, dsr_eta=0.01):
+class MetaEnv:
+    def __init__(self, dataset: torch.Tensor, seq_len: int = 60, min_horizon: int = 45, max_horizon: int = 60):
+        """
+        Args:
+            dataset: Tensor[T x N x F] - full time series data
+            seq_len: length of each task sequence
+            min_horizon: minimum episode length within a task
+            max_horizon: maximum episode length within a task
+        """
         self.dataset = dataset
-        self.episode_length = episode_length
-        self.num_assets = num_assets
+        self.seq_len = seq_len
+        self.min_horizon = min_horizon
+        self.max_horizon = max_horizon
+        
+        # Current episode state
         self.current_step = 0
-        self.episode_data = None
+        self.current_task = None
+        self.episode_trajectory = []  # Current episode trajectory
+        self.terminal_step = None
+        self.done = True
+
+        self.returns = []
+
+        # Episode tracking
         self.episode_count = 0
-    
-        # DSR parameters
-        self.dsr_eta = dsr_eta
-        self.alpha_prev = 0.0  # EMA of returns
-        self.beta_prev = 0.01  # EMA of squared returns (small initial value to avoid div by 0)
-        self.prev_portfolio_value = None
 
-    def _calculate_dsr(self, R_t, alpha_prev, beta_prev, eta):
+    def sample_task(self):
+        """Sample a random task from the dataset"""
+        T = self.dataset.shape[0]
+        start = torch.randint(0, T - self.seq_len, (1,)).item()
+        task = self.dataset[start:start + self.seq_len]
+        return {"sequence": task, "task_id": start}
+
+    def set_task(self, task: dict):
+        """Set the current task - this defines the MDP for this meta-episode"""
+        self.current_task = task["sequence"]  # Shape: [seq_len, N, F]
+        self.task_id = task["task_id"]
+        
+        # Reset episode state
+        self.current_step = 0
+        self.done = False
+        self.episode_trajectory = []
+        
+        # Sample episode length for this task
+        self.terminal_step = torch.randint(self.min_horizon, self.max_horizon + 1, (1,)).item()
+
+    def reset(self):
+        """Reset current episode within the current task"""
+        if self.current_task is None:
+            raise ValueError("Must call set_task() before reset()")
+            
+        self.current_step = 0
+        self.done = False
+        self.episode_trajectory = []
+
+        self.returns = []
+        
+        self.episode_count += 1
+        
+        # Return initial state: shape [N, F] (no batch dimension during rollout)
+        initial_state = self.current_task[0]  # Shape: [N, F]
+        return initial_state
+
+    def step(self, action: torch.Tensor):
         """
-        Compute the differential Sharpe ratio (DSR) reward.
-        Parameters:
-        - R_t: float, return at time t
-        - alpha_prev: float, previous EMA of returns (mean)
-        - beta_prev: float, previous EMA of squared returns (second moment)
-        - eta: float, decay rate (e.g., 0.01)
+        Take environment step
+        
+        Args:
+            action: Tensor[N] - portfolio allocation
+            
         Returns:
-        - dsr: float, differential Sharpe ratio at time t
-        - alpha_t: float, updated alpha
-        - beta_t: float, updated beta
+            next_state: Tensor[N, F] - next observation
+            reward: float - scalar reward
+            done: bool - episode termination
+            info: dict - additional info
         """
-        delta_alpha = R_t - alpha_prev
-        delta_beta = R_t**2 - beta_prev
-        alpha_t = alpha_prev + eta * delta_alpha
-        beta_t = beta_prev + eta * delta_beta
+        if self.done:
+            raise ValueError("Episode is done, call reset() first")
+            
+        # Current state
+        current_state = self.current_task[self.current_step]  # Shape: [N, F]
         
-        denom = (beta_prev - alpha_prev**2) ** 1.5
-        if denom == 0 or denom < 1e-8:  # Avoid division by zero/very small numbers
-            dsr = 0.0
+        # Compute reward based on current state and action
+        reward = self.compute_reward(current_state, action)
+        
+        # Store transition in episode trajectory
+        # Note: storing state without batch dimension for encoder compatibility
+        self.episode_trajectory.append({
+            'state': current_state.clone(),  # [N, F]
+            'action': action.clone(),        # [N] or dict
+            'reward': reward.item()          # scalar
+        })
+        
+        # Advance step
+        self.current_step += 1
+        
+        # Check if episode is done
+        self.done = (self.current_step >= self.terminal_step) or (self.current_step >= len(self.current_task))
+        
+        # Get next state
+        if self.done:
+            # Terminal state - could be zeros or repeat last state
+            next_state = torch.zeros_like(current_state)
         else:
-            dsr = (beta_prev * delta_alpha - 0.5 * alpha_prev * delta_beta) / denom
-        
-        return dsr, alpha_t, beta_t
+            next_state = self.current_task[self.current_step]
+            
+        # Log DSR components
+        logger.debug(f"Step {self.current_step}: reward={reward:.6f}, "
+                     f"returns_count={len(self.returns)}")
+            
+        return next_state, reward.item(), self.done, {
+            'task_id': self.task_id,
+            'portfolio_weights': action if not isinstance(action, dict) else None,
+            'step': self.current_step,
+            'episode_id': self.episode_count
+        }
 
-    def _calculate_portfolio_return(self, portfolio_weights):
-        """Calculate portfolio return based on current and next observations"""
-        if self.current_step >= len(self.episode_data) - 1:
-            return 0.0  # No next observation available
+    def compute_reward(self, state: torch.Tensor, action: torch.Tensor):
+        """
+        Compute reward based on Sharpe ratio
         
-        current_obs = self.episode_data[self.current_step]      # (num_assets, num_features)
-        next_obs = self.episode_data[self.current_step + 1]     # (num_assets, num_features)
+        Args:
+            state: Tensor[N, F] - current market state
+            action: Tensor[N] - portfolio allocation weights
+            
+        Returns:
+            reward: Tensor (scalar)
+        """
+        # Convert action dict if needed (from hierarchical policy)
+        if isinstance(action, dict):
+            portfolio_weights = self._discretize_action(action)
+            portfolio_weights = torch.from_numpy(portfolio_weights).float()
+        else:
+            portfolio_weights = action
+            
+        return self.sharpe_ratio(state, portfolio_weights)
+
+    def sharpe_ratio(self, state: torch.Tensor, portfolio_weights: torch.Tensor):
+        """
+        Compute Sharpe ratio reward
         
-        # Find the index for close price (assuming 'close_norm' is in features)
-        # You'll need to adjust this based on your actual feature columns
+        Args:
+            state: Tensor[N, F] - current market state
+            portfolio_weights: Tensor[N] - portfolio allocation
+            
+        Returns:
+            reward: Tensor (scalar)
+        """
+        # Calculate portfolio return
+        R_t = self._calculate_portfolio_return(state, portfolio_weights)
+        self.returns.append(R_t.item())
+
+        # Need at least 2 returns to calculate Sharpe
+        if len(self.returns) < 2:
+            return torch.tensor(0.0)
+        
+        # Calculate Sharpe ratio
+        returns_array = torch.tensor(self.returns)
+        mean_return = returns_array.mean()
+        std_return = returns_array.std()
+        
+        # Avoid division by zero
+        if std_return < 1e-8:
+            sharpe = torch.tensor(0.0)
+        else:
+            sharpe = mean_return / std_return
+        
+        return sharpe
+
+    def _calculate_portfolio_return(self, current_state: torch.Tensor, portfolio_weights: torch.Tensor):
+        """
+        Calculate portfolio return based on current and next states
+        
+        Args:
+            current_state: Tensor[N, F] - current market state
+            portfolio_weights: Tensor[N] - portfolio allocation
+            
+        Returns:
+            portfolio_return: Tensor (scalar)
+        """
+        if self.current_step >= len(self.current_task) - 1:
+            return torch.tensor(0.0)  # No next observation available
+        
+        next_state = self.current_task[self.current_step + 1]  # [N, F]
+        
+        # Get close price index (assume it's the first feature or find it)
         close_idx = self._get_close_price_idx()
         
-        current_prices = current_obs[:, close_idx]  # (num_assets,)
-        next_prices = next_obs[:, close_idx]        # (num_assets,)
+        current_prices = current_state[:, close_idx]  # [N]
+        next_prices = next_state[:, close_idx]        # [N]
         
         # Calculate individual asset returns: (price_t+1 - price_t) / price_t
         asset_returns = (next_prices - current_prices) / (current_prices + 1e-8)  # Avoid div by 0
         
         # Calculate portfolio return as weighted sum
-        portfolio_return = np.sum(portfolio_weights * asset_returns)
+        portfolio_return = torch.sum(portfolio_weights * asset_returns)
         
         return portfolio_return
 
     def _get_close_price_idx(self):
         """Get the index of close price in feature columns"""
         # This assumes 'close_norm' is in your selected features
-        # You'll need to adjust based on your actual Dataset feature selection
-        try:
-            return self.dataset.feature_cols.index('close_norm')
-        except ValueError:
-            # Fallback: assume first feature is price-related
-            logger.warning("'close_norm' not found in features, using index 0")
-            return 0
+        # You'll need to adjust based on your actual feature selection
+        # For now, assume first feature is close price
+        return 0
 
-    def _calculate_reward(self, portfolio_weights):
-        """Calculate DSR reward for the given portfolio weights"""
-        # Calculate portfolio return
-        R_t = self._calculate_portfolio_return(portfolio_weights)
-        
-        # Calculate DSR reward
-        dsr, alpha_t, beta_t = self._calculate_dsr(R_t, self.alpha_prev, self.beta_prev, self.dsr_eta)
-        
-        # Update state for next timestep
-        self.alpha_prev = alpha_t
-        self.beta_prev = beta_t
-        
-        # Log DSR components
-        logger.debug(f"Step {self.current_step}: R_t={R_t:.6f}, DSR={dsr:.6f}, "
-                    f"alpha={alpha_t:.6f}, beta={beta_t:.6f}")
-        
-        # Log to TensorBoard
-        if experiment_logger:
-            step_id = self.episode_count * self.episode_length + self.current_step
-            experiment_logger.log_scalars('dsr/components', {
-                'portfolio_return': R_t,
-                'dsr_reward': dsr,
-                'alpha': alpha_t,
-                'beta': beta_t
-            }, step_id)
-        
-        return dsr
-
-    def reset(self):
-        """Sample new 60-day episode and return initial observation"""
-        self._sample_episode()
-        
-        # Reset DSR state for new episode
-        self.alpha_prev = 0.0
-        self.beta_prev = 0.01
-        self.prev_portfolio_value = None
-        
-        # [Rest of existing reset code...]
-        start_date = self.dataset.dates[self.episode_start_idx]
-        end_date = self.dataset.dates[self.episode_start_idx + self.episode_length - 1]
-        self.episode_info = {
-            'start_idx': self.episode_start_idx,
-            'start_date': start_date,
-            'end_date': end_date,
-            'episode_id': self.episode_count
-        }
-        
-        logger.info(f"Episode {self.episode_count}: {start_date} to {end_date}")
-        
-        if experiment_logger:
-            experiment_logger.log_scalar('environment/episode_start_idx', self.episode_start_idx, self.episode_count)
-        
-        self.episode_count += 1
-        return self.episode_data[0]
-    
-    def step(self, action):
-        """Take action, return next_obs, reward, done, info"""
-        portfolio_weights = self._discretize_action(action)
-        reward = self._calculate_reward(portfolio_weights)
-        
-        self.current_step += 1
-        done = self.current_step >= self.episode_length - 1
-        
-        next_obs = self.episode_data[self.current_step] if not done else None
-        
-        # Log metrics
-        if experiment_logger:
-            step_id = self.episode_count * self.episode_length + self.current_step
-            experiment_logger.log_scalar('environment/reward', reward, step_id)
-            experiment_logger.log_histogram('environment/portfolio_weights', portfolio_weights, step_id)
-            experiment_logger.log_scalar('environment/portfolio_concentration', 
-                                        (portfolio_weights**2).sum(), step_id)  # Concentration metric
-        
-        info = {
-            'portfolio_weights': portfolio_weights,
-            'step': self.current_step,
-            'episode_id': self.episode_info['episode_id']
-        }
-        
-        return next_obs, reward, done, info
-    
-    def _sample_episode(self):
-        """Sample random 60-day window from data"""
-        max_start_idx = len(self.dataset) - self.episode_length
-        self.episode_start_idx = np.random.randint(0, max_start_idx)
-        end_idx = self.episode_start_idx + self.episode_length
-        
-        self.episode_data = self.dataset.get_window(self.episode_start_idx, end_idx)
-        self.current_step = 0
-    
-    # In environments/env.py - make _discretize_action more robust
     def _discretize_action(self, action_dict):
-        """Convert hierarchical action to portfolio weights"""
+        """Convert hierarchical action to portfolio weights (numpy version)"""
         decisions = action_dict['decisions']        
         long_weights = action_dict['long_weights']  
         short_weights = action_dict['short_weights'] 
@@ -197,7 +236,8 @@ class Environment:
         short_mask = (asset_decisions == 1)
         
         # Initialize portfolio weights
-        portfolio_weights = np.zeros(self.num_assets)
+        N = len(self.current_task[0])  # Number of assets
+        portfolio_weights = np.zeros(N)
         
         # Apply long weights (normalized among long positions)
         if long_mask.any():
@@ -211,8 +251,112 @@ class Environment:
             short_normalized = short_raw / short_raw.sum()
             portfolio_weights[short_mask] = -short_normalized
         
-        # Log the action breakdown
-        logger.debug(f"Assets: Long={long_mask.sum()}, Short={short_mask.sum()}, Neutral={(asset_decisions==2).sum()}")
-        logger.debug(f"Portfolio weights sum: {portfolio_weights.sum():.3f}")
-        
         return portfolio_weights
+
+    def rollout_episode(self, policy, encoder):
+        """
+        Perform a complete episode rollout using policy and encoder
+        
+        Args:
+            policy: function that takes (state, latent) -> action
+            encoder: encoder that takes trajectory context -> latent distribution
+            
+        Returns:
+            trajectory: List of dicts with keys ['state', 'action', 'reward', 'latent']
+        """
+        if self.current_task is None:
+            raise ValueError("Must call set_task() before rollout")
+            
+        trajectory = []
+        state = self.reset()
+        
+        # Keep track of trajectory context for encoder (following paper's τ:t notation)
+        trajectory_context = []  # This will build up the τ:t sequence
+        
+        step = 0
+        while not self.done:
+            # Build context τ:t for encoder (states, actions, rewards up to current time)
+            if step == 0:
+                # At t=0, we only have initial state s0
+                context_for_encoder = trajectory_context  # Empty list
+            else:
+                # At t>0, we have transitions up to current state
+                context_for_encoder = trajectory_context
+            
+            # Encode current trajectory context to get latent
+            latent_dist = encoder.encode(context_for_encoder)
+            latent = latent_dist.sample() if hasattr(latent_dist, 'sample') else latent_dist
+            
+            # Policy computes action given current state and latent
+            action = policy(state, latent)
+            
+            # Take environment step
+            next_state, reward, done, info = self.step(action)
+            
+            # Store full transition info for training
+            trajectory.append({
+                'state': state.clone(),      # [N, F]
+                'action': action.clone(),    # [N] 
+                'reward': reward,            # scalar
+                'latent': latent.clone(),    # [latent_dim]
+                'next_state': next_state.clone() if not done else None
+            })
+            
+            # Update trajectory context for next iteration
+            # This follows paper's τ:t notation: (s0,a0,r1,s1,a1,r2,...,st)
+            trajectory_context.append({
+                'state': state.clone(),
+                'action': action.clone(),
+                'reward': reward
+            })
+            
+            state = next_state
+            step += 1
+            
+        return trajectory
+
+    def get_trajectory_for_vae_training(self):
+        """
+        Get the current episode trajectory in format suitable for VAE training
+        
+        Returns:
+            trajectory: List of dicts suitable for encoder training
+        """
+        return self.episode_trajectory.copy()
+
+    def get_task_info(self):
+        """Get information about current task"""
+        return {
+            'task_id': getattr(self, 'task_id', None),
+            'current_step': self.current_step,
+            'terminal_step': self.terminal_step,
+            'done': self.done
+        }
+
+# Example usage:
+if __name__ == "__main__":
+    # Create dummy dataset
+    T, N, F = 1000, 10, 5  # 1000 timesteps, 10 assets, 5 features
+    dataset = torch.randn(T, N, F)
+    
+    # Create environment
+    env = MetaEnv(dataset, seq_len=60)
+    
+    # Sample and set task
+    task = env.sample_task()
+    env.set_task(task)
+    
+    print(f"Task sequence shape: {task['sequence'].shape}")
+    print(f"Task ID: {task['task_id']}")
+    
+    # Reset and take a few steps
+    state = env.reset()
+    print(f"Initial state shape: {state.shape}")
+    
+    for i in range(5):
+        action = torch.randn(N) * 0.1  # Random portfolio allocation
+        next_state, reward, done, info = env.step(action)
+        print(f"Step {i}: reward={reward:.4f}, done={done}")
+        if done:
+            break
+        state = next_state
