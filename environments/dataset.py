@@ -7,7 +7,7 @@ import numpy as np
 
 class Dataset:
     def __init__(self, data_path):
-        self.data = pd.read_csv(data_path)
+        self.data = pd.read_parquet(data_path)
         self.tickers = sorted(self.data['ticker'].unique())
         self.num_assets = len(self.tickers)
         self.dates = sorted(self.data['date'].unique())
@@ -16,31 +16,20 @@ class Dataset:
         # Select features for training
         self.feature_cols = self._select_training_features()
         self.num_features = len(self.feature_cols)
+
+        expected_rows = self.num_days * self.num_assets
+        actual_rows = len(self.data)
+        if actual_rows != expected_rows:
+            raise ValueError(f"Data not rectangular: {actual_rows} rows, expected {expected_rows}")
+        
         print(f"Selected {self.num_features} features for training:")
         for i, col in enumerate(self.feature_cols):
             print(f"  {i:2d}: {col}")
 
     def _select_training_features(self):
-        """Keep normalized features + unnormalized ones without normalized version"""
-        all_cols = self.data.columns.tolist()
-
-        # Get all normalized columns
-        normalized_cols = [col for col in all_cols if col.endswith('_norm')]
-
-        # Get unnormalized columns that don't have a normalized version
-        unnormalized_cols = []
-        for col in all_cols:
-            if col in ['date', 'ticker']:
-                continue
-            if not col.endswith('_norm'):
-                # Check if there's a normalized version
-                norm_version = f"{col}_norm"
-                if norm_version not in all_cols:
-                    unnormalized_cols.append(col)
-
-        # Combine and sort for consistency
-        selected_cols = sorted(normalized_cols + unnormalized_cols)
-        return selected_cols
+        """Use only normalized features for consistent scaling"""
+        normalized_cols = [col for col in self.data.columns if col.endswith('_norm')]
+        return sorted(normalized_cols)
 
     def get_window(self, start_day_idx, end_day_idx):
         """Return data shaped as (days, assets, features)"""

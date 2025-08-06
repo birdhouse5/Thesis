@@ -5,15 +5,17 @@ import logging
 logger = logging.getLogger(__name__)
 
 class MetaEnv:
-    def __init__(self, dataset: torch.Tensor, seq_len: int = 60, min_horizon: int = 45, max_horizon: int = 60):
+    def __init__(self, dataset: torch.Tensor, feature_columns: list, seq_len: int = 60, min_horizon: int = 45, max_horizon: int = 60):
         """
         Args:
             dataset: Tensor[T x N x F] - full time series data
+            feature_comuns: List of feature names in order
             seq_len: length of each task sequence
             min_horizon: minimum episode length within a task
             max_horizon: maximum episode length within a task
         """
         self.dataset = dataset
+        self.feature_columns = feature_columns
         self.seq_len = seq_len
         self.min_horizon = min_horizon
         self.max_horizon = max_horizon
@@ -29,6 +31,19 @@ class MetaEnv:
 
         # Episode tracking
         self.episode_count = 0
+
+        self._close_idx_cache = self._find_close_price_idx()
+
+    def _find_close_price_idx(self):
+        """Find close_norm index in feature columns"""
+        try:
+            return self.feature_columns.index('close_norm')
+        except ValueError:
+            # Fallback options
+            for idx, col in enumerate(self.feature_columns):
+                if 'close' in col.lower() and 'norm' in col.lower():
+                    return idx
+            raise ValueError("Could not find close price feature (close_norm) in feature columns")
 
     def sample_task(self):
         """Sample a random task from the dataset"""
@@ -205,10 +220,12 @@ class MetaEnv:
 
     def _get_close_price_idx(self):
         """Get the index of close price in feature columns"""
-        # This assumes 'close_norm' is in your selected features
-        # You'll need to adjust based on your actual feature selection
-        # For now, assume first feature is close price
-        return 0
+        # Get feature columns from dataset to find close_norm index
+        if not hasattr(self, '_close_idx_cache'):
+            # We need to get this from somewhere - the env needs to know the feature ordering
+            # This is a design issue - env should receive feature column info
+            raise NotImplementedError("Environment needs feature column information from dataset")
+        return self._close_idx_cache
 
     def _discretize_action(self, action_dict):
         """Convert hierarchical action to portfolio weights (numpy version)"""

@@ -287,15 +287,7 @@ def normalize_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def clean_data(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Clean data by handling missing values and removing problematic rows.
-    
-    Args:
-        df: DataFrame with normalized features
-    
-    Returns:
-        Cleaned DataFrame
-    """
+    """Clean data by handling missing values and ensuring rectangular structure"""
     logger.info("🧹 Cleaning data...")
     
     initial_rows = len(df)
@@ -304,8 +296,7 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     logger.info(f"   📊 Initial: {initial_rows:,} rows, {initial_nans:,} NaN values")
     
     # === Remove rows with missing essential data ===
-    essential_columns = ['date', 'ticker', 'close', 'returns']
-    df = df.dropna(subset=essential_columns)
+    df = df.dropna(subset=['date', 'ticker', 'close', 'returns'])
     
     # === Fill remaining NaNs with appropriate values ===
     numeric_columns = df.select_dtypes(include=[np.number]).columns
@@ -340,6 +331,17 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     # === Ensure proper data types ===
     df['date'] = pd.to_datetime(df['date'])
     
+    complete_idx = pd.MultiIndex.from_product(
+        [sorted(df['date'].unique()), sorted(df['ticker'].unique())],
+        names=['date', 'ticker']
+    )
+    df = df.set_index(['date', 'ticker']).reindex(complete_idx).reset_index()
+    
+    # Fill any gaps created by reindexing
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    df[numeric_cols] = df.groupby('ticker')[numeric_cols].ffill().bfill()
+
+
     final_rows = len(df)
     final_nans = df.isnull().sum().sum()
     
