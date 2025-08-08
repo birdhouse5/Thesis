@@ -32,18 +32,23 @@ class Dataset:
         return sorted(normalized_cols)
 
     def get_window(self, start_day_idx, end_day_idx):
-        """Return data shaped as (days, assets, features)"""
+        """Return normalized features and raw prices"""
         window_dates = self.dates[start_day_idx:end_day_idx]
         window_data = self.data[self.data['date'].isin(window_dates)]
-
-        # Sort by date then ticker to ensure consistent ordering
         window_data = window_data.sort_values(['date', 'ticker'])
-
-        features = window_data[self.feature_cols].values
         
-        # Reshape to (T, N, F)
-        num_days = len(window_dates)
-        return features.reshape(num_days, self.num_assets, self.num_features)
+        # Normalized features for VAE/policy
+        features = window_data[self.feature_cols].values
+        features = features.reshape(len(window_dates), self.num_assets, self.num_features)
+        
+        # Raw prices for return calculations  
+        raw_prices = window_data['close'].values
+        raw_prices = raw_prices.reshape(len(window_dates), self.num_assets)
+        
+        return {
+            'features': features,      # (T, N, F)
+            'raw_prices': raw_prices   # (T, N)
+        }   
     
     def __len__(self):
         return self.num_days

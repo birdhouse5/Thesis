@@ -8,29 +8,26 @@ from logger_config import experiment_logger
 logger = logging.getLogger(__name__)
 
 class VAE(nn.Module):
-    def __init__(self, obs_dim, action_dim=90, latent_dim=64, hidden_dim=256):
+    def __init__(self, obs_dim, num_assets, latent_dim=64, hidden_dim=256):
         super(VAE, self).__init__()
         
-        self.obs_dim = obs_dim      # (30, num_features)
-        self.action_dim = action_dim # For hierarchical: decisions + weights
+        self.obs_dim = obs_dim          # (30, num_features)
+        self.action_dim = num_assets    # Simple portfolio weights [N]
         self.latent_dim = latent_dim
         
         # Encoder and decoders
-        self.encoder = RNNEncoder(obs_dim, action_dim, latent_dim=latent_dim, hidden_dim=hidden_dim)
-        self.obs_decoder = ObservationDecoder(latent_dim, obs_dim, action_dim, hidden_dim)
-        self.reward_decoder = RewardDecoder(latent_dim, obs_dim, action_dim, hidden_dim//2)
+        self.encoder = RNNEncoder(obs_dim, self.action_dim, latent_dim=latent_dim, hidden_dim=hidden_dim)
+        self.obs_decoder = ObservationDecoder(latent_dim, obs_dim, self.action_dim, hidden_dim)
+        self.reward_decoder = RewardDecoder(latent_dim, obs_dim, self.action_dim, hidden_dim//2)
 
+        logger.info(f"VAE initialized: action_dim={self.action_dim} (portfolio weights), latent_dim={latent_dim}")
 
-        logger.info(f"VAE initialized: latent_dim={latent_dim}, hidden_dim={hidden_dim}")
-
-        # Log model architecture
         if experiment_logger:
             experiment_logger.log_hyperparams({
                 'vae/latent_dim': latent_dim,
-                'vae/hidden_dim': hidden_dim,
+                'vae/action_dim': self.action_dim,
                 'vae/obs_dim_0': obs_dim[0],
-                'vae/obs_dim_1': obs_dim[1],
-                'vae/action_dim': action_dim
+                'vae/obs_dim_1': obs_dim[1]
             })
 
         self.training_step = 0

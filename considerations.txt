@@ -4,12 +4,14 @@ Environment:
 - market structure or none
 - increase number of asset features and market features. Start with simple measures.
 - implement Sharpe ratio for now and test DSR later. Metatrader has a different learning setup, our might not require DSR (no sparse rewar problem due to rollout strategy)
-
+- we allow cash positions for now but will punish with inflation cost later
 
 Action space:
 - leverage
 - cash position?
 - fixed vs. continuous allocation
+- we start with no shorting and include later, including Total capital constraint (often called a gross exposure or leverage constraint)
+
 
 Task sampling:
 - random time window

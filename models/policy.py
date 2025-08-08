@@ -1,87 +1,72 @@
-# In models/policy.py
+# File: models/policy.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import logging
-from logger_config import experiment_logger
 
-logger = logging.getLogger(__name__)
-
-class Policy(nn.Module):
-    def __init__(self, obs_shape, latent_dim, num_assets, algorithm='ppo', hidden_dim=256):
-        super(Policy, self).__init__()
+class PortfolioPolicy(nn.Module):
+    def __init__(self, obs_dim, latent_dim, num_assets, hidden_dim=256):
+        super(PortfolioPolicy, self).__init__()
         
+        self.obs_dim = obs_dim      # (30, num_features)
+        self.latent_dim = latent_dim
         self.num_assets = num_assets
-        self.obs_shape = obs_shape
-        self.algorithm = algorithm
         
-        # Input processing
-        input_dim = obs_shape[0] * obs_shape[1] + latent_dim
-        
-        # Shared feature extraction
-        self.shared_net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
+        # Observation encoder
+        obs_flat_dim = obs_dim[0] * obs_dim[1]  # Flatten market state
+        self.obs_encoder = nn.Sequential(
+            nn.Linear(obs_flat_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim // 2)
+        )
+        
+        # Latent encoder
+        self.latent_encoder = nn.Sequential(
+            nn.Linear(latent_dim, hidden_dim // 4),
             nn.ReLU()
         )
         
-        # Decision head: [long, short, neutral] per asset
-        self.decision_head = nn.Linear(hidden_dim, num_assets * 3)
-        
-        # Weight heads
-        self.long_weight_head = nn.Linear(hidden_dim, num_assets)
-        self.short_weight_head = nn.Linear(hidden_dim, num_assets)
-        
-        # Value head (used by both PPO and A2C)
-        self.value_head = nn.Linear(hidden_dim, 1)
-        
-        # PPO-specific: we might need action log probabilities
-        # A2C-specific: direct policy gradients
+        # Combined processing
+        combined_dim = hidden_dim // 2 + hidden_dim // 4
+        self.policy_head = nn.Sequential(
+            nn.Linear(combined_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 2, num_assets)  # Raw logits
+        )
 
-        logger.info(f"Policy initialized: assets={num_assets}, hidden_dim={hidden_dim}")
+                # Split final layer
+        self.actor_head = nn.Linear(hidden_dim // 2, num_assets)      # Action logits
+        self.critic_head = nn.Linear(hidden_dim // 2, 1)             # Value function
         
-        # Log model architecture
-        if experiment_logger:
-            experiment_logger.log_hyperparams({
-                'policy/num_assets': num_assets,
-                'policy/hidden_dim': hidden_dim,
-                'policy/latent_dim': latent_dim,
-                'policy/obs_shape_0': obs_shape[0],
-                'policy/obs_shape_1': obs_shape[1]
-            })
+        # Learnable log std for action distribution
+        self.log_std = nn.Parameter(torch.zeros(num_assets))
         
-    def forward(self, obs, latent):
-        """Forward pass through hierarchical policy"""
-        # Flatten observations and concatenate with latent
-        batch_size = obs.shape[0]
-        obs_flat = obs.view(batch_size, -1)  # Flatten (batch, 30, features) -> (batch, 30*features)
+    def forward(self, state, latent):
+        """
+        Args:
+            state: (batch, 30, num_features) - current market state
+            latent: (batch, latent_dim) - task embedding
+        Returns:
+            portfolio_weights: (batch, 30) - portfolio allocation
+        """
+        batch_size = state.shape[0]
         
-        if latent is not None:
-            x = torch.cat([obs_flat, latent], dim=-1)
-        else:
-            x = obs_flat
+        # Encode observations
+        state_flat = state.view(batch_size, -1)
+        state_features = self.obs_encoder(state_flat)
         
-        # Shared feature extraction
-        shared_features = self.shared_net(x)
+        # Encode latent
+        latent_features = self.latent_encoder(latent)
         
-        # Decision logits: reshape to (batch, num_assets, 3)
-        decision_logits = self.decision_head(shared_features)
-        decision_logits = decision_logits.view(batch_size, self.num_assets, 3)
+        # Combine and generate portfolio
+        combined = torch.cat([state_features, latent_features], dim=-1)
+        logits = self.policy_head(combined)
         
-        # Weight logits
-        long_logits = self.long_weight_head(shared_features)    # (batch, num_assets)
-        short_logits = self.short_weight_head(shared_features)  # (batch, num_assets)
+        # Softmax for valid portfolio weights
+        portfolio_weights = F.softmax(logits, dim=-1)
         
-        # Value estimate
-        value = self.value_head(shared_features)  # (batch, 1)
-        
-        return {
-            'decision_logits': decision_logits,
-            'long_logits': long_logits, 
-            'short_logits': short_logits,
-            'value': value
-        }
+        return portfolio_weights
 
     def act(self, obs, latent, deterministic=False):
         """Sample action from policy distributions"""
