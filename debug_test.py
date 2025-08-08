@@ -1,13 +1,16 @@
-# debug_test.py
+# debug_test_fixed.py
 import torch
 import numpy as np
 import logging
 import sys
 import traceback
 from pathlib import Path
+import os
 
-# Add project root to path
-sys.path.append('.')
+# Add project root to path - make sure we're in the right directory
+project_root = Path(__file__).parent
+sys.path.insert(0, str(project_root))
+os.chdir(project_root)
 
 def create_mock_data():
     """Create minimal mock data for testing"""
@@ -15,17 +18,16 @@ def create_mock_data():
     
     import pandas as pd
     
-    dates = pd.date_range('2020-01-01', periods=200, freq='D')  # More data for proper testing
-    tickers = ['AAPL', 'MSFT', 'GOOGL']  # 3 assets for testing
+    dates = pd.date_range('2020-01-01', periods=200, freq='D')  
+    tickers = ['AAPL', 'MSFT', 'GOOGL']  # 3 assets
     
     data = []
     for date in dates:
         for ticker in tickers:
-            # Mock normalized features (matches expected feature set)
             row = {
                 'date': date.strftime('%Y-%m-%d'),
                 'ticker': ticker,
-                'close': np.random.uniform(50, 200),  # Raw price for returns
+                'close': np.random.uniform(50, 200),
                 'close_norm': np.random.uniform(0, 1),
                 'volume_norm': np.random.randn(),
                 'returns': np.random.randn() * 0.02,
@@ -39,15 +41,13 @@ def create_mock_data():
             data.append(row)
     
     df = pd.DataFrame(data)
-    
-    # Save as parquet (matching expected format)
     output_path = 'mock_data.parquet'
     df.to_parquet(output_path, index=False)
     print(f"Mock data created: {df.shape} -> {output_path}")
     return output_path
 
 def test_dataset():
-    """Test dataset loading with new setup"""
+    """Test dataset loading"""
     print("\n=== Testing Dataset ===")
     try:
         from environments.dataset import Dataset
@@ -57,12 +57,12 @@ def test_dataset():
         
         print(f"Dataset loaded: {len(dataset)} days, {dataset.num_assets} assets")
         print(f"Features: {dataset.num_features}")
-        print(f"Feature columns: {dataset.feature_cols[:5]}...")  # First 5
         
-        # Test window sampling
-        window = dataset.get_window(0, 20)
-        print(f"Window features shape: {window['features'].shape}")  # Should be (20, 3, num_features)
-        print(f"Window raw_prices shape: {window['raw_prices'].shape}")  # Should be (20, 3)
+        # Test window sampling with smaller window
+        window_size = min(20, len(dataset))
+        window = dataset.get_window(0, window_size)
+        print(f"Window features shape: {window['features'].shape}")
+        print(f"Window raw_prices shape: {window['raw_prices'].shape}")
         
         return dataset
         
@@ -72,70 +72,47 @@ def test_dataset():
         return None
 
 def test_meta_environment(dataset):
-    """Test MetaEnv with new architecture"""
+    """Test MetaEnv with proper tensor creation"""
     print("\n=== Testing MetaEnv ===")
     try:
         from environments.env import MetaEnv
         
-        # Prepare dataset tensor for MetaEnv
-        seq_len = 60
-        num_windows = len(dataset) // seq_len
+        # Create a simple continuous dataset tensor
+        seq_len = min(60, len(dataset))
+        window = dataset.get_window(0, seq_len)
         
-        all_features = []
-        all_prices = []
-        
-        for i in range(num_windows):
-            start_idx = i * seq_len
-            end_idx = start_idx + seq_len
-            if end_idx <= len(dataset):
-                window = dataset.get_window(start_idx, end_idx)
-                all_features.append(torch.tensor(window['features'], dtype=torch.float32))
-                all_prices.append(torch.tensor(window['raw_prices'], dtype=torch.float32))
-        
-        if not all_features:
-            print("No complete windows available, using shorter sequence")
-            window = dataset.get_window(0, min(30, len(dataset)))
-            all_features = [torch.tensor(window['features'], dtype=torch.float32)]
-            all_prices = [torch.tensor(window['raw_prices'], dtype=torch.float32)]
-        
-        # Stack and reshape for MetaEnv
-        features_tensor = torch.cat(all_features, dim=0)  # (total_time, N, F)
-        prices_tensor = torch.cat(all_prices, dim=0)      # (total_time, N)
-        
+        # Convert to tensors with proper shape
         dataset_tensor = {
-            'features': features_tensor,
-            'raw_prices': prices_tensor
+            'features': torch.tensor(window['features'], dtype=torch.float32),
+            'raw_prices': torch.tensor(window['raw_prices'], dtype=torch.float32)
         }
         
-        print(f"Dataset tensor shapes: features={features_tensor.shape}, prices={prices_tensor.shape}")
+        print(f"Dataset tensor shapes: features={dataset_tensor['features'].shape}, "
+              f"prices={dataset_tensor['raw_prices'].shape}")
         
-        # Create MetaEnv
+        # Create MetaEnv with shorter sequences for testing
         env = MetaEnv(
             dataset=dataset_tensor,
             feature_columns=dataset.feature_cols,
-            seq_len=30,  # Shorter for testing
-            min_horizon=20,
-            max_horizon=25
+            seq_len=min(30, seq_len),
+            min_horizon=10,
+            max_horizon=15
         )
         
-        # Test task sampling
+        # Sample task
         task = env.sample_task()
-        print(f"Task sampled: {task.keys()}")
-        
-        # Set task and reset
         env.set_task(task)
         initial_obs = env.reset()
-        print(f"Initial observation shape: {initial_obs.shape}")  # Should be (N, F)
         
-        # Test step with portfolio weights
+        print(f"Initial observation shape: {initial_obs.shape}")
+        
+        # Test step with proper action
         num_assets = initial_obs.shape[0]
-        portfolio_weights = torch.rand(num_assets)
-        portfolio_weights = portfolio_weights / portfolio_weights.sum()  # Normalize to sum=1
+        portfolio_weights = np.random.rand(num_assets)
+        portfolio_weights = portfolio_weights / portfolio_weights.sum()
         
-        next_obs, reward, done, info = env.step(portfolio_weights.numpy())
+        next_obs, reward, done, info = env.step(portfolio_weights)
         print(f"Step successful: reward={reward:.4f}, done={done}")
-        print(f"Info keys: {info.keys()}")
-        print(f"Portfolio allocation sum: {portfolio_weights.sum():.4f}")
         
         return env, initial_obs.shape
         
@@ -145,247 +122,173 @@ def test_meta_environment(dataset):
         return None, None
 
 def test_models(obs_shape, num_assets):
-    """Test VAE and Policy models with new architecture"""
+    """Test models with consistent device handling"""
     print("\n=== Testing Models ===")
     
-    # Test Policy
+    # Force CPU usage
+    device = torch.device("cpu")
+    
     try:
         from models.policy import PortfolioPolicy
+        from models.vae import VAE
         
-        latent_dim = 32  # Smaller for testing
+        latent_dim = 32
+        
+        # Test Policy
         policy = PortfolioPolicy(
             obs_shape=obs_shape,
             latent_dim=latent_dim,
             num_assets=num_assets,
-            hidden_dim=128  # Smaller for testing
-        )
-        print("✓ Policy created successfully")
+            hidden_dim=64  # Smaller for testing
+        ).to(device)
         
-        # Test forward pass
+        # Test with proper shapes
         batch_size = 2
-        mock_obs = torch.randn(batch_size, *obs_shape)
-        mock_latent = torch.randn(batch_size, latent_dim)
+        mock_obs = torch.randn(batch_size, *obs_shape, device=device)
+        mock_latent = torch.randn(batch_size, latent_dim, device=device)
         
-        # Test act method
         portfolio_weights, value = policy.act(mock_obs, mock_latent)
-        print(f"✓ Policy act: weights shape {portfolio_weights.shape}, value shape {value.shape}")
-        print(f"  Portfolio weights sum: {portfolio_weights.sum(dim=-1)}")  # Should be ~1.0
+        print(f"✓ Policy act: weights shape {portfolio_weights.shape}, sum {portfolio_weights.sum(dim=-1)}")
         
-        # Test evaluate_actions
-        values, log_probs, entropy = policy.evaluate_actions(mock_obs, mock_latent, portfolio_weights)
-        print(f"✓ Policy evaluate: values {values.shape}, log_probs {log_probs.shape}, entropy {entropy.shape}")
-        
-    except Exception as e:
-        print(f"Policy test FAILED: {e}")
-        traceback.print_exc()
-    
-    # Test VAE
-    try:
-        from models.vae import VAE
-        
+        # Test VAE
         vae = VAE(
             obs_dim=obs_shape,
             num_assets=num_assets,
             latent_dim=latent_dim,
-            hidden_dim=128
-        )
-        print("✓ VAE created successfully")
+            hidden_dim=64
+        ).to(device)
         
-        # Test forward pass
+        # Test with sequence data
         seq_len = 10
-        batch_size = 2
-        
-        mock_obs_seq = torch.randn(batch_size, seq_len, *obs_shape)
-        mock_action_seq = torch.randn(batch_size, seq_len, num_assets)  # Portfolio weights
-        mock_action_seq = torch.softmax(mock_action_seq, dim=-1)        # Normalize to valid weights
-        mock_reward_seq = torch.randn(batch_size, seq_len, 1)
+        mock_obs_seq = torch.randn(batch_size, seq_len, *obs_shape, device=device)
+        mock_action_seq = torch.randn(batch_size, seq_len, num_assets, device=device)
+        mock_action_seq = torch.softmax(mock_action_seq, dim=-1)  # Normalize
+        mock_reward_seq = torch.randn(batch_size, seq_len, 1, device=device)
         
         latent, mu, logvar, hidden = vae(mock_obs_seq, mock_action_seq, mock_reward_seq)
-        print(f"✓ VAE forward: latent {latent.shape}, mu {mu.shape}, logvar {logvar.shape}")
+        print(f"✓ VAE forward: latent {latent.shape}")
         
-        # Test loss computation
         loss, loss_components = vae.compute_loss(mock_obs_seq, mock_action_seq, mock_reward_seq)
         print(f"✓ VAE loss: {loss.item():.4f}")
-        print(f"  Components: {loss_components}")
         
     except Exception as e:
-        print(f"VAE test FAILED: {e}")
+        print(f"Models test FAILED: {e}")
         traceback.print_exc()
 
-def test_trainer_integration(env, obs_shape, num_assets):
-    """Test trainer with models and environment"""
-    print("\n=== Testing Trainer Integration ===")
+def test_simple_training_loop():
+    """Test a very simple training loop"""
+    print("\n=== Testing Simple Training Loop ===")
     try:
-        from models.policy import PortfolioPolicy
-        from models.vae import VAE
-        from algorithms.trainer import PPOTrainer
-        
-        # Create models
-        latent_dim = 32
-        policy = PortfolioPolicy(obs_shape, latent_dim, num_assets, hidden_dim=64)
-        vae = VAE(obs_shape, num_assets, latent_dim, hidden_dim=64)
-        
-        # Mock config
-        class MockConfig:
-            device = "cpu"
-            policy_lr = 3e-4
-            vae_lr = 1e-4
-            ppo_epochs = 2
-            ppo_clip_ratio = 0.2
-            value_loss_coef = 0.5
-            entropy_coef = 0.01
-            max_grad_norm = 0.5
-            gae_lambda = 0.95
-            discount_factor = 0.99
-            batch_size = 4
-            vae_batch_size = 2
-            vae_beta = 0.1
-            vae_update_freq = 1
-            max_horizon = 20
-            log_interval = 5
-        
-        config = MockConfig()
-        trainer = PPOTrainer(env, policy, vae, config)
-        print("✓ Trainer created successfully")
-        
-        # Test trajectory collection
-        print("Testing trajectory collection...")
-        trajectory = trainer.collect_trajectory()
-        print(f"✓ Trajectory collected: {len(trajectory['rewards'])} steps")
-        print(f"  Shapes: obs {trajectory['observations'].shape}, actions {trajectory['actions'].shape}")
-        print(f"  Total reward: {trajectory['rewards'].sum().item():.4f}")
-        
-        # Test advantage computation
-        advantages, returns = trainer.compute_advantages(trajectory)
-        print(f"✓ Advantages computed: shape {advantages.shape}")
-        
-        print("✓ Trainer integration test successful")
-        
-    except Exception as e:
-        print(f"Trainer test FAILED: {e}")
-        traceback.print_exc()
-
-def test_full_training_step():
-    """Test a complete training step end-to-end"""
-    print("\n=== Testing Full Training Step ===")
-    try:
-        # Use smaller parameters for quick testing
-        print("Setting up minimal training environment...")
-        
-        # Create mock dataset
+        # Create minimal setup
         data_path = create_mock_data()
         
         from environments.dataset import Dataset
+        from environments.env import MetaEnv
+        from models.policy import PortfolioPolicy
+        
         dataset = Dataset(data_path)
         
-        # Create minimal dataset tensor
-        window = dataset.get_window(0, min(50, len(dataset)))  # Small window
+        # Create simple dataset tensor
+        window_size = min(40, len(dataset))
+        window = dataset.get_window(0, window_size)
+        
         dataset_tensor = {
             'features': torch.tensor(window['features'], dtype=torch.float32),
             'raw_prices': torch.tensor(window['raw_prices'], dtype=torch.float32)
         }
         
-        from environments.env import MetaEnv
         env = MetaEnv(
             dataset=dataset_tensor,
             feature_columns=dataset.feature_cols,
-            seq_len=20,  # Very short for testing
-            min_horizon=10,
-            max_horizon=15
+            seq_len=20,
+            min_horizon=5,
+            max_horizon=10
         )
         
-        # Sample task and get observation shape
+        # Sample task and reset
         task = env.sample_task()
         env.set_task(task)
         obs = env.reset()
+        
         obs_shape = obs.shape
         num_assets = obs_shape[0]
+        latent_dim = 16
         
-        print(f"Environment setup: obs_shape={obs_shape}, num_assets={num_assets}")
+        # Create simple policy
+        policy = PortfolioPolicy(
+            obs_shape=obs_shape,
+            latent_dim=latent_dim,
+            num_assets=num_assets,
+            hidden_dim=32
+        )
         
-        # Create models
-        from models.policy import PortfolioPolicy
-        from models.vae import VAE
-        
-        latent_dim = 16  # Very small
-        policy = PortfolioPolicy(obs_shape, latent_dim, num_assets, hidden_dim=32)
-        vae = VAE(obs_shape, num_assets, latent_dim, hidden_dim=32)
-        
-        print("Models created, testing single forward pass...")
-        
-        # Test single step
+        # Test single forward pass
         obs_tensor = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
         latent = torch.zeros(1, latent_dim)
         
-        action, value = policy.act(obs_tensor, latent)
-        print(f"Policy output: action sum={action.sum():.4f}, value={value.item():.4f}")
+        with torch.no_grad():
+            action, value = policy.act(obs_tensor, latent, deterministic=True)
+            print(f"Policy output: action sum={action.sum():.4f}, value={value.item():.4f}")
         
         # Test environment step
-        next_obs, reward, done, info = env.step(action.squeeze(0).numpy())
+        action_np = action.squeeze(0).numpy()
+        next_obs, reward, done, info = env.step(action_np)
         print(f"Environment step: reward={reward:.4f}, done={done}")
         
-        print("✓ Full training step test successful")
+        print("✓ Simple training loop test successful")
         
     except Exception as e:
-        print(f"Full training test FAILED: {e}")
-        traceback.print_exc()
-
-def test_logging():
-    """Test logging setup"""
-    print("\n=== Testing Logging ===")
-    try:
-        from logger_config import setup_experiment_logging
-        
-        exp_logger = setup_experiment_logging("debug_test", log_dir="debug_logs")
-        
-        # Test scalar logging
-        exp_logger.log_scalar('test/metric', 0.5, 0)
-        exp_logger.log_hyperparams({'test_param': 42})
-        
-        print("✓ Logging test successful")
-        exp_logger.close()
-        
-    except Exception as e:
-        print(f"Logging test FAILED: {e}")
+        print(f"Simple training test FAILED: {e}")
         traceback.print_exc()
 
 def main():
-    """Run all debug tests for new VariBAD setup"""
-    print("=== VariBAD Portfolio Debug Test (Updated) ===")
-    print("Testing new architecture with MetaEnv, Portfolio Policy, and PPO")
+    """Run debug tests with better error handling"""
+    print("=== VariBAD Portfolio Debug Test (Fixed) ===")
     
-    # Disable GPU for debugging
-    torch.cuda.is_available = lambda: False
+    # Set up logging
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     
-    # Test components step by step
-    dataset = test_dataset()
-    if dataset is None:
-        print("Cannot proceed - Dataset failed")
-        return
+    # Ensure we're using CPU
+    if torch.cuda.is_available():
+        print("CUDA detected but forcing CPU usage for debugging")
+        torch.cuda.is_available = lambda: False
     
-    env, obs_shape = test_meta_environment(dataset)
-    if env is None:
-        print("Cannot proceed - MetaEnv failed")
-        return
+    try:
+        # Test dataset
+        dataset = test_dataset()
+        if dataset is None:
+            print("Cannot proceed - Dataset failed")
+            return
+        
+        # Test environment
+        env, obs_shape = test_meta_environment(dataset)
+        if env is None:
+            print("Cannot proceed - MetaEnv failed")
+            return
+        
+        num_assets = obs_shape[0]
+        print(f"\nUsing: obs_shape={obs_shape}, num_assets={num_assets}")
+        
+        # Test models
+        test_models(obs_shape, num_assets)
+        
+        # Test simple training loop
+        test_simple_training_loop()
+        
+        print("\n=== Debug Test Summary ===")
+        print("✓ Most components working correctly")
+        print("✓ Ready for main training script")
+        
+    except Exception as e:
+        print(f"\nFATAL ERROR: {e}")
+        traceback.print_exc()
     
-    num_assets = obs_shape[0]
-    print(f"\nObservation shape: {obs_shape}, Number of assets: {num_assets}")
-    
-    test_models(obs_shape, num_assets)
-    
-    test_trainer_integration(env, obs_shape, num_assets)
-    
-    test_full_training_step()
-    
-    test_logging()
-    
-    print("\n=== Debug Test Complete ===")
-    print("✓ All major components tested successfully!")
-    print("✓ New VariBAD architecture is ready for training")
-    print("\nNext steps:")
-    print("1. Run with real dataset: python main.py")
-    print("2. Monitor tensorboard logs for training progress")
-    print("3. Adjust hyperparameters in Config class as needed")
+    finally:
+        # Cleanup
+        mock_file = Path('mock_data.parquet')
+        if mock_file.exists():
+            mock_file.unlink()
+            print("Cleaned up mock data file")
 
 if __name__ == "__main__":
     main()

@@ -10,18 +10,19 @@ class VAE(nn.Module):
     Variational Autoencoder for learning task embeddings in VariBAD.
     Handles portfolio weight actions (30-dim) instead of hierarchical actions.
     """
-    def __init__(self, obs_dim, num_assets, latent_dim=64, hidden_dim=256):
+    def __init__(self, obs_dim, num_assets, reward_dim=1, latent_dim=64, hidden_dim=256):
         super(VAE, self).__init__()
         
         self.obs_dim = obs_dim          # (N, F) - assets × features
         self.action_dim = num_assets    # Portfolio weights [N]
+        self.reward_dim = reward_dim
         self.latent_dim = latent_dim
         self.hidden_dim = hidden_dim
         
         # Components
-        self.encoder = RNNEncoder(obs_dim, self.action_dim, latent_dim, hidden_dim)
-        self.obs_decoder = ObservationDecoder(latent_dim, obs_dim, self.action_dim, hidden_dim)
-        self.reward_decoder = RewardDecoder(latent_dim, obs_dim, self.action_dim, hidden_dim//2)
+        self.encoder = RNNEncoder(self.obs_dim, self.action_dim, self.reward_dim, self.latent_dim, self.hidden_dim)
+        self.obs_decoder = ObservationDecoder(self.latent_dim, self.obs_dim, self.action_dim, self.hidden_dim)
+        self.reward_decoder = RewardDecoder(self.latent_dim, self.obs_dim, self.action_dim, self.hidden_dim//2)
         
         logger.info(f"VAE initialized: action_dim={self.action_dim} (portfolio weights), "
                    f"latent_dim={latent_dim}, obs_dim={obs_dim}")
@@ -186,10 +187,16 @@ class RNNEncoder(nn.Module):
         Returns:
             mu, logvar, hidden_state
         """
+
         batch_size, seq_len = obs_seq.shape[:2]
         
+        # defensive reshape
+        reward_seq = reward_seq.unsqueeze(-1) if reward_seq.dim()==2 else reward_seq
+        reward_flat = reward_seq.reshape(batch_size * seq_len, self.reward_dim)
+
+
         # Flatten observations for encoding
-        obs_flat = obs_seq.view(batch_size, seq_len, -1)  # (batch, seq_len, N×F)
+        obs_flat = obs_seq.reshape(batch_size, seq_len, -1)  # (batch, seq_len, N×F)
         
         # Encode inputs - ensure correct shapes
         obs_emb = F.relu(self.obs_encoder(obs_flat))        # (batch, seq_len, 128)
@@ -256,7 +263,7 @@ class ObservationDecoder(nn.Module):
         batch_size = latent.shape[0]
         
         # Flatten current observation
-        obs_flat = current_obs.view(batch_size, -1)  # (batch, N×F)
+        obs_flat = current_obs.reshape(batch_size, -1)  # (batch, N×F)
         
         # Concatenate inputs
         decoder_input = torch.cat([latent, obs_flat, action], dim=-1)
@@ -265,7 +272,7 @@ class ObservationDecoder(nn.Module):
         next_obs_flat = self.decoder(decoder_input)
         
         # Reshape to original observation dimensions
-        next_obs_pred = next_obs_flat.view(batch_size, self.obs_dim[0], self.obs_dim[1])
+        next_obs_pred = next_obs_flat.reshape(batch_size, self.obs_dim[0], self.obs_dim[1])
         
         return next_obs_pred
 
@@ -305,12 +312,14 @@ class RewardDecoder(nn.Module):
         batch_size = latent.shape[0]
         
         # Flatten observations
-        current_obs_flat = current_obs.view(batch_size, -1)  # (batch, N×F)
-        next_obs_flat = next_obs.view(batch_size, -1)        # (batch, N×F)
+        current_obs_flat = current_obs.reshape(batch_size, -1)  # (batch, N×F)
+        next_obs_flat = next_obs.reshape(batch_size, -1)        # (batch, N×F)
         
         # Concatenate all inputs
         decoder_input = torch.cat([latent, current_obs_flat, action, next_obs_flat], dim=-1)
         
         # Predict reward
         reward_pred = self.decoder(decoder_input)
+
+        return reward_pred
         

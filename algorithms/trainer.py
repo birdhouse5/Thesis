@@ -105,7 +105,7 @@ class PPOTrainer:
         
         # Reset environment
         obs = self.env.reset()  # (N, F)
-        obs_tensor = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)  # (1, N, F)
+        obs_tensor = torch.ascontiguous_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)  # (1, N, F)
         
         # Initialize latent (will be updated by VAE encoder)
         latent = torch.zeros(1, self.config.latent_dim, device=self.device)
@@ -130,14 +130,14 @@ class PPOTrainer:
             trajectory['observations'].append(obs_tensor.squeeze(0))  # (N, F)
             trajectory['actions'].append(action.squeeze(0))           # (N,)
             trajectory['rewards'].append(reward)
-            trajectory['values'].append(value.squeeze(0))             # scalar
-            trajectory['log_probs'].append(log_prob.squeeze(0))       # scalar
+            trajectory['values'].append(value.squeeze())             # scalar
+            trajectory['log_probs'].append(log_prob.squeeze())       # scalar
             trajectory['latents'].append(latent.squeeze(0))           # (latent_dim,)
             trajectory['dones'].append(done)
             
             # Update for next step
             if not done:
-                obs_tensor = torch.tensor(next_obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+                obs_tensor = torch.ascontiguous_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
                 
                 # Update latent using VAE encoder with trajectory context
                 # For now, keep latent constant during episode

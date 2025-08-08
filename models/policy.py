@@ -62,10 +62,14 @@ class PortfolioPolicy(nn.Module):
         Returns:
             dict with 'portfolio_weights' and 'value'
         """
+
+        assert obs.dim() == 3, f"Expected obs (B,N,F), got {tuple(obs.shape)}"
+        assert latent.dim() == 2, f"Expected latent (B,L), got {tuple(latent.shape)}"
+
         batch_size = obs.shape[0]
         
         # Encode observations: flatten and process
-        obs_flat = obs.view(batch_size, -1)  # (batch, N×F)
+        obs_flat = obs.reshape(batch_size, -1)  # (batch, N×F)
         obs_features = self.obs_encoder(obs_flat)  # (batch, hidden_dim//2)
         
         # Encode latent task embedding
