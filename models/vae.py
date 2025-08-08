@@ -1,81 +1,99 @@
-# In models/vae.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import logging
-from logger_config import experiment_logger
 
 logger = logging.getLogger(__name__)
 
 class VAE(nn.Module):
+    """
+    Variational Autoencoder for learning task embeddings in VariBAD.
+    Handles portfolio weight actions (30-dim) instead of hierarchical actions.
+    """
     def __init__(self, obs_dim, num_assets, latent_dim=64, hidden_dim=256):
         super(VAE, self).__init__()
         
-        self.obs_dim = obs_dim          # (30, num_features)
-        self.action_dim = num_assets    # Simple portfolio weights [N]
+        self.obs_dim = obs_dim          # (N, F) - assets × features
+        self.action_dim = num_assets    # Portfolio weights [N]
         self.latent_dim = latent_dim
+        self.hidden_dim = hidden_dim
         
-        # Encoder and decoders
-        self.encoder = RNNEncoder(obs_dim, self.action_dim, latent_dim=latent_dim, hidden_dim=hidden_dim)
+        # Components
+        self.encoder = RNNEncoder(obs_dim, self.action_dim, latent_dim, hidden_dim)
         self.obs_decoder = ObservationDecoder(latent_dim, obs_dim, self.action_dim, hidden_dim)
         self.reward_decoder = RewardDecoder(latent_dim, obs_dim, self.action_dim, hidden_dim//2)
-
-        logger.info(f"VAE initialized: action_dim={self.action_dim} (portfolio weights), latent_dim={latent_dim}")
-
-        if experiment_logger:
-            experiment_logger.log_hyperparams({
-                'vae/latent_dim': latent_dim,
-                'vae/action_dim': self.action_dim,
-                'vae/obs_dim_0': obs_dim[0],
-                'vae/obs_dim_1': obs_dim[1]
-            })
-
+        
+        logger.info(f"VAE initialized: action_dim={self.action_dim} (portfolio weights), "
+                   f"latent_dim={latent_dim}, obs_dim={obs_dim}")
+        
         self.training_step = 0
-
+    
     def reparameterize(self, mu, logvar):
-        """Reparameterization trick for backpropagation through sampling"""
+        """Reparameterization trick for backpropagation through sampling."""
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
     
     def encode(self, obs_sequence, action_sequence, reward_sequence):
-        """Encode trajectory to latent distribution"""
-        mu, logvar, hidden_state = self.encoder(obs_sequence, action_sequence, reward_sequence)
-        return mu, logvar, hidden_state
+        """
+        Encode trajectory to latent distribution.
+        
+        Args:
+            obs_sequence: (batch, seq_len, N, F) - observation sequence
+            action_sequence: (batch, seq_len, N) - portfolio weight sequence  
+            reward_sequence: (batch, seq_len, 1) - reward sequence
+            
+        Returns:
+            mu, logvar, hidden_state
+        """
+        return self.encoder(obs_sequence, action_sequence, reward_sequence)
     
     def decode_obs(self, latent, current_obs, action):
-        """Decode next observations"""
+        """Decode next observation given current state and action."""
         return self.obs_decoder(latent, current_obs, action)
     
     def decode_reward(self, latent, current_obs, action, next_obs):
-        """Decode reward"""
+        """Decode reward given transition."""
         return self.reward_decoder(latent, current_obs, action, next_obs)
     
     def forward(self, obs_seq, action_seq, reward_seq, return_latent=True):
-        """Full VAE forward pass"""
-        # Encode
+        """
+        Full VAE forward pass.
+        
+        Args:
+            obs_seq: (batch, seq_len, N, F) - observation sequence
+            action_seq: (batch, seq_len, N) - portfolio weight sequence
+            reward_seq: (batch, seq_len, 1) - reward sequence
+            
+        Returns:
+            latent, mu, logvar, hidden_state
+        """
+        # Encode sequence to latent distribution
         mu, logvar, hidden_state = self.encode(obs_seq, action_seq, reward_seq)
         
-        # Sample latent
-        latent = self.reparameterize(mu, logvar)
-        
-        # Log latent statistics
-        if experiment_logger and self.training:
-            experiment_logger.log_scalar('vae/latent_mean', mu.mean().item(), self.training_step)
-            experiment_logger.log_scalar('vae/latent_std', torch.exp(0.5 * logvar).mean().item(), self.training_step)
-            experiment_logger.log_histogram('vae/latent_distribution', latent, self.training_step)
-
         if return_latent:
+            # Sample latent variable
+            latent = self.reparameterize(mu, logvar)
             return latent, mu, logvar, hidden_state
         else:
             return mu, logvar, hidden_state
     
-    # In models/vae.py - complete the compute_loss method
-    def compute_loss(self, obs_seq, action_seq, reward_seq):
-        """Compute VAE loss (reconstruction + KL divergence)"""
+    def compute_loss(self, obs_seq, action_seq, reward_seq, beta=0.1):
+        """
+        Compute VAE loss (reconstruction + KL divergence).
+        
+        Args:
+            obs_seq: (batch, seq_len, N, F) - observation sequence
+            action_seq: (batch, seq_len, N) - portfolio weight sequence  
+            reward_seq: (batch, seq_len, 1) - reward sequence
+            beta: Weight for KL divergence term
+            
+        Returns:
+            total_loss, loss_components_dict
+        """
         batch_size, seq_len = obs_seq.shape[:2]
         
-        # Encode sequence
+        # Encode to latent distribution
         mu, logvar, _ = self.encode(obs_seq, action_seq, reward_seq)
         
         # Sample latent
@@ -85,18 +103,18 @@ class VAE(nn.Module):
         recon_obs_loss = 0
         recon_reward_loss = 0
         
-        # For each timestep, predict next observation and reward
+        # Predict next observations and rewards for each timestep
         for t in range(seq_len - 1):
-            current_obs = obs_seq[:, t]      # (batch, 30, features)
-            current_action = action_seq[:, t] # (batch, 90)
-            next_obs = obs_seq[:, t + 1]     # (batch, 30, features)
-            reward = reward_seq[:, t]        # (batch, 1)
+            current_obs = obs_seq[:, t]      # (batch, N, F)
+            current_action = action_seq[:, t] # (batch, N)  
+            next_obs = obs_seq[:, t + 1]     # (batch, N, F)
+            reward = reward_seq[:, t + 1]    # (batch, 1) - reward at t+1
             
             # Predict next observation
             pred_next_obs = self.decode_obs(latent, current_obs, current_action)
             recon_obs_loss += F.mse_loss(pred_next_obs, next_obs)
             
-            # Predict reward
+            # Predict reward  
             pred_reward = self.decode_reward(latent, current_obs, current_action, next_obs)
             recon_reward_loss += F.mse_loss(pred_reward, reward)
         
@@ -104,100 +122,114 @@ class VAE(nn.Module):
         recon_obs_loss /= (seq_len - 1)
         recon_reward_loss /= (seq_len - 1)
         
-        # KL divergence
+        # KL divergence with standard normal prior
         kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / batch_size
         
         # Total loss
-        total_loss = recon_obs_loss + recon_reward_loss + 0.1 * kl_loss  # Beta=0.1 for KL
+        total_loss = recon_obs_loss + recon_reward_loss + beta * kl_loss
         
-        # Log individual components
-        if experiment_logger and self.training:
-            experiment_logger.log_scalars('vae/loss_components', {
-                'reconstruction_obs': recon_obs_loss.item(),
-                'reconstruction_reward': recon_reward_loss.item(),
-                'kl_divergence': kl_loss.item(),
-                'total': total_loss.item()
-            }, self.training_step)
-            
+        # Logging
+        if self.training:
             self.training_step += 1
-        
-        return total_loss, {
+            
+        loss_components = {
             'recon_obs': recon_obs_loss.item(),
-            'recon_reward': recon_reward_loss.item(), 
-            'kl': kl_loss.item()
+            'recon_reward': recon_reward_loss.item(),
+            'kl': kl_loss.item(),
+            'total': total_loss.item()
         }
+        
+        return total_loss, loss_components
 
 
 class RNNEncoder(nn.Module):
+    """
+    RNN encoder for processing trajectory sequences.
+    Encodes (observation, action, reward) sequences to latent distribution parameters.
+    """
     def __init__(self, obs_dim, action_dim, reward_dim=1, latent_dim=64, hidden_dim=256):
         super(RNNEncoder, self).__init__()
         
-        self.obs_dim = obs_dim          # (30, num_features)
-        self.action_dim = action_dim    # Flattened action representation
+        self.obs_dim = obs_dim          # (N, F)
+        self.action_dim = action_dim    # N (portfolio weights)
+        self.reward_dim = reward_dim    # 1 (scalar reward)
         self.latent_dim = latent_dim
         self.hidden_dim = hidden_dim
         
-        # Feature extractors for inputs
-        obs_flat_dim = obs_dim[0] * obs_dim[1]  # 30 * num_features
+        # Input encoders
+        obs_flat_dim = obs_dim[0] * obs_dim[1]  # N × F
         self.obs_encoder = nn.Linear(obs_flat_dim, 128)
-        self.action_encoder = nn.Linear(action_dim, 64)
+        self.action_encoder = nn.Linear(action_dim, 64)      # Portfolio weights
         self.reward_encoder = nn.Linear(reward_dim, 32)
         
-        # RNN input dimension
+        # RNN for sequential processing
         rnn_input_dim = 128 + 64 + 32  # obs + action + reward embeddings
+        self.gru = nn.GRU(
+            input_size=rnn_input_dim,
+            hidden_size=hidden_dim,
+            batch_first=True
+        )
         
-        # GRU for sequential processing
-        self.gru = nn.GRU(input_size=rnn_input_dim, 
-                         hidden_size=hidden_dim, 
-                         batch_first=True)
-        
-        # Output layers for latent distribution
+        # Latent distribution outputs
         self.fc_mu = nn.Linear(hidden_dim, latent_dim)
         self.fc_logvar = nn.Linear(hidden_dim, latent_dim)
         
     def forward(self, obs_seq, action_seq, reward_seq, hidden_state=None):
         """
+        Encode trajectory sequence to latent distribution.
+        
         Args:
-            obs_seq: (batch, seq_len, 30, num_features)
-            action_seq: (batch, seq_len, action_dim)
-            reward_seq: (batch, seq_len, 1)
+            obs_seq: (batch, seq_len, N, F) - observation sequence
+            action_seq: (batch, seq_len, N) - portfolio weight sequence
+            reward_seq: (batch, seq_len, 1) - reward sequence
+            
+        Returns:
+            mu, logvar, hidden_state
         """
         batch_size, seq_len = obs_seq.shape[:2]
         
-        # Flatten observations
-        obs_flat = obs_seq.view(batch_size, seq_len, -1)  # (batch, seq_len, 30*features)
+        # Flatten observations for encoding
+        obs_flat = obs_seq.view(batch_size, seq_len, -1)  # (batch, seq_len, N×F)
         
-        # Encode inputs
-        obs_emb = F.relu(self.obs_encoder(obs_flat))      # (batch, seq_len, 128)
-        action_emb = F.relu(self.action_encoder(action_seq))  # (batch, seq_len, 64)
-        reward_emb = F.relu(self.reward_encoder(reward_seq))  # (batch, seq_len, 32)
+        # Encode inputs - ensure correct shapes
+        obs_emb = F.relu(self.obs_encoder(obs_flat))        # (batch, seq_len, 128)
+        action_emb = F.relu(self.action_encoder(action_seq)) # (batch, seq_len, 64)
+        
+        # Reward encoding - handle shape carefully
+        # reward_seq is (batch, seq_len, 1), we need to keep this shape for linear layer
+        reward_flat = reward_seq.view(batch_size * seq_len, self.reward_dim)  # (batch*seq_len, 1)
+        reward_emb_flat = F.relu(self.reward_encoder(reward_flat))  # (batch*seq_len, 32)
+        reward_emb = reward_emb_flat.view(batch_size, seq_len, 32)  # (batch, seq_len, 32)
         
         # Concatenate embeddings
         rnn_input = torch.cat([obs_emb, action_emb, reward_emb], dim=-1)  # (batch, seq_len, 224)
         
-        # RNN forward pass
+        # Process through RNN
         rnn_output, hidden_state = self.gru(rnn_input, hidden_state)  # (batch, seq_len, hidden_dim)
         
-        # Use final timestep for latent
+        # Use final timestep for latent parameters
         final_output = rnn_output[:, -1, :]  # (batch, hidden_dim)
         
-        # Latent distribution parameters
+        # Generate latent distribution parameters
         mu = self.fc_mu(final_output)        # (batch, latent_dim)
-        logvar = self.fc_logvar(final_output)  # (batch, latent_dim)
+        logvar = self.fc_logvar(final_output) # (batch, latent_dim)
         
         return mu, logvar, hidden_state
-    
+
 
 class ObservationDecoder(nn.Module):
-    def __init__(self, latent_dim, obs_dim, action_dim=90, hidden_dim=256):
+    """
+    Decoder for predicting next observations.
+    """
+    def __init__(self, latent_dim, obs_dim, action_dim, hidden_dim=256):
         super(ObservationDecoder, self).__init__()
         
         self.latent_dim = latent_dim
-        self.obs_dim = obs_dim  # (30, num_features)
-        self.action_dim = action_dim
+        self.obs_dim = obs_dim  # (N, F)
+        self.action_dim = action_dim  # N
         
         # Input: latent + current_obs + action
-        obs_flat_dim = obs_dim[0] * obs_dim[1]
+        obs_flat_dim = obs_dim[0] * obs_dim[1]  # N × F
         input_dim = latent_dim + obs_flat_dim + action_dim
         
         # Decoder network
@@ -206,22 +238,25 @@ class ObservationDecoder(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, obs_flat_dim)  # Predict next obs (flattened)
+            nn.Linear(hidden_dim, obs_flat_dim)  # Predict flattened next observation
         )
         
     def forward(self, latent, current_obs, action):
         """
+        Predict next observation.
+        
         Args:
-            latent: (batch, latent_dim)
-            current_obs: (batch, 30, num_features)
-            action: (batch, 90)
+            latent: (batch, latent_dim) - task embedding
+            current_obs: (batch, N, F) - current observation
+            action: (batch, N) - portfolio weights
+            
         Returns:
-            next_obs_pred: (batch, 30, num_features)
+            next_obs_pred: (batch, N, F) - predicted next observation
         """
         batch_size = latent.shape[0]
         
-        # Flatten current obs
-        obs_flat = current_obs.view(batch_size, -1)
+        # Flatten current observation
+        obs_flat = current_obs.view(batch_size, -1)  # (batch, N×F)
         
         # Concatenate inputs
         decoder_input = torch.cat([latent, obs_flat, action], dim=-1)
@@ -229,18 +264,22 @@ class ObservationDecoder(nn.Module):
         # Predict next observation (flattened)
         next_obs_flat = self.decoder(decoder_input)
         
-        # Reshape back to original dimensions
+        # Reshape to original observation dimensions
         next_obs_pred = next_obs_flat.view(batch_size, self.obs_dim[0], self.obs_dim[1])
         
         return next_obs_pred
 
+
 class RewardDecoder(nn.Module):
-    def __init__(self, latent_dim, obs_dim, action_dim=90, hidden_dim=128):
+    """
+    Decoder for predicting rewards.
+    """
+    def __init__(self, latent_dim, obs_dim, action_dim, hidden_dim=128):
         super(RewardDecoder, self).__init__()
         
         # Input: latent + current_obs + action + next_obs
-        obs_flat_dim = obs_dim[0] * obs_dim[1]
-        input_dim = latent_dim + 2 * obs_flat_dim + action_dim  # 2 obs for current + next
+        obs_flat_dim = obs_dim[0] * obs_dim[1]  # N × F
+        input_dim = latent_dim + 2 * obs_flat_dim + action_dim  # Current + next obs
         
         self.decoder = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
@@ -252,19 +291,22 @@ class RewardDecoder(nn.Module):
         
     def forward(self, latent, current_obs, action, next_obs):
         """
+        Predict reward for transition.
+        
         Args:
-            latent: (batch, latent_dim)
-            current_obs: (batch, 30, num_features)
-            action: (batch, 90)
-            next_obs: (batch, 30, num_features)
+            latent: (batch, latent_dim) - task embedding
+            current_obs: (batch, N, F) - current observation  
+            action: (batch, N) - portfolio weights
+            next_obs: (batch, N, F) - next observation
+            
         Returns:
-            reward_pred: (batch, 1)
+            reward_pred: (batch, 1) - predicted reward
         """
         batch_size = latent.shape[0]
         
         # Flatten observations
-        current_obs_flat = current_obs.view(batch_size, -1)
-        next_obs_flat = next_obs.view(batch_size, -1)
+        current_obs_flat = current_obs.view(batch_size, -1)  # (batch, N×F)
+        next_obs_flat = next_obs.view(batch_size, -1)        # (batch, N×F)
         
         # Concatenate all inputs
         decoder_input = torch.cat([latent, current_obs_flat, action, next_obs_flat], dim=-1)
@@ -272,4 +314,3 @@ class RewardDecoder(nn.Module):
         # Predict reward
         reward_pred = self.decoder(decoder_input)
         
-        return reward_pred

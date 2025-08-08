@@ -1,152 +1,230 @@
-# File: models/policy.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.distributions import Normal
+import logging
+
+logger = logging.getLogger(__name__)
 
 class PortfolioPolicy(nn.Module):
-    def __init__(self, obs_dim, latent_dim, num_assets, hidden_dim=256):
+    """
+    Portfolio policy that outputs allocation weights over assets.
+    Actions are portfolio weights ∈ [0,1]^N where sum ≤ 1 (remainder is cash).
+    """
+    def __init__(self, obs_shape, latent_dim, num_assets, hidden_dim=256):
         super(PortfolioPolicy, self).__init__()
         
-        self.obs_dim = obs_dim      # (30, num_features)
-        self.latent_dim = latent_dim
+        self.obs_shape = obs_shape      # (N, F) - assets × features
+        self.latent_dim = latent_dim    
         self.num_assets = num_assets
+        self.hidden_dim = hidden_dim
         
-        # Observation encoder
-        obs_flat_dim = obs_dim[0] * obs_dim[1]  # Flatten market state
+        # Input dimensions
+        obs_flat_dim = obs_shape[0] * obs_shape[1]  # N × F flattened
+        
+        # Observation encoder: flatten market state and encode
         self.obs_encoder = nn.Sequential(
             nn.Linear(obs_flat_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim // 2)
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU()
         )
         
-        # Latent encoder
+        # Latent encoder: encode task embedding
         self.latent_encoder = nn.Sequential(
             nn.Linear(latent_dim, hidden_dim // 4),
             nn.ReLU()
         )
         
-        # Combined processing
+        # Combined feature processing
         combined_dim = hidden_dim // 2 + hidden_dim // 4
-        self.policy_head = nn.Sequential(
+        self.shared_layers = nn.Sequential(
             nn.Linear(combined_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_dim // 2, num_assets)  # Raw logits
+            nn.ReLU()
         )
-
-                # Split final layer
-        self.actor_head = nn.Linear(hidden_dim // 2, num_assets)      # Action logits
-        self.critic_head = nn.Linear(hidden_dim // 2, 1)             # Value function
         
-        # Learnable log std for action distribution
-        self.log_std = nn.Parameter(torch.zeros(num_assets))
+        # Output heads
+        self.actor_head = nn.Linear(hidden_dim // 2, num_assets)    # Portfolio logits
+        self.critic_head = nn.Linear(hidden_dim // 2, 1)           # Value function
         
-    def forward(self, state, latent):
+        logger.info(f"Policy initialized: {num_assets} assets, obs_shape={obs_shape}, latent_dim={latent_dim}")
+        
+    def forward(self, obs, latent):
         """
+        Forward pass through policy network.
+        
         Args:
-            state: (batch, 30, num_features) - current market state
-            latent: (batch, latent_dim) - task embedding
+            obs: (batch, N, F) - market observations
+            latent: (batch, latent_dim) - task embedding from VAE
+            
         Returns:
-            portfolio_weights: (batch, 30) - portfolio allocation
+            dict with 'portfolio_weights' and 'value'
         """
-        batch_size = state.shape[0]
+        batch_size = obs.shape[0]
         
-        # Encode observations
-        state_flat = state.view(batch_size, -1)
-        state_features = self.obs_encoder(state_flat)
+        # Encode observations: flatten and process
+        obs_flat = obs.view(batch_size, -1)  # (batch, N×F)
+        obs_features = self.obs_encoder(obs_flat)  # (batch, hidden_dim//2)
         
-        # Encode latent
-        latent_features = self.latent_encoder(latent)
+        # Encode latent task embedding
+        latent_features = self.latent_encoder(latent)  # (batch, hidden_dim//4)
         
-        # Combine and generate portfolio
-        combined = torch.cat([state_features, latent_features], dim=-1)
-        logits = self.policy_head(combined)
+        # Combine features
+        combined = torch.cat([obs_features, latent_features], dim=-1)  # (batch, combined_dim)
+        shared_features = self.shared_layers(combined)  # (batch, hidden_dim//2)
         
-        # Softmax for valid portfolio weights
-        portfolio_weights = F.softmax(logits, dim=-1)
+        # Generate outputs
+        portfolio_logits = self.actor_head(shared_features)  # (batch, num_assets)
+        value = self.critic_head(shared_features)            # (batch, 1)
         
-        return portfolio_weights
-
-    def act(self, obs, latent, deterministic=False):
-        """Sample action from policy distributions"""
-        output = self.forward(obs, latent)
+        # Softmax normalization for valid portfolio weights
+        portfolio_weights = F.softmax(portfolio_logits, dim=-1)  # (batch, num_assets)
         
-        # Sample decisions: [long, short, neutral] per asset
-        decision_probs = F.softmax(output['decision_logits'], dim=-1)
-        if deterministic:
-            decisions = torch.argmax(decision_probs, dim=-1)  # (batch, num_assets)
-        else:
-            decisions = torch.multinomial(decision_probs.view(-1, 3), 1).view(decision_probs.shape[:2])
-        
-        # Sample weights using softmax (ensure positive)
-        long_probs = F.softmax(output['long_logits'], dim=-1)    # (batch, num_assets)
-        short_probs = F.softmax(output['short_logits'], dim=-1)  # (batch, num_assets)
-        
-        if deterministic:
-            long_weights = long_probs
-            short_weights = short_probs
-        else:
-            # For continuous weights, we can add some noise or use the probabilities directly
-            long_weights = long_probs
-            short_weights = short_probs
-        
-        action = {
-            'decisions': decisions,           # (batch, num_assets) - 0=long, 1=short, 2=neutral
-            'long_weights': long_weights,    # (batch, num_assets) - softmax probabilities
-            'short_weights': short_weights,  # (batch, num_assets) - softmax probabilities
-            'decision_probs': decision_probs # For computing log probabilities later
+        return {
+            'portfolio_weights': portfolio_weights,  # Sum = 1, each weight ∈ [0,1]
+            'portfolio_logits': portfolio_logits,    # Raw logits for PPO
+            'value': value
         }
+    
+    def act(self, obs, latent, deterministic=False):
+        """
+        Sample action from policy.
         
-        value = output['value']
-        
-        # Log action statistics
-        if experiment_logger is not None and not deterministic:
-            decisions = action['decisions']
-            long_count = (decisions == 0).sum().item()
-            short_count = (decisions == 1).sum().item()
-            neutral_count = (decisions == 2).sum().item()
+        Args:
+            obs: (batch, N, F) - market observations  
+            latent: (batch, latent_dim) - task embedding
+            deterministic: If True, return mean action
             
-            experiment_logger.log_scalars('policy/action_distribution', {
-                'long_positions': long_count,
-                'short_positions': short_count,
-                'neutral_positions': neutral_count
-            }, getattr(self, 'action_count', 0))
+        Returns:
+            portfolio_weights: (batch, num_assets) - allocation weights
+            value: (batch, 1) - state value estimate
+        """
+        with torch.no_grad():
+            output = self.forward(obs, latent)
             
-            experiment_logger.log_scalar('policy/value_estimate', value.mean().item(), 
-                                    getattr(self, 'action_count', 0))
-
-            self.action_count = getattr(self, 'action_count', 0) + 1
-
-        return action, value
-
+            if deterministic:
+                # Use softmax probabilities directly
+                portfolio_weights = output['portfolio_weights']
+            else:
+                # Add small amount of exploration noise
+                logits = output['portfolio_logits'] 
+                # Temperature sampling for exploration
+                temp = 1.0
+                portfolio_weights = F.softmax(logits / temp, dim=-1)
+            
+            return portfolio_weights, output['value']
     
     def evaluate_actions(self, obs, latent, actions):
-        """Evaluate actions for training - compute log probabilities and entropy"""
+        """
+        Evaluate actions for PPO training.
+        
+        Args:
+            obs: (batch, N, F) - market observations
+            latent: (batch, latent_dim) - task embeddings  
+            actions: (batch, num_assets) - portfolio weights to evaluate
+            
+        Returns:
+            values: (batch, 1) - state values
+            log_probs: (batch, 1) - log probabilities of actions
+            entropy: (batch, 1) - policy entropy
+        """
         output = self.forward(obs, latent)
         
-        # Extract action components
-        decisions = actions['decisions']           # (batch, num_assets)
-        long_weights = actions['long_weights']     # (batch, num_assets) 
-        short_weights = actions['short_weights']   # (batch, num_assets)
+        # Use Dirichlet distribution for portfolio weights
+        # Convert softmax outputs to Dirichlet concentration parameters
+        alpha = output['portfolio_weights'] * 10.0 + 1e-8  # Concentration parameters
         
-        # Compute log probabilities for decisions
-        decision_probs = F.softmax(output['decision_logits'], dim=-1)  # (batch, num_assets, 3)
-        decision_log_probs = F.log_softmax(output['decision_logits'], dim=-1)
+        # For simplicity, approximate with categorical distribution over assets
+        # and compute log probability of the taken allocation
+        portfolio_probs = output['portfolio_weights']  # (batch, num_assets)
         
-        # Gather log probs for taken decisions
-        decisions_one_hot = F.one_hot(decisions, num_classes=3).float()  # (batch, num_assets, 3)
-        action_log_probs = (decision_log_probs * decisions_one_hot).sum(dim=-1)  # (batch, num_assets)
-        action_log_probs = action_log_probs.sum(dim=-1, keepdim=True)  # (batch, 1) - sum across assets
+        # Compute log probability: treat as weighted categorical
+        # This is an approximation - ideally we'd use Dirichlet distribution
+        log_probs = torch.sum(actions * torch.log(portfolio_probs + 1e-8), dim=-1, keepdim=True)
         
-        # Compute entropy for exploration
-        decision_entropy = -(decision_probs * decision_log_probs).sum(dim=-1)  # (batch, num_assets)
-        dist_entropy = decision_entropy.mean()  # Scalar
+        # Entropy of categorical distribution
+        entropy = -torch.sum(portfolio_probs * torch.log(portfolio_probs + 1e-8), dim=-1, keepdim=True)
         
-        # Value from forward pass
-        value = output['value']  # (batch, 1)
+        values = output['value']
         
-        logger.debug(f"Action evaluation: log_prob {action_log_probs.mean().item():.3f}, "
-                    f"entropy {dist_entropy.item():.3f}")
+        return values, log_probs, entropy
+    
+    def get_value(self, obs, latent):
+        """Get state value without sampling action."""
+        with torch.no_grad():
+            output = self.forward(obs, latent)
+            return output['value']
         
-        return value, action_log_probs, dist_entropy
+
+
+
+# Alternative: More principled Dirichlet distribution approach
+class DirichletPortfolioPolicy(PortfolioPolicy):
+    """
+    Portfolio policy using Dirichlet distribution for portfolio weights.
+    More principled than categorical approximation but computationally heavier.
+    """
+    
+    def __init__(self, obs_shape, latent_dim, num_assets, hidden_dim=256):
+        super().__init__(obs_shape, latent_dim, num_assets, hidden_dim)
+        
+        # Additional layer to output concentration parameters
+        self.concentration_head = nn.Sequential(
+            nn.Linear(hidden_dim // 2, num_assets),
+            nn.Softplus()  # Ensure positive concentrations
+        )
+    
+    def forward(self, obs, latent):
+        """Forward pass using Dirichlet distribution."""
+        batch_size = obs.shape[0]
+        
+        # Encode inputs (same as base class)
+        obs_flat = obs.view(batch_size, -1)
+        obs_features = self.obs_encoder(obs_flat)
+        latent_features = self.latent_encoder(latent)
+        combined = torch.cat([obs_features, latent_features], dim=-1)
+        shared_features = self.shared_layers(combined)
+        
+        # Generate concentration parameters for Dirichlet
+        concentrations = self.concentration_head(shared_features) + 1.0  # Ensure > 1
+        
+        # Value function
+        value = self.critic_head(shared_features)
+        
+        return {
+            'concentrations': concentrations,
+            'value': value
+        }
+    
+    def act(self, obs, latent, deterministic=False):
+        """Sample from Dirichlet distribution."""
+        output = self.forward(obs, latent)
+        concentrations = output['concentrations']
+        
+        if deterministic:
+            # Use expected value of Dirichlet (normalized concentrations)
+            portfolio_weights = concentrations / concentrations.sum(dim=-1, keepdim=True)
+        else:
+            # Sample from Dirichlet distribution
+            dist = torch.distributions.Dirichlet(concentrations)
+            portfolio_weights = dist.sample()
+        
+        return portfolio_weights, output['value']
+    
+    def evaluate_actions(self, obs, latent, actions):
+        """Evaluate using proper Dirichlet log probability."""
+        output = self.forward(obs, latent)
+        concentrations = output['concentrations']
+        
+        # Create Dirichlet distribution
+        dist = torch.distributions.Dirichlet(concentrations)
+        
+        # Compute log probability and entropy
+        log_probs = dist.log_prob(actions).unsqueeze(-1)  # (batch, 1)
+        entropy = dist.entropy().unsqueeze(-1)           # (batch, 1)
+        
+        values = output['value']
+        
+        return values, log_probs, entropy

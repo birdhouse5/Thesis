@@ -33,3 +33,4 @@ Policy:
     indicators and market state in the state space. Perhaps we should try to also involve some kind of temporal convolution
     somewhere to see if there is improvement.
 - try large vs. small buffer size: variance-bias trade-off
+- try Portfolio policy using Dirichlet distribution for portfolio weights. (More principled than categorical approximation but computationally heavier)

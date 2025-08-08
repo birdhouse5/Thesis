@@ -9,10 +9,10 @@ class MetaEnv:
         """
         Args:
             dataset: Dict with 'features' and 'raw_prices' tensors
-            feature_comuns: List of feature names in order
-            seq_len: length of each task sequence
-            min_horizon: minimum episode length within a task
-            max_horizon: maximum episode length within a task
+            feature_columns: List of feature names in order
+            seq_len: Length of each task sequence
+            min_horizon: Minimum episode length within a task
+            max_horizon: Maximum episode length within a task
         """
         self.dataset = dataset
         self.feature_columns = feature_columns
@@ -32,24 +32,11 @@ class MetaEnv:
 
         # Episode tracking
         self.episode_count = 0
-        
-        self._close_idx_cache = self._find_close_price_idx()
-
-    def _find_close_price_idx(self):
-        """Find close_norm index in feature columns"""
-        try:
-            return self.feature_columns.index('close_norm')
-        except ValueError:
-            # Fallback options
-            for idx, col in enumerate(self.feature_columns):
-                if 'close' in col.lower() and 'norm' in col.lower():
-                    return idx
-            raise ValueError("Could not find close price feature (close_norm) in feature columns")
 
     def sample_task(self):
         """Sample a random task from the dataset"""
         T = self.dataset['features'].shape[0]
-        start = torch.randint(0, T - self.seq_len, (1,)).item()
+        start = np.random.randint(0, T - self.seq_len)
         
         task_data = {
             'features': self.dataset['features'][start:start + self.seq_len],
@@ -72,7 +59,7 @@ class MetaEnv:
         self.current_step = 0
         self.done = False
         self.episode_trajectory = []
-        self.terminal_step = torch.randint(self.min_horizon, self.max_horizon + 1, (1,)).item() 
+        self.terminal_step = np.random.randint(self.min_horizon, self.max_horizon + 1)
 
     def reset(self):
         """Reset current episode within the current task"""
@@ -91,43 +78,48 @@ class MetaEnv:
         self.episode_count += 1
         
         # Return initial state: features only [N, F]
-        initial_state = self.current_task['features'][0]
+        initial_state = self.current_task['features'][0].numpy()  # Convert to numpy
         return initial_state
     
-    def step(self, action: torch.Tensor):
+    def step(self, action):
         """
-        Take environment step - now expects direct portfolio weights
+        Take environment step - expects portfolio weights as numpy array
         
         Args:
-            action: Tensor[N] - portfolio allocation weights (sum ≤ 1)
+            action: np.array[N] - portfolio allocation weights (sum ≤ 1)
         """
         if self.done:
             raise ValueError("Episode is done, call reset() first")
             
+        # Ensure action is numpy array
+        if torch.is_tensor(action):
+            action = action.detach().cpu().numpy()
+        action = np.asarray(action, dtype=np.float32)
+        
         # Current state (normalized features)
-        current_state = self.current_task['features'][self.current_step]  # [N, F]
+        current_state = self.current_task['features'][self.current_step].numpy()  # [N, F]
         
         # Compute Sharpe ratio reward (updates capital tracking)
         reward = self.compute_reward_with_capital(action)
         
         # Store transition
         self.episode_trajectory.append({
-            'state': current_state.clone(),
-            'action': action.clone(),        # Direct portfolio weights
-            'reward': reward.item()
+            'state': current_state.copy(),
+            'action': action.copy(),
+            'reward': reward
         })
         
         # Advance and check termination
         self.current_step += 1
         self.done = (self.current_step >= self.terminal_step) or \
-                (self.current_step >= len(self.current_task['features']))
+                    (self.current_step >= len(self.current_task['features']))
         
         # Next state
-        next_state = (torch.zeros_like(current_state) if self.done 
-                    else self.current_task['features'][self.current_step])
+        next_state = (np.zeros_like(current_state) if self.done 
+                     else self.current_task['features'][self.current_step].numpy())
         
         # Performance metrics
-        investment_pct = action.sum().item()
+        investment_pct = action.sum()
         cash_pct = 1.0 - investment_pct
         cumulative_return = (self.current_capital - self.initial_capital) / self.initial_capital
         pure_return = self.returns[-1] if self.returns else 0.0
@@ -138,56 +130,54 @@ class MetaEnv:
             'cash_pct': cash_pct, 
             'cumulative_return': cumulative_return,
             'pure_return': pure_return,
-            'sharpe_reward': reward.item(),
+            'sharpe_reward': reward,
             'step': self.current_step,
             'episode_id': self.episode_count
         }
         
-        return next_state, reward.item(), self.done, info
+        return next_state, reward, self.done, info
     
-
-    def compute_reward_with_capital(self, portfolio_weights: torch.Tensor):
+    def compute_reward_with_capital(self, portfolio_weights):
         """
         Compute Sharpe ratio reward while tracking capital performance
         
         Args:
-            portfolio_weights: Tensor[N] - portfolio allocation weights
+            portfolio_weights: np.array[N] - portfolio allocation weights
             
         Returns:
-            reward: Tensor (scalar) - Sharpe ratio for RL optimization
+            reward: float - Sharpe ratio for RL optimization
         """
         if self.current_step >= len(self.current_task['raw_prices']) - 1:
-            return torch.tensor(0.0)  # No next prices available
+            return 0.0  # No next prices available
         
-        # Get current and next raw prices
-        current_prices = torch.tensor(self.current_task['raw_prices'][self.current_step])     # [N]
-        next_prices = torch.tensor(self.current_task['raw_prices'][self.current_step + 1])   # [N]
+        # Get current and next raw prices (convert to numpy)
+        current_prices = self.current_task['raw_prices'][self.current_step].numpy()     # [N]
+        next_prices = self.current_task['raw_prices'][self.current_step + 1].numpy()   # [N]
         
         # Calculate individual asset returns
-        asset_returns = (next_prices - current_prices) / current_prices  # [N]
+        asset_returns = (next_prices - current_prices) / (current_prices + 1e-8)  # [N]
         
         # Calculate portfolio return: weighted sum of asset returns
-        portfolio_return = torch.sum(portfolio_weights * asset_returns)
+        portfolio_return = np.sum(portfolio_weights * asset_returns)
         
         # Update capital tracking
         old_capital = self.current_capital
-        self.current_capital = old_capital * (1.0 + portfolio_return.item())
+        self.current_capital = old_capital * (1.0 + portfolio_return)
         self.capital_history.append(self.current_capital)
         
         # Store return for Sharpe calculation
-        self.returns.append(portfolio_return.item())
+        self.returns.append(portfolio_return)
         
         # Calculate Sharpe ratio as RL reward
         if len(self.returns) >= 2:
-            returns_tensor = torch.tensor(self.returns)
-            mean_return = returns_tensor.mean()
-            std_return = returns_tensor.std()
+            returns_array = np.array(self.returns)
+            mean_return = returns_array.mean()
+            std_return = returns_array.std()
             sharpe = mean_return / (std_return + 1e-8)
         else:
-            sharpe = torch.tensor(0.0)
+            sharpe = 0.0
         
-        return sharpe
-
+        return float(sharpe)
 
     def rollout_episode(self, policy, encoder):
         """
@@ -231,18 +221,18 @@ class MetaEnv:
             
             # Store full transition info for training
             trajectory.append({
-                'state': state.clone(),      # [N, F]
-                'action': action.clone(),    # [N] 
-                'reward': reward,            # scalar
-                'latent': latent.clone(),    # [latent_dim]
-                'next_state': next_state.clone() if not done else None
+                'state': state.copy(),           # [N, F]
+                'action': action.copy(),         # [N] 
+                'reward': reward,                # scalar
+                'latent': latent.copy() if hasattr(latent, 'copy') else latent,  # [latent_dim]
+                'next_state': next_state.copy() if not done else None
             })
             
             # Update trajectory context for next iteration
             # This follows paper's τ:t notation: (s0,a0,r1,s1,a1,r2,...,st)
             trajectory_context.append({
-                'state': state.clone(),
-                'action': action.clone(),
+                'state': state.copy(),
+                'action': action.copy(),
                 'reward': reward
             })
             
@@ -273,16 +263,20 @@ class MetaEnv:
 if __name__ == "__main__":
     # Create dummy dataset
     T, N, F = 1000, 10, 5  # 1000 timesteps, 10 assets, 5 features
-    dataset = torch.randn(T, N, F)
+    dataset = {
+        'features': torch.randn(T, N, F),
+        'raw_prices': torch.abs(torch.randn(T, N)) * 100  # Positive prices
+    }
+    feature_columns = [f'feature_{i}' for i in range(F)]
     
     # Create environment
-    env = MetaEnv(dataset, seq_len=60)
+    env = MetaEnv(dataset, feature_columns, seq_len=60)
     
     # Sample and set task
     task = env.sample_task()
     env.set_task(task)
     
-    print(f"Task sequence shape: {task['sequence'].shape}")
+    print(f"Task sequence shapes: features={task['sequence']['features'].shape}, prices={task['sequence']['raw_prices'].shape}")
     print(f"Task ID: {task['task_id']}")
     
     # Reset and take a few steps
@@ -290,7 +284,8 @@ if __name__ == "__main__":
     print(f"Initial state shape: {state.shape}")
     
     for i in range(5):
-        action = torch.randn(N) * 0.1  # Random portfolio allocation
+        action = np.random.rand(N)
+        action = action / action.sum()  # Normalize to sum=1
         next_state, reward, done, info = env.step(action)
         print(f"Step {i}: reward={reward:.4f}, done={done}")
         if done:
