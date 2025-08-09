@@ -1,4 +1,3 @@
-# File: algorithms/trainer.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -37,7 +36,7 @@ class PPOTrainer:
         # VAE training buffer (separate from PPO buffer)
         self.vae_buffer = deque(maxlen=1000)  # Store recent trajectories
         
-        # Training statistics
+        # Training statistics - store as Python floats to avoid CUDA tensor issues
         self.policy_losses = deque(maxlen=100)
         self.vae_losses = deque(maxlen=100)
         self.episode_rewards = deque(maxlen=100)
@@ -70,13 +69,17 @@ class PPOTrainer:
         if self.episode_count % self.config.vae_update_freq == 0 and len(self.vae_buffer) >= self.config.vae_batch_size:
             vae_loss = self.update_vae()
         
-        # Update statistics
-        episode_reward = sum(trajectory['rewards'])
-        self.episode_rewards.append(episode_reward)
+        # Update statistics - ensure we store Python floats, not tensors
+        episode_reward = sum(trajectory['rewards'])  # This might be a tensor sum
+        if torch.is_tensor(episode_reward):
+            episode_reward = episode_reward.item()
+        
+        self.episode_rewards.append(float(episode_reward))
+        
         if policy_loss > 0:
-            self.policy_losses.append(policy_loss)
+            self.policy_losses.append(float(policy_loss))
         if vae_loss > 0:
-            self.vae_losses.append(vae_loss)
+            self.vae_losses.append(float(vae_loss))
         
         self.episode_count += 1
         
@@ -85,9 +88,9 @@ class PPOTrainer:
             self._log_training_stats()
         
         return {
-            'episode_reward': episode_reward,
-            'policy_loss': policy_loss,
-            'vae_loss': vae_loss,
+            'episode_reward': float(episode_reward),
+            'policy_loss': float(policy_loss),
+            'vae_loss': float(vae_loss),
             'episode_length': len(trajectory['rewards'])
         }
     
@@ -145,22 +148,22 @@ class PPOTrainer:
                 action, value = self.policy.act(obs_tensor, latent, deterministic=False)
                 _, log_prob, _ = self.policy.evaluate_actions(obs_tensor, latent, action)
             
-            # Take environment step
-            action_cpu = action.squeeze(0).cpu().numpy()
+            # Take environment step - ensure action is on CPU for numpy conversion
+            action_cpu = action.squeeze(0).detach().cpu().numpy()
             next_obs, reward, done, info = self.env.step(action_cpu)
             
-            # Store transition
-            trajectory['observations'].append(obs_tensor.squeeze(0))
-            trajectory['actions'].append(action.squeeze(0))
-            trajectory['rewards'].append(reward)
-            trajectory['values'].append(value.squeeze())
-            trajectory['log_probs'].append(log_prob.squeeze())
-            trajectory['latents'].append(latent.squeeze(0))
+            # Store transition - move tensors to CPU where needed
+            trajectory['observations'].append(obs_tensor.squeeze(0).cpu())
+            trajectory['actions'].append(action.squeeze(0).cpu())
+            trajectory['rewards'].append(float(reward))  # Store as Python float
+            trajectory['values'].append(value.squeeze().cpu())
+            trajectory['log_probs'].append(log_prob.squeeze().cpu())
+            trajectory['latents'].append(latent.squeeze(0).cpu())
             trajectory['dones'].append(done)
             
-            # Update trajectory context for next iteration
-            trajectory_context['observations'].append(obs_tensor.squeeze(0))
-            trajectory_context['actions'].append(action.squeeze(0))
+            # Update trajectory context for next iteration - keep on device for VAE
+            trajectory_context['observations'].append(obs_tensor.squeeze(0).detach())
+            trajectory_context['actions'].append(action.squeeze(0).detach())
             trajectory_context['rewards'].append(torch.tensor(reward, device=self.device))
             
             # Update for next step
@@ -170,12 +173,15 @@ class PPOTrainer:
             step += 1
             self.total_steps += 1
         
-        # Convert to tensors (same as before)
-        for key in ['observations', 'actions', 'rewards', 'values', 'log_probs', 'latents']:
+        # Convert to tensors - move to device for training
+        for key in ['observations', 'actions', 'values', 'log_probs', 'latents']:
             if key == 'rewards':
                 trajectory[key] = torch.tensor(trajectory[key], device=self.device)
             else:
-                trajectory[key] = torch.stack(trajectory[key])
+                trajectory[key] = torch.stack(trajectory[key]).to(self.device)
+        
+        # Keep rewards as tensor for computation, but ensure it's on the right device
+        trajectory['rewards'] = torch.tensor(trajectory['rewards'], device=self.device)
         
         return trajectory
     
@@ -329,12 +335,14 @@ class PPOTrainer:
         if not self.exp_logger:
             return
         
-        # Episode statistics
+        # Episode statistics - ensure all values are Python floats
         if self.episode_rewards:
+            # Convert any tensor elements to floats
+            episode_rewards_list = [float(r) if torch.is_tensor(r) else r for r in self.episode_rewards]
             self.exp_logger.log_scalar('train/episode_reward_mean', 
-                                     np.mean(self.episode_rewards), self.episode_count)
+                                     np.mean(episode_rewards_list), self.episode_count)
             self.exp_logger.log_scalar('train/episode_reward_std', 
-                                     np.std(self.episode_rewards), self.episode_count)
+                                     np.std(episode_rewards_list), self.episode_count)
         
         # Add VariBAD-specific metrics
         if hasattr(self, 'latent_magnitudes') and self.latent_magnitudes:
@@ -343,15 +351,16 @@ class PPOTrainer:
             self.exp_logger.log_histogram('varibad/latent_values',
                                         np.array(self.latent_magnitudes), self.episode_count)
 
-
         # Loss statistics
         if self.policy_losses:
+            policy_losses_list = [float(l) if torch.is_tensor(l) else l for l in self.policy_losses]
             self.exp_logger.log_scalar('train/policy_loss', 
-                                     np.mean(self.policy_losses), self.episode_count)
+                                     np.mean(policy_losses_list), self.episode_count)
         
         if self.vae_losses:
+            vae_losses_list = [float(l) if torch.is_tensor(l) else l for l in self.vae_losses]
             self.exp_logger.log_scalar('train/vae_loss', 
-                                     np.mean(self.vae_losses), self.episode_count)
+                                     np.mean(vae_losses_list), self.episode_count)
         
         # General stats
         self.exp_logger.log_scalar('train/episode_count', self.episode_count, self.episode_count)

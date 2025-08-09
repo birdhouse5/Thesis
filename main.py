@@ -221,7 +221,9 @@ def evaluate_on_split(split_env, policy, vae, config, num_episodes, split_name):
                 
                 # Get action from policy
                 action, value = policy.act(obs_tensor, latent, deterministic=True)
-                action_cpu = action.squeeze(0).cpu().numpy()
+                
+                # FIX: Ensure proper tensor conversion for environment
+                action_cpu = action.squeeze(0).detach().cpu().numpy()
                 
                 # Take environment step
                 next_obs, reward, done, info = split_env.step(action_cpu)
@@ -229,9 +231,9 @@ def evaluate_on_split(split_env, policy, vae, config, num_episodes, split_name):
                 episode_reward += reward
                 episode_length += 1
                 
-                # Update trajectory context
-                trajectory_context['observations'].append(obs_tensor.squeeze(0))
-                trajectory_context['actions'].append(action.squeeze(0))
+                # Update trajectory context - keep tensors on device
+                trajectory_context['observations'].append(obs_tensor.squeeze(0).detach())
+                trajectory_context['actions'].append(action.squeeze(0).detach())
                 trajectory_context['rewards'].append(torch.tensor(reward, device=device))
                 
                 # Update observation
