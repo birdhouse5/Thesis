@@ -295,6 +295,18 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     
     logger.info(f"   📊 Initial: {initial_rows:,} rows, {initial_nans:,} NaN values")
     
+    # === Check for rectangular structure ===
+    date_counts = df.groupby('date').size()
+    expected_tickers = df['ticker'].nunique()
+    irregular_dates = date_counts[date_counts != expected_tickers]
+    
+    if len(irregular_dates) > 0:
+        logger.warning(f"Found {len(irregular_dates)} dates with irregular ticker counts")
+        logger.info("Removing dates that don't have all tickers...")
+        valid_dates = date_counts[date_counts == expected_tickers].index
+        df = df[df['date'].isin(valid_dates)]
+        logger.info(f"Kept {len(valid_dates)} dates with complete data")    
+
     # === Remove rows with missing essential data ===
     df = df.dropna(subset=['date', 'ticker', 'close', 'returns'])
     
@@ -399,6 +411,14 @@ def create_dataset(output_path: str = "data/sp500_rl_ready_cleaned.parquet",
         logger.info("🧹 Step 4/4: Cleaning data...")
         cleaned = clean_data(normalized)
         
+        expected_rows = cleaned['date'].nunique() * cleaned['ticker'].nunique()
+        actual_rows = len(cleaned)
+        if actual_rows != expected_rows:
+            logger.error(f"❌ Data not rectangular: {actual_rows} rows, expected {expected_rows}")
+            raise ValueError(f"Dataset failed rectangular validation")
+        else:
+            logger.info(f"✅ Dataset is rectangular: {actual_rows:,} rows")
+
         # Save final dataset
         cleaned.to_parquet(output_path)
         
