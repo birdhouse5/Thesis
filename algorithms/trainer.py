@@ -137,7 +137,7 @@ class PPOTrainer:
             
             # Update for next step
             if not done:
-                obs_tensor = torch.ascontiguous_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+                obs_tensor = torch.ascontiguous_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
                 
                 # Update latent using VAE encoder with trajectory context
                 # For now, keep latent constant during episode
