@@ -40,8 +40,8 @@ class Config:
         self.discount_factor = 0.99
         
         # Training parameters
-        self.max_episodes = 5000
-        self.episodes_per_task = 4      # Episodes per task before sampling new task
+        self.max_episodes = 10000
+        self.episodes_per_task = 100     # Episodes per task before sampling new task
         self.batch_size = 64            # Batch size for PPO updates
         self.vae_batch_size = 32        # Separate batch size for VAE training
         
