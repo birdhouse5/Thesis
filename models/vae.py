@@ -79,37 +79,58 @@ class VAE(nn.Module):
         else:
             return mu, logvar, hidden_state
     
-    def compute_loss(self, obs_seq, action_seq, reward_seq, beta=0.1):
+    def compute_loss(self, obs_seq, action_seq, reward_seq, beta=0.1, context_len=None):
         """
         Compute VAE loss (reconstruction + KL divergence).
+        If context_len provided, encode only τ:context_len but decode full sequence (VariBAD approach).
         
         Args:
             obs_seq: (batch, seq_len, N, F) - observation sequence
             action_seq: (batch, seq_len, N) - portfolio weight sequence  
             reward_seq: (batch, seq_len, 1) - reward sequence
             beta: Weight for KL divergence term
+            context_len: If provided, encode only first context_len timesteps
             
         Returns:
             total_loss, loss_components_dict
         """
         batch_size, seq_len = obs_seq.shape[:2]
         
+        # Determine what to encode vs decode
+        if context_len is not None:
+            # VariBAD: encode τ:context_len, decode full sequence
+            encode_obs = obs_seq[:, :context_len]
+            encode_actions = action_seq[:, :context_len]
+            encode_rewards = reward_seq[:, :context_len]
+            decode_obs = obs_seq
+            decode_actions = action_seq
+            decode_rewards = reward_seq
+        else:
+            # Standard VAE: encode and decode same sequence
+            encode_obs = obs_seq
+            encode_actions = action_seq
+            encode_rewards = reward_seq
+            decode_obs = obs_seq
+            decode_actions = action_seq
+            decode_rewards = reward_seq
+        
         # Encode to latent distribution
-        mu, logvar, _ = self.encode(obs_seq, action_seq, reward_seq)
+        mu, logvar, _ = self.encode(encode_obs, encode_actions, encode_rewards)
         
         # Sample latent
         latent = self.reparameterize(mu, logvar)
         
-        # Reconstruction losses
+        # Reconstruction losses - always decode full sequence
         recon_obs_loss = 0
         recon_reward_loss = 0
         
         # Predict next observations and rewards for each timestep
-        for t in range(seq_len - 1):
-            current_obs = obs_seq[:, t]      # (batch, N, F)
-            current_action = action_seq[:, t] # (batch, N)  
-            next_obs = obs_seq[:, t + 1]     # (batch, N, F)
-            reward = reward_seq[:, t + 1]    # (batch, 1) - reward at t+1
+        decode_seq_len = decode_obs.shape[1]
+        for t in range(decode_seq_len - 1):
+            current_obs = decode_obs[:, t]      # (batch, N, F)
+            current_action = decode_actions[:, t] # (batch, N)  
+            next_obs = decode_obs[:, t + 1]     # (batch, N, F)
+            reward = decode_rewards[:, t + 1]    # (batch, 1) - reward at t+1
             
             # Predict next observation
             pred_next_obs = self.decode_obs(latent, current_obs, current_action)
@@ -120,8 +141,8 @@ class VAE(nn.Module):
             recon_reward_loss += F.mse_loss(pred_reward, reward)
         
         # Average over sequence length
-        recon_obs_loss /= (seq_len - 1)
-        recon_reward_loss /= (seq_len - 1)
+        recon_obs_loss /= (decode_seq_len - 1)
+        recon_reward_loss /= (decode_seq_len - 1)
         
         # KL divergence with standard normal prior
         kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / batch_size

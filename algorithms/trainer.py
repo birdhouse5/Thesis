@@ -92,7 +92,7 @@ class PPOTrainer:
         }
     
     def collect_trajectory(self):
-        """Collect a single episode trajectory"""
+        """Collect a single episode trajectory with online latent updates"""
         trajectory = {
             'observations': [],
             'actions': [],
@@ -104,55 +104,72 @@ class PPOTrainer:
         }
         
         # Reset environment
-        obs = self.env.reset()  # (N, F)
-        obs_tensor = torch.ascontiguous_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)  # (1, N, F)
+        obs = self.env.reset()
+        obs_tensor = torch.ascontiguous_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
         
-        # Initialize latent (will be updated by VAE encoder)
-        latent = torch.zeros(1, self.config.latent_dim, device=self.device)
+        # Initialize empty trajectory context for encoder
+        trajectory_context = {
+            'observations': [],
+            'actions': [],
+            'rewards': []
+        }
         
         # Episode loop
         done = False
         step = 0
         
         while not done and step < self.config.max_horizon:
+            # Encode current trajectory context τ:t to get posterior q(m|τ:t)
+            if len(trajectory_context['observations']) == 0:
+                # First step: use prior
+                latent = torch.zeros(1, self.config.latent_dim, device=self.device)
+            else:
+                # Subsequent steps: encode trajectory so far
+                with torch.no_grad():
+                    # Prepare sequences for encoder
+                    obs_seq = torch.stack(trajectory_context['observations']).unsqueeze(0)  # (1, t, N, F)
+                    action_seq = torch.stack(trajectory_context['actions']).unsqueeze(0)    # (1, t, N)
+                    reward_seq = torch.stack(trajectory_context['rewards']).unsqueeze(0).unsqueeze(-1)  # (1, t, 1)
+                    
+                    mu, logvar, _ = self.vae.encode(obs_seq, action_seq, reward_seq)
+                    latent = self.vae.reparameterize(mu, logvar)
+            
             with torch.no_grad():
                 # Get action and value from policy
                 action, value = self.policy.act(obs_tensor, latent, deterministic=False)
-                
-                # Evaluate action to get log probability
                 _, log_prob, _ = self.policy.evaluate_actions(obs_tensor, latent, action)
-                
+            
             # Take environment step
-            action_cpu = action.squeeze(0).cpu().numpy()  # (N,)
+            action_cpu = action.squeeze(0).cpu().numpy()
             next_obs, reward, done, info = self.env.step(action_cpu)
             
             # Store transition
-            trajectory['observations'].append(obs_tensor.squeeze(0))  # (N, F)
-            trajectory['actions'].append(action.squeeze(0))           # (N,)
+            trajectory['observations'].append(obs_tensor.squeeze(0))
+            trajectory['actions'].append(action.squeeze(0))
             trajectory['rewards'].append(reward)
-            trajectory['values'].append(value.squeeze())             # scalar
-            trajectory['log_probs'].append(log_prob.squeeze())       # scalar
-            trajectory['latents'].append(latent.squeeze(0))           # (latent_dim,)
+            trajectory['values'].append(value.squeeze())
+            trajectory['log_probs'].append(log_prob.squeeze())
+            trajectory['latents'].append(latent.squeeze(0))
             trajectory['dones'].append(done)
+            
+            # Update trajectory context for next iteration
+            trajectory_context['observations'].append(obs_tensor.squeeze(0))
+            trajectory_context['actions'].append(action.squeeze(0))
+            trajectory_context['rewards'].append(torch.tensor(reward, device=self.device))
             
             # Update for next step
             if not done:
-                obs_tensor = torch.ascontiguous_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
-                
-                # Update latent using VAE encoder with trajectory context
-                # For now, keep latent constant during episode
-                # TODO: Implement proper trajectory encoding for latent updates
-                
+                obs_tensor = torch.ascontiguous_tensor(next_obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+            
             step += 1
             self.total_steps += 1
         
-        # Convert lists to tensors
-        trajectory['observations'] = torch.stack(trajectory['observations'])  # (T, N, F)
-        trajectory['actions'] = torch.stack(trajectory['actions'])            # (T, N)
-        trajectory['rewards'] = torch.tensor(trajectory['rewards'], device=self.device)  # (T,)
-        trajectory['values'] = torch.stack(trajectory['values'])              # (T,)
-        trajectory['log_probs'] = torch.stack(trajectory['log_probs'])        # (T,)
-        trajectory['latents'] = torch.stack(trajectory['latents'])            # (T, latent_dim)
+        # Convert to tensors (same as before)
+        for key in ['observations', 'actions', 'rewards', 'values', 'log_probs', 'latents']:
+            if key == 'rewards':
+                trajectory[key] = torch.tensor(trajectory[key], device=self.device)
+            else:
+                trajectory[key] = torch.stack(trajectory[key])
         
         return trajectory
     
@@ -249,7 +266,7 @@ class PPOTrainer:
         return total_loss / self.config.ppo_epochs
     
     def update_vae(self):
-        """Update VAE using recent trajectories"""
+        """Update VAE using trajectory prefixes of different lengths"""
         if len(self.vae_buffer) < self.config.vae_batch_size:
             return 0
         
@@ -257,47 +274,49 @@ class PPOTrainer:
         indices = np.random.choice(len(self.vae_buffer), self.config.vae_batch_size, replace=False)
         batch_trajectories = [self.vae_buffer[i] for i in indices]
         
-        # Prepare sequences for VAE
-        obs_sequences = []
-        action_sequences = []
-        reward_sequences = []
+        total_loss = 0
+        loss_count = 0
         
         for trajectory in batch_trajectories:
-            # Pad sequences to same length if needed
             seq_len = len(trajectory['rewards'])
-            if seq_len >= 10:  # Minimum sequence length for VAE training
-                obs_sequences.append(trajectory['observations'].unsqueeze(0))    # (1, T, N, F)
-                action_sequences.append(trajectory['actions'].unsqueeze(0))      # (1, T, N)
-                reward_sequences.append(trajectory['rewards'].unsqueeze(0).unsqueeze(-1))  # (1, T, 1)
+            if seq_len < 2:  # Need at least 2 steps
+                continue
+                
+            # Sample random prefix length t (paper: ELBO for all timesteps t)
+            max_t = min(seq_len - 1, 20)  # Limit for computational efficiency
+            t = np.random.randint(1, max_t + 1)
+            
+            # Extract τ:t (context) and τ:H+ (full trajectory for decoding)
+            obs_context = trajectory['observations'][:t].unsqueeze(0)      # (1, t, N, F)
+            action_context = trajectory['actions'][:t].unsqueeze(0)        # (1, t, N)
+            reward_context = trajectory['rewards'][:t].unsqueeze(0).unsqueeze(-1)  # (1, t, 1)
+            
+            # Full trajectory for decoder
+            obs_full = trajectory['observations'].unsqueeze(0)             # (1, T, N, F)
+            action_full = trajectory['actions'].unsqueeze(0)               # (1, T, N)
+            reward_full = trajectory['rewards'].unsqueeze(0).unsqueeze(-1) # (1, T, 1)
+            
+            # Compute ELBO_t
+            vae_loss, _ = self.vae.compute_loss_with_context(
+                obs_context, action_context, reward_context,
+                obs_full, action_full, reward_full,
+                beta=self.config.vae_beta
+            )
+            
+            total_loss += vae_loss
+            loss_count += 1
         
-        if not obs_sequences:
+        if loss_count == 0:
             return 0
         
-        # Batch sequences (pad if necessary)
-        max_len = max(seq.shape[1] for seq in obs_sequences)
-        
-        batch_obs = torch.zeros(len(obs_sequences), max_len, *obs_sequences[0].shape[2:], device=self.device)
-        batch_actions = torch.zeros(len(action_sequences), max_len, action_sequences[0].shape[2], device=self.device)
-        batch_rewards = torch.zeros(len(reward_sequences), max_len, 1, device=self.device)
-        
-        for i, (obs_seq, act_seq, rew_seq) in enumerate(zip(obs_sequences, action_sequences, reward_sequences)):
-            seq_len = obs_seq.shape[1]
-            batch_obs[i, :seq_len] = obs_seq[0]
-            batch_actions[i, :seq_len] = act_seq[0]
-            batch_rewards[i, :seq_len] = rew_seq[0]
-        
-        # VAE forward pass and loss
-        vae_loss, loss_components = self.vae.compute_loss(
-            batch_obs, batch_actions, batch_rewards, beta=self.config.vae_beta
-        )
-        
-        # Update VAE
+        # Backward pass
+        avg_loss = total_loss / loss_count
         self.vae_optimizer.zero_grad()
-        vae_loss.backward()
+        avg_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
         self.vae_optimizer.step()
         
-        return vae_loss.item()
+        return avg_loss.item()
     
     def _log_training_stats(self):
         """Log training statistics"""
