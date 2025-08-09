@@ -18,7 +18,7 @@ class Config:
     """Training configuration for VariBAD Portfolio Optimization"""
     def __init__(self):
         # Environment parameters
-        self.data_path = "data/sp500_rl_ready_cleaned.parquet"
+        self.data_path = "environments/data/sp500_rl_ready_cleaned.parquet"
         self.num_assets = 30
         self.seq_len = 60           # Fixed episode length (task sequence length)
         self.min_horizon = 45       # Minimum episode length within task 
