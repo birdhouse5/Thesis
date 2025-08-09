@@ -18,7 +18,7 @@ class Config:
     """Training configuration for VariBAD Portfolio Optimization"""
     def __init__(self):
         # Environment parameters
-        self.data_path = "environments/data/sp500_rl_ready_cleaned.parquet"
+        self.data_path = "environments/data/sp500_rl_ready_cleaned_fixed.parquet"
         self.num_assets = 30
         self.seq_len = 60           # Fixed episode length (task sequence length)
         self.min_horizon = 45       # Minimum episode length within task 
@@ -342,3 +342,12 @@ def main():
         
         exp_logger.close()
         logger.info(f"Training finished. Total episodes: {episodes_trained}")
+
+if __name__ == "__main__":
+    # Setup basic logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    main()
