@@ -42,7 +42,7 @@ class PPOTrainer:
         self.vae_losses = deque(maxlen=100)
         self.episode_rewards = deque(maxlen=100)
         
-        logger.info("PPO Trainer initialized")
+        logger.info("PPO Trainer initialized")  # This is the module logger, not exp_logger
         logger.info(f"Policy LR: {config.policy_lr}, VAE LR: {config.vae_lr}")
         logger.info(f"PPO epochs: {config.ppo_epochs}, clip ratio: {config.ppo_clip_ratio}")
     
@@ -105,7 +105,7 @@ class PPOTrainer:
         
         # Reset environment
         obs = self.env.reset()
-        obs_tensor = torch.ascontiguous_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+        obs_tensor = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
         
         # Initialize empty trajectory context for encoder
         trajectory_context = {
@@ -165,7 +165,7 @@ class PPOTrainer:
             
             # Update for next step
             if not done:
-                obs_tensor = torch.ascontiguous_tensor(next_obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+                obs_tensor = torch.tensor(next_obs, dtype=torch.float32, device=self.device).unsqueeze(0)
             
             step += 1
             self.total_steps += 1
@@ -303,10 +303,10 @@ class PPOTrainer:
             reward_full = trajectory['rewards'].unsqueeze(0).unsqueeze(-1) # (1, T, 1)
             
             # Compute ELBO_t
-            vae_loss, _ = self.vae.compute_loss_with_context(
+            vae_loss, _ = self.vae.compute_loss(
                 obs_context, action_context, reward_context,
-                obs_full, action_full, reward_full,
-                beta=self.config.vae_beta
+                beta=self.config.vae_beta,
+                context_len=t
             )
             
             total_loss += vae_loss

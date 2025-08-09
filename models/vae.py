@@ -140,9 +140,14 @@ class VAE(nn.Module):
             pred_reward = self.decode_reward(latent, current_obs, current_action, next_obs)
             recon_reward_loss += F.mse_loss(pred_reward, reward)
         
-        # Average over sequence length
-        recon_obs_loss /= (decode_seq_len - 1)
-        recon_reward_loss /= (decode_seq_len - 1)
+        # Average over sequence length (avoid division by zero)
+        if decode_seq_len > 1:
+            recon_obs_loss /= (decode_seq_len - 1)
+            recon_reward_loss /= (decode_seq_len - 1)
+        else:
+            # If sequence too short, set losses to zero
+            recon_obs_loss = torch.tensor(0.0, device=obs_seq.device)
+            recon_reward_loss = torch.tensor(0.0, device=obs_seq.device)
         
         # KL divergence with standard normal prior
         kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()) / batch_size

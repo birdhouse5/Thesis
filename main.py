@@ -153,7 +153,7 @@ def evaluate_policy(env, policy, vae, config, num_episodes=10):
             
             # Reset environment
             obs = env.reset()  # (N, F)
-            obs_tensor = torch.ascontiguous_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)  # (1, N, F)
+            obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
             
             episode_reward = 0
             episode_length = 0
@@ -175,7 +175,7 @@ def evaluate_policy(env, policy, vae, config, num_episodes=10):
                 
                 # Update observation
                 if not done:
-                    obs_tensor = torch.ascontiguous_tensor(next_obs, dtype=torch.float32, device=device).unsqueeze(0)
+                    obs_tensor = torch.tensor(next_obs, dtype=torch.float32, device=device).unsqueeze(0)
                 
                 # TODO: Update latent using VAE encoder with trajectory history
                 # For now, keep latent fixed during episode
