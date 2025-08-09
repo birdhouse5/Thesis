@@ -225,7 +225,7 @@ class RNNEncoder(nn.Module):
         
         # Reward encoding - handle shape carefully
         # reward_seq is (batch, seq_len, 1), we need to keep this shape for linear layer
-        reward_flat = reward_seq.view(batch_size * seq_len, self.reward_dim)  # (batch*seq_len, 1)
+        reward_flat = reward_seq.reshape(batch_size * seq_len, self.reward_dim)  # (batch*seq_len, 1)
         reward_emb_flat = F.relu(self.reward_encoder(reward_flat))  # (batch*seq_len, 32)
         reward_emb = reward_emb_flat.view(batch_size, seq_len, 32)  # (batch, seq_len, 32)
         

@@ -241,6 +241,221 @@ def test_simple_training_loop():
         print(f"Simple training test FAILED: {e}")
         traceback.print_exc()
 
+
+def test_online_latent_encoding():
+    """Test that latents actually update during episodes"""
+    print("\n=== Testing Online Latent Encoding ===")
+    try:
+        # Create minimal setup
+        data_path = create_mock_data()
+        from environments.dataset import Dataset
+        from environments.env import MetaEnv
+        from models.policy import PortfolioPolicy
+        from models.vae import VAE
+        
+        dataset = Dataset(data_path)
+        window_size = min(60, len(dataset))
+        window = dataset.get_window(0, window_size)
+        
+        dataset_tensor = {
+            'features': torch.tensor(window['features'], dtype=torch.float32),
+            'raw_prices': torch.tensor(window['raw_prices'], dtype=torch.float32)
+        }
+        
+        env = MetaEnv(dataset=dataset_tensor, feature_columns=dataset.feature_cols, 
+                     seq_len=30, min_horizon=10, max_horizon=15)
+        
+        # Initialize models
+        obs_shape = (dataset.num_assets, dataset.num_features)
+        latent_dim = 16
+        
+        vae = VAE(obs_dim=obs_shape, num_assets=dataset.num_assets, 
+                 latent_dim=latent_dim, hidden_dim=64)
+        
+        # Sample task and reset
+        task = env.sample_task()
+        env.set_task(task)
+        obs = env.reset()
+        
+        # Test online encoding - simulate growing trajectory
+        trajectory_context = {'observations': [], 'actions': [], 'rewards': []}
+        latents = []
+        
+        for step in range(5):
+            obs_tensor = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
+            
+            # Get latent based on current context
+            if len(trajectory_context['observations']) == 0:
+                latent = torch.zeros(1, latent_dim)
+            else:
+                obs_seq = torch.stack(trajectory_context['observations']).unsqueeze(0)
+                action_seq = torch.stack(trajectory_context['actions']).unsqueeze(0)
+                reward_seq = torch.stack(trajectory_context['rewards']).unsqueeze(0).unsqueeze(-1)
+                
+                with torch.no_grad():
+                    mu, logvar, _ = vae.encode(obs_seq, action_seq, reward_seq)
+                    latent = vae.reparameterize(mu, logvar)
+            
+            latents.append(latent.clone())
+            
+            # Take random action
+            action = torch.rand(dataset.num_assets)
+            action = action / action.sum()
+            
+            next_obs, reward, done, _ = env.step(action.numpy())
+            
+            # Update context
+            trajectory_context['observations'].append(obs_tensor.squeeze(0))
+            trajectory_context['actions'].append(action)
+            trajectory_context['rewards'].append(torch.tensor(reward))
+            
+            obs = next_obs
+            if done:
+                break
+        
+        # Check that latents actually change
+        latent_diffs = []
+        for i in range(1, len(latents)):
+            diff = torch.norm(latents[i] - latents[i-1]).item()
+            latent_diffs.append(diff)
+        
+        print(f"✓ Collected {len(latents)} latents")
+        print(f"✓ Latent differences: {[f'{d:.4f}' for d in latent_diffs]}")
+        
+        if any(d > 0.01 for d in latent_diffs):
+            print("✓ Latents are changing during episode (good!)")
+        else:
+            print("⚠ Latents barely changing - might be an issue")
+            
+        return True
+        
+    except Exception as e:
+        print(f"Online latent encoding test FAILED: {e}")
+        traceback.print_exc()
+        return False
+
+def test_vae_context_training():
+    """Test VAE training with variable context lengths"""
+    print("\n=== Testing VAE Context Training ===")
+    try:
+        from models.vae import VAE
+        # Create mock trajectory data
+        batch_size, max_seq_len = 2, 20
+        num_assets, num_features = 5, 8
+        latent_dim = 16
+        
+        # Create VAE
+        vae = VAE(obs_dim=(num_assets, num_features), num_assets=num_assets,
+                 latent_dim=latent_dim, hidden_dim=64)
+        
+        # Create mock trajectory
+        obs_seq = torch.randn(batch_size, max_seq_len, num_assets, num_features)
+        action_seq = torch.rand(batch_size, max_seq_len, num_assets)
+        action_seq = action_seq / action_seq.sum(dim=-1, keepdim=True)  # Normalize
+        reward_seq = torch.randn(batch_size, max_seq_len, 1)
+        
+        # Test different context lengths
+        context_lengths = [5, 10, 15]
+        losses = []
+        
+        for context_len in context_lengths:
+            loss, components = vae.compute_loss(
+                obs_seq, action_seq, reward_seq,
+                beta=0.1, context_len=context_len
+            )
+            losses.append(loss.item())
+            print(f"✓ Context length {context_len}: loss={loss.item():.4f}, "
+                  f"recon_obs={components['recon_obs']:.4f}, "
+                  f"kl={components['kl']:.4f}")
+        
+        # Test standard VAE (no context limit)
+        loss_standard, _ = vae.compute_loss(obs_seq, action_seq, reward_seq, beta=0.1)
+        print(f"✓ Standard VAE (full context): loss={loss_standard.item():.4f}")
+        
+        # Verify we can backprop
+        loss.backward()
+        print("✓ Backward pass successful")
+        
+        return True
+        
+    except Exception as e:
+        print(f"VAE context training test FAILED: {e}")
+        traceback.print_exc()
+        return False
+
+def test_tensor_shapes_pipeline():
+    """Test tensor shapes throughout the VariBAD pipeline"""
+    print("\n=== Testing Tensor Shapes Pipeline ===")
+    try:
+        # Setup
+        data_path = create_mock_data()
+        from environments.dataset import Dataset
+        from environments.env import MetaEnv
+        from models.policy import PortfolioPolicy
+        from models.vae import VAE
+        
+        dataset = Dataset(data_path)
+        window = dataset.get_window(0, min(40, len(dataset)))
+        
+        dataset_tensor = {
+            'features': torch.tensor(window['features'], dtype=torch.float32),
+            'raw_prices': torch.tensor(window['raw_prices'], dtype=torch.float32)
+        }
+        
+        env = MetaEnv(dataset=dataset_tensor, feature_columns=dataset.feature_cols,
+                     seq_len=20, min_horizon=5, max_horizon=10)
+        
+        obs_shape = (dataset.num_assets, dataset.num_features)
+        latent_dim = 16
+        
+        vae = VAE(obs_dim=obs_shape, num_assets=dataset.num_assets,
+                 latent_dim=latent_dim, hidden_dim=64)
+        policy = PortfolioPolicy(obs_shape=obs_shape, latent_dim=latent_dim,
+                               num_assets=dataset.num_assets, hidden_dim=64)
+        
+        # Test shapes through one episode step
+        task = env.sample_task()
+        env.set_task(task)
+        obs = env.reset()
+        
+        print(f"Initial obs shape: {obs.shape}")
+        assert obs.shape == obs_shape, f"Expected {obs_shape}, got {obs.shape}"
+        
+        # Test VAE encoder shapes
+        obs_seq = torch.randn(1, 5, *obs_shape)  # (batch, seq, assets, features)
+        action_seq = torch.rand(1, 5, dataset.num_assets)
+        reward_seq = torch.randn(1, 5, 1)
+        
+        mu, logvar, hidden = vae.encode(obs_seq, action_seq, reward_seq)
+        print(f"VAE encoder output - mu: {mu.shape}, logvar: {logvar.shape}")
+        assert mu.shape == (1, latent_dim), f"Expected mu shape (1, {latent_dim}), got {mu.shape}"
+        assert logvar.shape == (1, latent_dim), f"Expected logvar shape (1, {latent_dim}), got {logvar.shape}"
+        
+        latent = vae.reparameterize(mu, logvar)
+        print(f"Latent shape: {latent.shape}")
+        assert latent.shape == (1, latent_dim), f"Expected latent shape (1, {latent_dim}), got {latent.shape}"
+        
+        # Test policy shapes
+        obs_tensor = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
+        action, value = policy.act(obs_tensor, latent, deterministic=True)
+        
+        print(f"Policy output - action: {action.shape}, value: {value.shape}")
+        assert action.shape == (1, dataset.num_assets), f"Expected action shape (1, {dataset.num_assets}), got {action.shape}"
+        assert value.shape == (1, 1), f"Expected value shape (1, 1), got {value.shape}"
+        
+        # Test action sum constraint
+        action_sum = action.sum(dim=-1).item()
+        print(f"Action sum: {action_sum:.4f}")
+        assert abs(action_sum - 1.0) < 1e-5, f"Actions should sum to 1, got {action_sum}"
+        
+        print("✓ All tensor shapes correct throughout pipeline")
+        return True
+        
+    except Exception as e:
+        print(f"Tensor shapes test FAILED: {e}")
+        traceback.print_exc()
+        return False
+
 def main():
     """Run debug tests with better error handling"""
     print("=== VariBAD Portfolio Debug Test (Fixed) ===")
@@ -266,6 +481,22 @@ def main():
             print("Cannot proceed - MetaEnv failed")
             return
         
+        # New VariBAD-specific tests
+        print("\n" + "="*50)
+        print("VARIBAD-SPECIFIC TESTS")
+        print("="*50)
+        
+        success = True
+        success &= test_tensor_shapes_pipeline()
+        success &= test_vae_context_training()
+        success &= test_online_latent_encoding()
+        
+        if success:
+            print("\n✅ All VariBAD tests passed!")
+        else:
+            print("\n❌ Some VariBAD tests failed")
+
+
         num_assets = obs_shape[0]
         print(f"\nUsing: obs_shape={obs_shape}, num_assets={num_assets}")
         

@@ -134,6 +134,12 @@ class PPOTrainer:
                     mu, logvar, _ = self.vae.encode(obs_seq, action_seq, reward_seq)
                     latent = self.vae.reparameterize(mu, logvar)
             
+            if not hasattr(self, 'latent_magnitudes'):
+                self.latent_magnitudes = deque(maxlen=1000)
+
+            latent_norm = torch.norm(latent).item()
+            self.latent_magnitudes.append(latent_norm)
+
             with torch.no_grad():
                 # Get action and value from policy
                 action, value = self.policy.act(obs_tensor, latent, deterministic=False)
@@ -330,6 +336,14 @@ class PPOTrainer:
             self.exp_logger.log_scalar('train/episode_reward_std', 
                                      np.std(self.episode_rewards), self.episode_count)
         
+        # Add VariBAD-specific metrics
+        if hasattr(self, 'latent_magnitudes') and self.latent_magnitudes:
+            self.exp_logger.log_scalar('varibad/latent_magnitude_mean',
+                                    np.mean(self.latent_magnitudes), self.episode_count)
+            self.exp_logger.log_histogram('varibad/latent_values',
+                                        np.array(self.latent_magnitudes), self.episode_count)
+
+
         # Loss statistics
         if self.policy_losses:
             self.exp_logger.log_scalar('train/policy_loss', 
