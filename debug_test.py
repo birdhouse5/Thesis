@@ -456,6 +456,18 @@ def test_tensor_shapes_pipeline():
         traceback.print_exc()
         return False
 
+def test_tensorboard_logging():
+    print("\n=== Testing TensorBoard Logging ===")
+    from logger_config import setup_experiment_logging
+    
+    logger = setup_experiment_logging("test_varibad")
+    logger.log_scalar('test/metric', 42.0, 1)
+    logger.close()
+    
+    print("✓ TensorBoard logging test complete")
+    print(f"✓ Check logs directory: {logger.run_dir}")
+
+
 def main():
     """Run debug tests with better error handling"""
     print("=== VariBAD Portfolio Debug Test (Fixed) ===")
@@ -490,6 +502,7 @@ def main():
         success &= test_tensor_shapes_pipeline()
         success &= test_vae_context_training()
         success &= test_online_latent_encoding()
+        success &= test_tensorboard_logging()
         
         if success:
             print("\n✅ All VariBAD tests passed!")
