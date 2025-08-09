@@ -21,7 +21,20 @@ class Dataset:
         # Define split boundaries
         train_end_date = pd.to_datetime(train_end)
         val_end_date = pd.to_datetime(val_end)
-        
+
+        # Convert split dates to match the data's timezone if data has timezone
+        if full_data['date'].dt.tz is not None:
+            if train_end_date.tz is None:
+                train_end_date = train_end_date.tz_localize(full_data['date'].dt.tz)
+            else:
+                train_end_date = train_end_date.tz_convert(full_data['date'].dt.tz)
+                
+            if val_end_date.tz is None:
+                val_end_date = val_end_date.tz_localize(full_data['date'].dt.tz)
+            else:
+                val_end_date = val_end_date.tz_convert(full_data['date'].dt.tz)
+
+
         # Apply temporal split
         if split == 'train':
             self.data = full_data[full_data['date'] <= train_end_date].copy()
