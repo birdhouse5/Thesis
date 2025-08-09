@@ -458,15 +458,19 @@ def test_tensor_shapes_pipeline():
 
 def test_tensorboard_logging():
     print("\n=== Testing TensorBoard Logging ===")
-    from logger_config import setup_experiment_logging
-    
-    logger = setup_experiment_logging("test_varibad")
-    logger.log_scalar('test/metric', 42.0, 1)
-    logger.close()
-    
-    print("✓ TensorBoard logging test complete")
-    print(f"✓ Check logs directory: {logger.run_dir}")
-
+    try:
+        from logger_config import setup_experiment_logging
+        
+        logger = setup_experiment_logging("test_varibad")
+        logger.log_scalar('test/metric', 42.0, 1)
+        logger.close()
+        
+        print("✓ TensorBoard logging test complete")
+        print(f"✓ Check logs directory: {logger.run_dir}")
+        return True
+    except Exception as e:
+        print(f"TensorBoard logging test FAILED: {e}")
+        return False
 
 def main():
     """Run debug tests with better error handling"""

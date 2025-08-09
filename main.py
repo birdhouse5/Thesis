@@ -210,6 +210,12 @@ def main():
     logger.info(f"Configuration: max_episodes={config.max_episodes}, "
                f"seq_len={config.seq_len}, latent_dim={config.latent_dim}")
     
+    # Initialize variables early to avoid scope issues
+    episodes_trained = 0
+    best_reward = float('-inf')
+    vae = None
+    policy = None
+    
     try:
         # Prepare dataset
         dataset_tensor, feature_columns, dataset_wrapper = prepare_dataset(config)
@@ -245,8 +251,6 @@ def main():
         
         # Training loop
         logger.info("Starting training...")
-        best_reward = float('-inf')
-        episodes_trained = 0
         
         while episodes_trained < config.max_episodes:
             # Sample new task
@@ -324,7 +328,7 @@ def main():
         # Cleanup and final save
         logger.info("Training completed. Cleaning up...")
         
-        if 'vae' in locals() and 'policy' in locals():
+        if vae is not None and policy is not None:
             final_path = Path(exp_logger.run_dir) / "final_model.pt"
             torch.save({
                 'episode': episodes_trained,
@@ -338,12 +342,3 @@ def main():
         
         exp_logger.close()
         logger.info(f"Training finished. Total episodes: {episodes_trained}")
-
-if __name__ == "__main__":
-    # Setup basic logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    
-    main()

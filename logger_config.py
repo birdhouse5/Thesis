@@ -12,13 +12,20 @@ class ExperimentLogger:
         
         os.makedirs(self.run_dir, exist_ok=True)
         
+        # Set up the internal logger
+        self.logger = logging.getLogger(f"ExperimentLogger_{exp_name}")
+        self.logger.setLevel(level)
+        
+        # Clear any existing handlers to avoid duplicates
+        self.logger.handlers.clear()
+        
         # Text logging
         self.setup_text_logger(level)
         
         # TensorBoard
         self.tb_writer = SummaryWriter(log_dir=self.run_dir)
         
-        logging.info(f"Experiment logging initialized: {self.run_dir}")
+        self.logger.info(f"Experiment logging initialized: {self.run_dir}")
     
     def setup_text_logger(self, level):
         formatter = logging.Formatter(
@@ -29,12 +36,33 @@ class ExperimentLogger:
         log_file = os.path.join(self.run_dir, "training.log")
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(formatter)
+        self.logger.addHandler(file_handler)
         
         # Console handler
         console_handler = logging.StreamHandler()
         console_handler.setFormatter(formatter)
-        
-        logging.basicConfig(level=level, handlers=[file_handler, console_handler])
+        self.logger.addHandler(console_handler)
+    
+    # Add standard logging methods
+    def info(self, message):
+        """Log info message"""
+        self.logger.info(message)
+    
+    def debug(self, message):
+        """Log debug message"""
+        self.logger.debug(message)
+    
+    def warning(self, message):
+        """Log warning message"""
+        self.logger.warning(message)
+    
+    def error(self, message):
+        """Log error message"""
+        self.logger.error(message)
+    
+    def critical(self, message):
+        """Log critical message"""
+        self.logger.critical(message)
     
     def log_scalar(self, tag, value, step):
         """Log scalar to TensorBoard"""
@@ -42,7 +70,8 @@ class ExperimentLogger:
     
     def log_scalars(self, tag_scalar_dict, step):
         """Log multiple scalars to TensorBoard"""
-        self.tb_writer.add_scalars(tag_scalar_dict, step)
+        for tag, value in tag_scalar_dict.items():
+            self.tb_writer.add_scalar(tag, value, step)
     
     def log_hyperparams(self, hparams, metrics=None):
         """Log hyperparameters"""
