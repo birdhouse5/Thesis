@@ -1,8 +1,9 @@
-# main.py - Updated with train-test-val split
 import torch
 import logging
 import numpy as np
 from pathlib import Path
+import json
+import argparse
 
 from logger_config import setup_experiment_logging
 from environments.data_preparation import load_dataset
@@ -16,19 +17,18 @@ from csv_logger import CSVLogger
 logger = logging.getLogger(__name__)
 
 class Config:
-    """Training configuration for VariBAD Portfolio Optimization"""
-    def __init__(self):
-        # Data and splits
+    """Training configuration that can load from JSON files"""
+    def __init__(self, config_file=None):
+        # Default values (your existing config)
         self.data_path = "environments/data/sp500_rl_ready_cleaned.parquet"
-        self.train_end = '2015-12-31'      # Training: up to 2015
-        self.val_end = '2020-12-31'        # Validation: 2016-2020  
-        # Test: 2021-2024 (automatic)
+        self.train_end = '2015-12-31'
+        self.val_end = '2020-12-31'
         
         # Environment parameters
         self.num_assets = 30
-        self.seq_len = 60           # Fixed episode length (task sequence length)
-        self.min_horizon = 45       # Minimum episode length within task 
-        self.max_horizon = 60       # Maximum episode length within task
+        self.seq_len = 60
+        self.min_horizon = 45
+        self.max_horizon = 60
         
         # Model parameters
         self.latent_dim = 64
@@ -46,17 +46,17 @@ class Config:
         self.discount_factor = 0.99
         
         # Training parameters
-        self.max_episodes = 10 #10000
-        self.episodes_per_task = 2 #100     # Episodes per task before sampling new task
-        self.batch_size = 64            # Batch size for PPO updates
-        self.vae_batch_size = 32        # Separate batch size for VAE training
+        self.max_episodes = 10
+        self.episodes_per_task = 2
+        self.batch_size = 64
+        self.vae_batch_size = 32
         
         # Validation and testing
-        self.val_interval = 200         # Validate every N episodes
-        self.val_episodes = 20          # Episodes for validation
-        self.test_episodes = 50         # Episodes for final test
+        self.val_interval = 200
+        self.val_episodes = 20
+        self.test_episodes = 50
         
-        # Logging and saving
+        # Logging
         self.log_interval = 10
         self.save_interval = 500
         
@@ -64,8 +64,53 @@ class Config:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         
         # VAE training
-        self.vae_beta = 0.1            # KL divergence weight
-        self.vae_update_freq = 1        # Update VAE every N episodes
+        self.vae_beta = 0.1
+        self.vae_update_freq = 1
+        
+        # Experiment name (will be set by config file)
+        self.exp_name = "varibad_default"
+        
+        # Load from file if provided
+        if config_file:
+            self.load_from_file(config_file)
+    
+    def load_from_file(self, config_file):
+        """Load configuration from JSON file"""
+        config_path = Path(config_file)
+        if not config_path.exists():
+            raise FileNotFoundError(f"Config file not found: {config_file}")
+        
+        with open(config_path, 'r') as f:
+            config_dict = json.load(f)
+        
+        # Update attributes from config file
+        for key, value in config_dict.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+            else:
+                print(f"Warning: Unknown config parameter: {key}")
+        
+        # Set experiment name from config file name if not specified
+        if 'exp_name' not in config_dict:
+            self.exp_name = config_path.stem
+    
+    def save_to_file(self, filepath):
+        """Save current configuration to JSON file"""
+        config_dict = {k: v for k, v in self.__dict__.items() 
+                      if not k.startswith('_') and not callable(v)}
+        
+        with open(filepath, 'w') as f:
+            json.dump(config_dict, f, indent=2)
+    
+    def __str__(self):
+        return f"Config(exp_name={self.exp_name}, latent_dim={self.latent_dim}, hidden_dim={self.hidden_dim})"
+
+def parse_args():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description="VariBAD Portfolio Training")
+    parser.add_argument("--config", type=str, help="Path to configuration JSON file")
+    parser.add_argument("--exp_name", type=str, help="Override experiment name")
+    return parser.parse_args()
 
 def prepare_split_datasets(config):
     """Load and prepare datasets for train/val/test splits"""
@@ -270,12 +315,18 @@ def evaluate_on_split(split_env, policy, vae, config, num_episodes, split_name):
 
 def main():
     """Main training loop with train-test-val split"""
+
+    args = parse_args()
+    
+    # Initialize configuration
+    config = Config()
+    if args.exp_name:
+        config.exp_name = args.exp_name
+
     # Setup logging
     exp_logger = setup_experiment_logging("logs")
     csv_logger = CSVLogger(exp_logger.run_dir)
 
-    # Initialize configuration
-    config = Config()
     csv_logger.log_config(config)
     logger.info("Starting VariBAD Portfolio Training with Train-Test-Val Split")
     logger.info(f"Device: {config.device}")

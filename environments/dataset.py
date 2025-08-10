@@ -157,7 +157,7 @@ def create_split_datasets(data_path, train_end='2015-12-31', val_end='2020-12-31
         datasets['val'] = Dataset(data_path, 'val', train_end, val_end)
         datasets['test'] = Dataset(data_path, 'test', train_end, val_end)
         
-        print(f"\n✅ Successfully created all splits:")
+        print(f"\n Successfully created all splits:")
         for split_name, dataset in datasets.items():
             info = dataset.get_split_info()
             print(f"  {split_name}: {info['num_days']} days, {info['date_range'][0]} to {info['date_range'][1]}")
@@ -165,5 +165,5 @@ def create_split_datasets(data_path, train_end='2015-12-31', val_end='2020-12-31
         return datasets
         
     except Exception as e:
-        print(f"❌ Error creating splits: {e}")
+        print(f" Error creating splits: {e}")
         raise

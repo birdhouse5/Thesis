@@ -44,7 +44,7 @@ def download_stock_data(tickers: List[str] = None,
     if tickers is None:
         tickers = SP500_TICKERS
     
-    logger.info(f"📈 Downloading data for {len(tickers)} tickers from {start_date} to {end_date}")
+    logger.info(f" Downloading data for {len(tickers)} tickers from {start_date} to {end_date}")
     
     all_data = []
     failed_tickers = []
@@ -57,7 +57,7 @@ def download_stock_data(tickers: List[str] = None,
             hist = stock.history(start=start_date, end=end_date, auto_adjust=True)
             
             if hist.empty:
-                logger.warning(f"    ⚠️  No data found for {ticker}")
+                logger.warning(f"      No data found for {ticker}")
                 failed_tickers.append(ticker)
                 continue
             
@@ -82,23 +82,23 @@ def download_stock_data(tickers: List[str] = None,
             all_data.append(hist)
             
         except Exception as e:
-            logger.error(f"    ❌ Failed to download {ticker}: {e}")
+            logger.error(f"     Failed to download {ticker}: {e}")
             failed_tickers.append(ticker)
             continue
     
     if not all_data:
-        raise ValueError("❌ No data was successfully downloaded")
+        raise ValueError(" No data was successfully downloaded")
     
     # Combine and sort
     combined_data = pd.concat(all_data, ignore_index=True)
     combined_data = combined_data.sort_values(['date', 'ticker']).reset_index(drop=True)
     
-    logger.info(f"✅ Downloaded data: {combined_data.shape}")
-    logger.info(f"   📅 Date range: {combined_data['date'].min().date()} to {combined_data['date'].max().date()}")
-    logger.info(f"   🏢 Successful tickers: {combined_data['ticker'].nunique()}")
+    logger.info(f" Downloaded data: {combined_data.shape}")
+    logger.info(f"    Date range: {combined_data['date'].min().date()} to {combined_data['date'].max().date()}")
+    logger.info(f"    Successful tickers: {combined_data['ticker'].nunique()}")
     
     if failed_tickers:
-        logger.warning(f"   ⚠️  Failed tickers: {', '.join(failed_tickers)}")
+        logger.warning(f"     Failed tickers: {', '.join(failed_tickers)}")
     
     return combined_data
 
@@ -113,7 +113,7 @@ def add_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         DataFrame with technical indicators added
     """
-    logger.info("🔧 Adding technical indicators...")
+    logger.info(" Adding technical indicators...")
     
     results = []
     
@@ -179,8 +179,8 @@ def add_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     market_data['market_momentum'] = market_data['market_return'].rolling(10).mean()
     combined = combined.merge(market_data[['date', 'market_momentum']], on='date', how='left')
     
-    logger.info(f"✅ Added technical indicators: {combined.shape}")
-    logger.info(f"   📊 New features: {len([col for col in combined.columns if col not in ['date', 'ticker', 'open', 'high', 'low', 'close', 'adj_close', 'volume']])}")
+    logger.info(f" Added technical indicators: {combined.shape}")
+    logger.info(f"    New features: {len([col for col in combined.columns if col not in ['date', 'ticker', 'open', 'high', 'low', 'close', 'adj_close', 'volume']])}")
     
     return combined
 
@@ -195,7 +195,7 @@ def normalize_features(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         DataFrame with normalized features
     """
-    logger.info("📏 Normalizing features for RL training...")
+    logger.info(" Normalizing features for RL training...")
     
     results = []
     
@@ -281,7 +281,7 @@ def normalize_features(df: pd.DataFrame) -> pd.DataFrame:
                 combined[f'{feature}_norm'] = 0.0
     
     normalized_features = [col for col in combined.columns if col.endswith('_norm')]
-    logger.info(f"✅ Normalized {len(normalized_features)} features")
+    logger.info(f" Normalized {len(normalized_features)} features")
     
     return combined
 
@@ -293,7 +293,7 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     initial_rows = len(df)
     initial_nans = df.isnull().sum().sum()
     
-    logger.info(f"   📊 Initial: {initial_rows:,} rows, {initial_nans:,} NaN values")
+    logger.info(f"    Initial: {initial_rows:,} rows, {initial_nans:,} NaN values")
     
     # === Check for rectangular structure ===
     date_counts = df.groupby('date').size()
@@ -357,8 +357,8 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     final_rows = len(df)
     final_nans = df.isnull().sum().sum()
     
-    logger.info(f"   ✅ Final: {final_rows:,} rows, {final_nans:,} NaN values")
-    logger.info(f"   🗑️  Removed: {initial_rows - final_rows:,} rows ({100*(initial_rows - final_rows)/initial_rows:.1f}%)")
+    logger.info(f"    Final: {final_rows:,} rows, {final_nans:,} NaN values")
+    logger.info(f"     Removed: {initial_rows - final_rows:,} rows ({100*(initial_rows - final_rows)/initial_rows:.1f}%)")
     
     return df
 
@@ -385,46 +385,46 @@ def create_dataset(output_path: str = "data/sp500_rl_ready_cleaned.parquet",
     
     # Check if dataset already exists
     if output_path.exists() and not force_recreate:
-        logger.info(f"📁 Dataset already exists: {output_path}")
+        logger.info(f" Dataset already exists: {output_path}")
         logger.info("   Use force_recreate=True to recreate")
         return str(output_path)
     
-    logger.info("🏗️  Creating RL-ready dataset from scratch...")
+    logger.info("  Creating RL-ready dataset from scratch...")
     
     # Create data directory
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
     try:
         # Step 1: Download raw data
-        logger.info("📊 Step 1/4: Downloading stock data...")
+        logger.info(" Step 1/4: Downloading stock data...")
         raw_data = download_stock_data(tickers, start_date, end_date)
         
         # Step 2: Add technical indicators
-        logger.info("🔧 Step 2/4: Adding technical indicators...")
+        logger.info(" Step 2/4: Adding technical indicators...")
         with_indicators = add_technical_indicators(raw_data)
         
         # Step 3: Normalize features
-        logger.info("📏 Step 3/4: Normalizing features...")
+        logger.info(" Step 3/4: Normalizing features...")
         normalized = normalize_features(with_indicators)
         
         # Step 4: Clean data
-        logger.info("🧹 Step 4/4: Cleaning data...")
+        logger.info(" Step 4/4: Cleaning data...")
         cleaned = clean_data(normalized)
         
         expected_rows = cleaned['date'].nunique() * cleaned['ticker'].nunique()
         actual_rows = len(cleaned)
         if actual_rows != expected_rows:
-            logger.error(f"❌ Data not rectangular: {actual_rows} rows, expected {expected_rows}")
+            logger.error(f" Data not rectangular: {actual_rows} rows, expected {expected_rows}")
             raise ValueError(f"Dataset failed rectangular validation")
         else:
-            logger.info(f"✅ Dataset is rectangular: {actual_rows:,} rows")
+            logger.info(f" Dataset is rectangular: {actual_rows:,} rows")
 
         # Save final dataset
         cleaned.to_parquet(output_path)
         
         # Summary
         file_size_mb = output_path.stat().st_size / (1024 * 1024)
-        logger.info(f"✅ Dataset created successfully!")
+        logger.info(f"  Dataset created successfully!")
         logger.info(f"   📁 Path: {output_path}")
         logger.info(f"   📊 Shape: {cleaned.shape}")
         logger.info(f"   📅 Date range: {cleaned['date'].min().date()} to {cleaned['date'].max().date()}")
@@ -435,7 +435,7 @@ def create_dataset(output_path: str = "data/sp500_rl_ready_cleaned.parquet",
         return str(output_path)
         
     except Exception as e:
-        logger.error(f"❌ Dataset creation failed: {e}")
+        logger.error(f" Dataset creation failed: {e}")
         raise
 
 
@@ -464,16 +464,16 @@ def load_dataset(data_path: str = "data/sp500_rl_ready_cleaned.parquet") -> pd.D
     missing_columns = [col for col in required_columns if col not in df.columns]
     
     if missing_columns:
-        raise ValueError(f"❌ Dataset missing required columns: {missing_columns}")
+        raise ValueError(f" Dataset missing required columns: {missing_columns}")
     
     # Summary
     normalized_features = [col for col in df.columns if col.endswith('_norm')]
     
-    logger.info(f"✅ Dataset loaded successfully!")
-    logger.info(f"   📊 Shape: {df.shape}")
-    logger.info(f"   📅 Date range: {df['date'].min().date()} to {df['date'].max().date()}")
-    logger.info(f"   🏢 Tickers: {df['ticker'].nunique()}")
-    logger.info(f"   📈 Normalized features: {len(normalized_features)}")
+    logger.info(f" Dataset loaded successfully!")
+    logger.info(f"    Shape: {df.shape}")
+    logger.info(f"    Date range: {df['date'].min().date()} to {df['date'].max().date()}")
+    logger.info(f"    Tickers: {df['ticker'].nunique()}")
+    logger.info(f"    Normalized features: {len(normalized_features)}")
     
     return df
 
@@ -548,7 +548,7 @@ if __name__ == "__main__":
     
     if args.info:
         info = get_dataset_info(args.output)
-        print(f"\n📊 Dataset Information:")
+        print(f"\n Dataset Information:")
         print(f"   Exists: {info.get('exists', False)}")
         if info.get('exists'):
             if 'error' in info:
@@ -561,4 +561,4 @@ if __name__ == "__main__":
                 print(f"   Features: {info['features']['total']} total, {info['features']['normalized']} normalized")
     else:
         dataset_path = create_dataset(args.output, force_recreate=args.force)
-        print(f"✅ Dataset created: {dataset_path}")
+        print(f" Dataset created: {dataset_path}")

@@ -291,12 +291,12 @@ def run_tests():
                 print(f"FAILED: {e}")
                 failed += 1
         
-        print(f"\n📊 Results: {passed} passed, {failed} failed")
+        print(f"\n Results: {passed} passed, {failed} failed")
         
         if failed == 0:
-            print("🎉 All tests passed! Your split implementation is working correctly.")
+            print(" All tests passed! Your split implementation is working correctly.")
         else:
-            print("⚠️  Some tests failed. Check the errors above.")
+            print("  Some tests failed. Check the errors above.")
             
     finally:
         # Cleanup

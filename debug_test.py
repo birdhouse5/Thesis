@@ -509,9 +509,9 @@ def main():
         success &= test_tensorboard_logging()
         
         if success:
-            print("\n✅ All VariBAD tests passed!")
+            print("\n All VariBAD tests passed!")
         else:
-            print("\n❌ Some VariBAD tests failed")
+            print("\n Some VariBAD tests failed")
 
 
         num_assets = obs_shape[0]

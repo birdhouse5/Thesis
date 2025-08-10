@@ -38,6 +38,7 @@ results/
 data/
 *.parquet
 *.csv
+experiments/
 
 # Logs and checkpoints
 logs/
