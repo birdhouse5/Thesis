@@ -5,6 +5,7 @@ from torch.optim import Adam
 import numpy as np
 import logging
 from collections import deque
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -14,12 +15,13 @@ class PPOTrainer:
     Handles both policy updates and VAE training.
     """
     
-    def __init__(self, env, policy, vae, config, logger=None):
+    def __init__(self, env, policy, vae, config, logger=None, csv_logger=None):
         self.env = env
         self.policy = policy
         self.vae = vae
         self.config = config
         self.exp_logger = logger
+        self.csv_logger = csv_logger
         
         # Training state
         self.episode_count = 0
@@ -41,12 +43,20 @@ class PPOTrainer:
         self.vae_losses = deque(maxlen=100)
         self.episode_rewards = deque(maxlen=100)
         
+        # Enhanced tracking for detailed analysis
+        self.episode_details = []                    # NEW: Store episode details
+        self.training_start_time = datetime.now()    # NEW: Track training duration
+        self.episode_start_time = None               # NEW: Track individual episode timing
+        self.portfolio_metrics_history = []          # NEW: Portfolio performance history
+        
         logger.info("PPO Trainer initialized")  # This is the module logger, not exp_logger
         logger.info(f"Policy LR: {config.policy_lr}, VAE LR: {config.vae_lr}")
         logger.info(f"PPO epochs: {config.ppo_epochs}, clip ratio: {config.ppo_clip_ratio}")
+        if csv_logger:
+            logger.info(f"CSV logging enabled: {csv_logger.summary_dir}")
     
     def train_episode(self):
-        """Train for one episode and return results"""
+        """Train for one episode and return enhanced results with detailed logging"""
         # Collect episode trajectory
         trajectory = self.collect_trajectory()
         
@@ -69,11 +79,66 @@ class PPOTrainer:
         if self.episode_count % self.config.vae_update_freq == 0 and len(self.vae_buffer) >= self.config.vae_batch_size:
             vae_loss = self.update_vae()
         
-        # Update statistics - ensure we store Python floats, not tensors
+        # Calculate episode metrics
         episode_reward = sum(trajectory['rewards'])  # This might be a tensor sum
         if torch.is_tensor(episode_reward):
             episode_reward = episode_reward.item()
         
+        # Enhanced episode analysis
+        episode_length = len(trajectory['rewards'])
+        initial_capital = self.env.initial_capital
+        final_capital = self.env.current_capital
+        cumulative_return = (final_capital - initial_capital) / initial_capital
+        
+        # Portfolio analysis
+        portfolio_allocations = []
+        significant_changes = 0
+        
+        for i, step in enumerate(self.env.episode_trajectory):
+            if 'action' in step:
+                portfolio_allocations.append(step['action'])
+                
+                # Count significant portfolio changes
+                if i > 0 and 'action' in self.env.episode_trajectory[i-1]:
+                    prev_action = self.env.episode_trajectory[i-1]['action']
+                    change = np.linalg.norm(np.array(step['action']) - np.array(prev_action))
+                    if change > 0.1:  # Threshold for "significant" change
+                        significant_changes += 1
+        
+        # Calculate portfolio metrics
+        if len(portfolio_allocations) > 0:
+            portfolio_allocations = np.array(portfolio_allocations)
+            avg_allocation = np.mean(portfolio_allocations, axis=0)
+            allocation_variance = np.var(portfolio_allocations, axis=0).mean()
+            portfolio_concentration = np.max(avg_allocation)  # Max weight in any asset
+            portfolio_turnover = significant_changes / episode_length if episode_length > 0 else 0.0
+        else:
+            avg_allocation = np.zeros(self.config.num_assets)
+            allocation_variance = 0.0
+            portfolio_concentration = 0.0
+            portfolio_turnover = 0.0
+        
+        # Risk metrics
+        if hasattr(self.env, 'capital_history') and len(self.env.capital_history) > 1:
+            capital_history = np.array(self.env.capital_history)
+            returns_series = np.diff(capital_history) / capital_history[:-1]
+            
+            # Maximum drawdown
+            running_max = np.maximum.accumulate(capital_history)
+            drawdown = (capital_history - running_max) / running_max
+            max_drawdown = float(np.min(drawdown))
+            
+            # Volatility
+            returns_volatility = np.std(returns_series) if len(returns_series) > 1 else 0.0
+            
+            # Sharpe ratio (episode reward should already be Sharpe)
+            sharpe_ratio = float(episode_reward)
+        else:
+            max_drawdown = 0.0
+            returns_volatility = 0.0
+            sharpe_ratio = 0.0
+        
+        # Update statistics - ensure we store Python floats, not tensors
         self.episode_rewards.append(float(episode_reward))
         
         if policy_loss > 0:
@@ -83,17 +148,54 @@ class PPOTrainer:
         
         self.episode_count += 1
         
-        # Logging
+        # Enhanced logging for TensorBoard
         if self.exp_logger and self.episode_count % self.config.log_interval == 0:
             self._log_training_stats()
+            
+            # Additional portfolio-specific metrics
+            self.exp_logger.log_scalar('portfolio/concentration', portfolio_concentration, self.episode_count)
+            self.exp_logger.log_scalar('portfolio/turnover', portfolio_turnover, self.episode_count)
+            self.exp_logger.log_scalar('portfolio/allocation_variance', allocation_variance, self.episode_count)
+            self.exp_logger.log_scalar('risk/max_drawdown', max_drawdown, self.episode_count)
+            self.exp_logger.log_scalar('risk/volatility', returns_volatility, self.episode_count)
+            self.exp_logger.log_scalar('performance/cumulative_return', cumulative_return, self.episode_count)
         
-        return {
+        # Prepare detailed episode results for CSV logging
+        episode_details = {
             'episode_reward': float(episode_reward),
             'policy_loss': float(policy_loss),
             'vae_loss': float(vae_loss),
-            'episode_length': len(trajectory['rewards'])
+            'episode_length': episode_length,
+            'initial_capital': float(initial_capital),
+            'final_capital': float(final_capital),
+            'cumulative_return': float(cumulative_return),
+            'sharpe_ratio': float(sharpe_ratio),
+            'max_drawdown': float(max_drawdown),
+            'returns_volatility': float(returns_volatility),
+            'portfolio_concentration': float(portfolio_concentration),
+            'portfolio_turnover': float(portfolio_turnover),
+            'allocation_variance': float(allocation_variance),
+            'num_trades': int(significant_changes),
+            'avg_cash_position': float(1.0 - np.mean([np.sum(alloc) for alloc in portfolio_allocations])) if len(portfolio_allocations) > 0 else 0.0,
+            'task_id': getattr(self.env, 'task_id', None),
+            'total_steps': self.total_steps
         }
-    
+        
+        # Add latent magnitude statistics if available
+        if hasattr(self, 'latent_magnitudes') and self.latent_magnitudes:
+            episode_details.update({
+                'avg_latent_magnitude': float(np.mean(list(self.latent_magnitudes))),
+                'std_latent_magnitude': float(np.std(list(self.latent_magnitudes))),
+                'max_latent_magnitude': float(np.max(list(self.latent_magnitudes))),
+            })
+        
+        # Log to CSV if available
+        if hasattr(self, 'csv_logger') and self.csv_logger:
+            self.csv_logger.log_episode_details(self.episode_count, episode_details)
+        
+        return episode_details
+
+
     def collect_trajectory(self):
         """Collect a single episode trajectory with online latent updates"""
         trajectory = {
@@ -329,7 +431,129 @@ class PPOTrainer:
         self.vae_optimizer.step()
         
         return avg_loss.item()
-    
+
+
+    def _calculate_portfolio_metrics(self, trajectory):
+        """Calculate detailed portfolio performance metrics"""
+        if not hasattr(self.env, 'episode_trajectory') or not self.env.episode_trajectory:
+            return {
+                'avg_allocation': np.zeros(self.config.num_assets),
+                'allocation_variance': 0.0,
+                'portfolio_concentration': 0.0,
+                'num_trades': 0,
+                'portfolio_turnover': 0.0
+            }
+        
+        # Extract portfolio allocations from episode
+        allocations = []
+        for step in self.env.episode_trajectory:
+            if 'action' in step:
+                allocations.append(step['action'])
+        
+        if not allocations:
+            return {
+                'avg_allocation': np.zeros(self.config.num_assets),
+                'allocation_variance': 0.0,
+                'portfolio_concentration': 0.0,
+                'num_trades': 0,
+                'portfolio_turnover': 0.0
+            }
+        
+        allocations = np.array(allocations)
+        
+        # Calculate metrics
+        avg_allocation = np.mean(allocations, axis=0)
+        allocation_variance = np.var(allocations, axis=0).mean()
+        portfolio_concentration = np.max(avg_allocation)
+        
+        # Count significant trades
+        num_trades = 0
+        for i in range(1, len(allocations)):
+            change = np.linalg.norm(allocations[i] - allocations[i-1])
+            if change > 0.1:  # 10% threshold for significant change
+                num_trades += 1
+        
+        portfolio_turnover = num_trades / len(allocations) if len(allocations) > 0 else 0.0
+        
+        return {
+            'avg_allocation': avg_allocation,
+            'allocation_variance': float(allocation_variance),
+            'portfolio_concentration': float(portfolio_concentration),
+            'num_trades': int(num_trades),
+            'portfolio_turnover': float(portfolio_turnover)
+        }
+
+    def _calculate_risk_metrics(self):
+        """Calculate risk metrics from capital history"""
+        if not hasattr(self.env, 'capital_history') or len(self.env.capital_history) < 2:
+            return {
+                'max_drawdown': 0.0,
+                'volatility': 0.0,
+                'var_95': 0.0,
+                'calmar_ratio': 0.0
+            }
+        
+        capital_history = np.array(self.env.capital_history)
+        returns_series = np.diff(capital_history) / capital_history[:-1]
+        
+        # Maximum drawdown
+        running_max = np.maximum.accumulate(capital_history)
+        drawdown = (capital_history - running_max) / running_max
+        max_drawdown = float(np.min(drawdown))
+        
+        # Volatility (annualized, assuming daily returns)
+        volatility = float(np.std(returns_series) * np.sqrt(252)) if len(returns_series) > 1 else 0.0
+        
+        # Value at Risk (95%)
+        var_95 = float(np.percentile(returns_series, 5)) if len(returns_series) > 1 else 0.0
+        
+        # Calmar ratio (annualized return / max drawdown)
+        total_return = (capital_history[-1] - capital_history[0]) / capital_history[0]
+        calmar_ratio = float(total_return / abs(max_drawdown)) if max_drawdown < 0 else float('inf')
+        
+        return {
+            'max_drawdown': max_drawdown,
+            'volatility': volatility,
+            'var_95': var_95,
+            'calmar_ratio': calmar_ratio
+        }
+
+    def _enhanced_log_training_stats(self):
+        """Enhanced logging with portfolio-specific metrics"""
+        if not self.exp_logger:
+            return
+        
+        # Standard metrics
+        if self.episode_rewards:
+            episode_rewards_list = [float(r) if torch.is_tensor(r) else r for r in self.episode_rewards]
+            self.exp_logger.log_scalar('train/episode_reward_mean', 
+                                    np.mean(episode_rewards_list), self.episode_count)
+            self.exp_logger.log_scalar('train/episode_reward_std', 
+                                    np.std(episode_rewards_list), self.episode_count)
+        
+        # VariBAD-specific metrics
+        if hasattr(self, 'latent_magnitudes') and self.latent_magnitudes:
+            self.exp_logger.log_scalar('varibad/latent_magnitude_mean',
+                                    np.mean(self.latent_magnitudes), self.episode_count)
+            self.exp_logger.log_histogram('varibad/latent_values',
+                                        np.array(self.latent_magnitudes), self.episode_count)
+
+        # Loss statistics
+        if self.policy_losses:
+            policy_losses_list = [float(l) if torch.is_tensor(l) else l for l in self.policy_losses]
+            self.exp_logger.log_scalar('train/policy_loss', 
+                                    np.mean(policy_losses_list), self.episode_count)
+        
+        if self.vae_losses:
+            vae_losses_list = [float(l) if torch.is_tensor(l) else l for l in self.vae_losses]
+            self.exp_logger.log_scalar('train/vae_loss', 
+                                    np.mean(vae_losses_list), self.episode_count)
+        
+        # General stats
+        self.exp_logger.log_scalar('train/episode_count', self.episode_count, self.episode_count)
+        self.exp_logger.log_scalar('train/total_steps', self.total_steps, self.episode_count)
+
+
     def _log_training_stats(self):
         """Log training statistics"""
         if not self.exp_logger:

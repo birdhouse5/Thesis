@@ -11,6 +11,7 @@ from environments.env import MetaEnv
 from models.vae import VAE
 from models.policy import PortfolioPolicy
 from algorithms.trainer import PPOTrainer
+from csv_logger import CSVLogger
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +46,8 @@ class Config:
         self.discount_factor = 0.99
         
         # Training parameters
-        self.max_episodes = 10000
-        self.episodes_per_task = 100     # Episodes per task before sampling new task
+        self.max_episodes = 10 #10000
+        self.episodes_per_task = 2 #100     # Episodes per task before sampling new task
         self.batch_size = 64            # Batch size for PPO updates
         self.vae_batch_size = 32        # Separate batch size for VAE training
         
@@ -270,10 +271,12 @@ def evaluate_on_split(split_env, policy, vae, config, num_episodes, split_name):
 def main():
     """Main training loop with train-test-val split"""
     # Setup logging
-    exp_logger = setup_experiment_logging("varibad_portfolio_splits")
-    
+    exp_logger = setup_experiment_logging("logs")
+    csv_logger = CSVLogger(exp_logger.run_dir)
+
     # Initialize configuration
     config = Config()
+    csv_logger.log_config(config)
     logger.info("Starting VariBAD Portfolio Training with Train-Test-Val Split")
     logger.info(f"Device: {config.device}")
     logger.info(f"Split dates: train≤{config.train_end}, val={config.train_end} to {config.val_end}, test>{config.val_end}")
@@ -310,9 +313,10 @@ def main():
             policy=policy,
             vae=vae,
             config=config,
-            logger=exp_logger
+            logger=exp_logger,
+            csv_logger = csv_logger
         )
-        
+
         # Training loop
         logger.info("Starting training on training split...")
         
@@ -326,11 +330,21 @@ def main():
             
             for episode_in_task in range(config.episodes_per_task):
                 episode_result = trainer.train_episode()
+                
+                csv_logger.log_training_step(episodes_trained, episode_result)
+                csv_logger.log_episode_details(episodes_trained, {
+                    **episode_result,
+                    'task_id': getattr(train_env, 'task_id', None),
+                    'cumulative_return': (train_env.current_capital - train_env.initial_capital) / train_env.initial_capital
+                })
+
                 task_rewards.append(episode_result['episode_reward'])
                 episodes_trained += 1
                 
                 # Logging
                 if episodes_trained % config.log_interval == 0:
+                    val_results = evaluate_on_split(val_env, policy, vae, config, config.val_episodes, 'validation')
+                    csv_logger.log_validation(episodes_trained, val_results)
                     avg_task_reward = np.mean(task_rewards)
                     logger.info(f"Episode {episodes_trained:4d}: "
                                f"reward={episode_result['episode_reward']:8.4f}, "
@@ -394,7 +408,7 @@ def main():
             best_model_path = Path(exp_logger.run_dir) / "best_model.pt"
             if best_model_path.exists():
                 logger.info("Loading best model for final test...")
-                checkpoint = torch.load(best_model_path)
+                checkpoint = torch.load(best_model_path, weights_only=False)
                 vae.load_state_dict(checkpoint['vae_state_dict'])
                 policy.load_state_dict(checkpoint['policy_state_dict'])
             
@@ -402,6 +416,17 @@ def main():
             test_results = evaluate_on_split(test_env, policy, vae, config, config.test_episodes, 'test')
             
             # Log final test results
+
+            csv_logger.log_test(test_results)
+            csv_logger.save_all_csvs()
+            
+            print(f"CSV logs saved to: {csv_logger.experiment_dir}")
+            print(f"  - Training: {csv_logger.training_csv}")
+            print(f"  - Validation: {csv_logger.validation_csv}")
+            print(f"  - Test: {csv_logger.test_csv}")
+            print(f"  - Episodes: {csv_logger.episodes_csv}")
+            print(f"  - Summary: {csv_logger.summary_csv}")
+
             exp_logger.log_scalar('test/final_avg_reward', test_results['avg_reward'], episodes_trained)
             exp_logger.log_scalar('test/final_avg_return', test_results['avg_return'], episodes_trained)
             
@@ -418,7 +443,7 @@ def main():
             logger.info(f"Final test results saved: {final_path}")
             logger.info(f"Training completed. Episodes: {episodes_trained}")
             logger.info(f"Final test performance: {test_results['avg_reward']:.4f}±{test_results['std_reward']:.4f}")
-        
+            
         exp_logger.close()
 
 if __name__ == "__main__":
