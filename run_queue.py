@@ -172,8 +172,8 @@ class ExperimentQueue:
         }
         
         try:
-            # Look for logs directory (created by main.py)
-            logs_pattern = "logs/" + config.get("exp_name", "*") + "_*"
+            # Look for logs directory (created by main.py) - match any recent log folder
+            logs_pattern = "logs/logs_*"
             log_dirs = glob.glob(logs_pattern)
             
             if log_dirs:
