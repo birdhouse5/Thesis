@@ -319,7 +319,7 @@ def main():
     args = parse_args()
     
     # Initialize configuration
-    config = Config()
+    config = Config(args.config)
     if args.exp_name:
         config.exp_name = args.exp_name
 
