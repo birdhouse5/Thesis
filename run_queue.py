@@ -143,7 +143,7 @@ class ExperimentQueue:
                 "duration_minutes": duration.total_seconds() / 60,
                 "result": result_summary
             })
-            print(f" SUCCESS: {exp_name} ({duration})")
+            print(f"✅ SUCCESS: {exp_name} ({duration})")
         else:
             self.status["failed"].append({
                 "config_file": config_file.name,
@@ -154,7 +154,7 @@ class ExperimentQueue:
                 "error": error_msg,
                 "result": result_summary
             })
-            print(f" FAILED: {exp_name} - {error_msg}")
+            print(f"❌ FAILED: {exp_name} - {error_msg}")
         
         self.status["current"] = None
         self.save_status()
@@ -163,7 +163,7 @@ class ExperimentQueue:
     
     def collect_experiment_results(self, exp_result_dir, config, success, error_msg, duration):
         """Collect and organize all experiment outputs"""
-        print(f" Collecting results to {exp_result_dir}")
+        print(f"📦 Collecting results to {exp_result_dir}")
         
         result_summary = {
             "success": success,
@@ -179,23 +179,23 @@ class ExperimentQueue:
             if log_dirs:
                 # Get the most recent log directory
                 latest_log_dir = max(log_dirs, key=lambda x: Path(x).stat().st_mtime)
-                target_tb_dir = exp_result_dir / "tensorboard"
+                latest_log_path = Path(latest_log_dir)
                 
-                print(f"   Moving TensorBoard logs: {latest_log_dir} -> {target_tb_dir}")
-                if Path(latest_log_dir).exists():
-                    shutil.move(latest_log_dir, target_tb_dir)
-            
-            # Look for CSV files in the log directory
-            if "tensorboard" in [d.name for d in exp_result_dir.iterdir()]:
-                csv_source = exp_result_dir / "tensorboard" / "summary"
-                csv_target = exp_result_dir / "csvs"
-                
+                # First, copy and parse CSV files BEFORE moving
+                csv_source = latest_log_path / "summary"
                 if csv_source.exists():
-                    print(f"   Moving CSV files: {csv_source} -> {csv_target}")
-                    shutil.move(csv_source, csv_target)
+                    csv_target = exp_result_dir / "csvs"
+                    print(f"  📈 Copying CSV files: {csv_source} -> {csv_target}")
+                    shutil.copytree(csv_source, csv_target)
                     
                     # Parse final results from CSV
                     result_summary.update(self.parse_csv_results(csv_target))
+                
+                # Then move the entire log directory to tensorboard
+                target_tb_dir = exp_result_dir / "tensorboard"
+                print(f"  📊 Moving TensorBoard logs: {latest_log_dir} -> {target_tb_dir}")
+                if latest_log_path.exists():
+                    shutil.move(latest_log_dir, target_tb_dir)
             
             # Look for checkpoint files
             checkpoint_pattern = "checkpoints/*"
@@ -208,7 +208,7 @@ class ExperimentQueue:
                 for checkpoint_file in checkpoint_files:
                     if config.get("exp_name", "") in checkpoint_file:
                         target_file = checkpoint_dir / Path(checkpoint_file).name
-                        print(f"   Moving checkpoint: {checkpoint_file} -> {target_file}")
+                        print(f"  💾 Moving checkpoint: {checkpoint_file} -> {target_file}")
                         shutil.move(checkpoint_file, target_file)
             
             # Create experiment summary
@@ -225,7 +225,7 @@ class ExperimentQueue:
                 json.dump(summary, f, indent=2, default=str)
             
         except Exception as e:
-            print(f"    Error collecting results: {e}")
+            print(f"  ⚠️  Error collecting results: {e}")
             result_summary["collection_error"] = str(e)
         
         return result_summary
@@ -274,10 +274,10 @@ class ExperimentQueue:
         failed = len(self.status["failed"])
         remaining = total_experiments - completed - failed
         
-        print(f"\n PROGRESS: {completed + failed}/{total_experiments} experiments completed")
-        print(f"    Successful: {completed}")
-        print(f"    Failed: {failed}")
-        print(f"    Remaining: {remaining}")
+        print(f"\n📊 PROGRESS: {completed + failed}/{total_experiments} experiments completed")
+        print(f"   ✅ Successful: {completed}")
+        print(f"   ❌ Failed: {failed}")
+        print(f"   ⏳ Remaining: {remaining}")
         
         # Calculate ETA
         if completed > 0 and self.status.get("queue_start_time"):
@@ -286,12 +286,12 @@ class ExperimentQueue:
             avg_time_per_exp = elapsed / (completed + failed)
             eta = datetime.now() + (avg_time_per_exp * remaining)
             
-            print(f"    Elapsed: {elapsed}")
-            print(f"    ETA: {eta.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"   🕐 Elapsed: {elapsed}")
+            print(f"   ⏰ ETA: {eta.strftime('%Y-%m-%d %H:%M:%S')}")
     
     def generate_summary_report(self):
         """Generate final summary report"""
-        print(f"\n Generating summary report...")
+        print(f"\n📋 Generating summary report...")
         
         # Create CSV summary
         import pandas as pd
@@ -353,7 +353,7 @@ class ExperimentQueue:
         else:
             print(f"\nNo successful experiments found")
         
-        print(f"\n Summary saved to: {self.summary_file}")
+        print(f"\n📄 Summary saved to: {self.summary_file}")
     
     def run_queue(self, resume=False, max_experiments=None):
         """Run the entire experiment queue"""
@@ -397,11 +397,11 @@ class ExperimentQueue:
                 time.sleep(2)
         
         except KeyboardInterrupt:
-            print(f"\n Queue interrupted by user")
+            print(f"\n🛑 Queue interrupted by user")
             print(f"To resume: python run_queue.py --resume")
         
         except Exception as e:
-            print(f"\n Queue failed with error: {e}")
+            print(f"\n💥 Queue failed with error: {e}")
             raise
         
         finally:
