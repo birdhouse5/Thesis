@@ -17,6 +17,8 @@ Task sampling:
 - random time window
 - trajectory length
 - create volatility clusters as tasks? Compare against temporal sampling
+- experiment with different H and N: start with H = 60 days and N = 4, try smaller H and N and bigger ones and compare performance.
+- How quickly to adapt the VAE / Policy might also be interesting.
 
 VAE:
 - how to do the pre-collection

@@ -15,7 +15,7 @@ def create_base_config():
         # High-capacity defaults for strong GPU
         "batch_size": 1024,
         "vae_batch_size": 512,
-        "episodes_per_task": 500,
+        "episodes_per_task": 5,
         "max_episodes": 10000,
         
         # PPO parameters
