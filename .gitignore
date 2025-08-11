@@ -1,68 +1,20 @@
-*.pyc
-.env
-varibad/data
-archive/
+# experiments
+runs/
 checkpoints/
-logs/
-environments/data/
-varibad/
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual environments
-venv/
-env/
-ENV/
-
-# Results and data
-results/
-data/
-*.parquet
-*.csv
-experiments/
-
-# Logs and checkpoints
-logs/
-checkpoints/
-*.log
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Model files
 *.pt
-*.pth
-*.pkl
+*.ckpt
+logs/
+experiments/
+environments/data/
 
-# Temporary files
-*.tmp
-*.temp
+# python noise
+__pycache__/
+*.pyc
+*.pyo
+
+# OS/editor
+.DS_Store
+*.swp
+
+# venv (if local)
+venv/

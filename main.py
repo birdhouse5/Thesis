@@ -329,11 +329,22 @@ def main():
     run_dir = Path("runs") / (time.strftime("%Y-%m-%d_%H-%M-%S") + f"_{config.exp_name}")
     run_dir.mkdir(parents=True, exist_ok=True)
     run = RunLogger(run_dir, config.__dict__, name=config.exp_name)
+
     logger.info(f"Run directory: {run_dir}")
 
     logger.info("Starting VariBAD Portfolio Training with Train-Test-Val Split")
     logger.info(f"Device: {config.device}")
     logger.info(f"Split dates: train≤{config.train_end}, val={config.train_end} to {config.val_end}, test>{config.val_end}")
+
+    # --- also log everything to runs/<ts>_<name>/stdout.log
+    file_log_path = (run_dir / "stdout.log").resolve()
+    root = logging.getLogger()  # this already has the console handler from basicConfig at __main__
+    if not any(getattr(h, "baseFilename", None) == str(file_log_path) for h in root.handlers):
+        fh = logging.FileHandler(file_log_path, mode="a", encoding="utf-8")
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+        root.addHandler(fh)
+    logger.info(f"File logging -> {file_log_path}")
 
     # Initialize variables
     episodes_trained = 0
@@ -366,9 +377,7 @@ def main():
             env=train_env,
             policy=policy,
             vae=vae,
-            config=config,
-            logger=None,         # decouple from TB logger
-            csv_logger=None      # not used
+            config=config
         )
 
         # Training loop

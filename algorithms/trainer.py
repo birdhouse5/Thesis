@@ -17,7 +17,7 @@ class PPOTrainer:
     Handles both policy updates and VAE training.
     """
 
-    def __init__(self, env, policy, vae, config, logger=None, csv_logger=None):
+    def __init__(self, env, policy, vae, config):
         """
         NOTE: `logger` and `csv_logger` args are kept only for backward compatibility.
         They are ignored in this refactor to keep the trainer decoupled from I/O.
