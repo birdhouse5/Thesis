@@ -258,36 +258,3 @@ class MetaEnv:
             'terminal_step': self.terminal_step,
             'done': self.done
         }
-
-# Example usage:
-if __name__ == "__main__":
-    # Create dummy dataset
-    T, N, F = 1000, 10, 5  # 1000 timesteps, 10 assets, 5 features
-    dataset = {
-        'features': torch.randn(T, N, F),
-        'raw_prices': torch.abs(torch.randn(T, N)) * 100  # Positive prices
-    }
-    feature_columns = [f'feature_{i}' for i in range(F)]
-    
-    # Create environment
-    env = MetaEnv(dataset, feature_columns, seq_len=60)
-    
-    # Sample and set task
-    task = env.sample_task()
-    env.set_task(task)
-    
-    print(f"Task sequence shapes: features={task['sequence']['features'].shape}, prices={task['sequence']['raw_prices'].shape}")
-    print(f"Task ID: {task['task_id']}")
-    
-    # Reset and take a few steps
-    state = env.reset()
-    print(f"Initial state shape: {state.shape}")
-    
-    for i in range(5):
-        action = np.random.rand(N)
-        action = action / action.sum()  # Normalize to sum=1
-        next_state, reward, done, info = env.step(action)
-        print(f"Step {i}: reward={reward:.4f}, done={done}")
-        if done:
-            break
-        state = next_state

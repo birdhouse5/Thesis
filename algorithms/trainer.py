@@ -1,636 +1,417 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.optim import Adam
-import numpy as np
+# trainer.py
 import logging
 from collections import deque
 from datetime import datetime
 
+import numpy as np
+import torch
+import torch.nn.functional as F
+from torch.optim import Adam
+
 logger = logging.getLogger(__name__)
+
 
 class PPOTrainer:
     """
     PPO Trainer for VariBAD Portfolio Optimization.
     Handles both policy updates and VAE training.
     """
-    
+
     def __init__(self, env, policy, vae, config, logger=None, csv_logger=None):
+        """
+        NOTE: `logger` and `csv_logger` args are kept only for backward compatibility.
+        They are ignored in this refactor to keep the trainer decoupled from I/O.
+        """
         self.env = env
         self.policy = policy
         self.vae = vae
         self.config = config
-        self.exp_logger = logger
-        self.csv_logger = csv_logger
-        
+
         # Training state
         self.episode_count = 0
         self.total_steps = 0
         self.device = torch.device(config.device)
-        
+
         # Optimizers
         self.policy_optimizer = Adam(policy.parameters(), lr=config.policy_lr)
         self.vae_optimizer = Adam(vae.parameters(), lr=config.vae_lr)
-        
-        # Experience buffer for PPO
-        self.experience_buffer = ExperienceBuffer(config.batch_size)
-        
-        # VAE training buffer (separate from PPO buffer)
-        self.vae_buffer = deque(maxlen=1000)  # Store recent trajectories
-        
-        # Training statistics - store as Python floats to avoid CUDA tensor issues
+
+        # Experience buffers
+        self.experience_buffer = ExperienceBuffer(config.batch_size)  # for PPO
+        self.vae_buffer = deque(maxlen=1000)  # recent trajectories for VAE
+
+        # Rolling stats (store Python floats to avoid CUDA logging issues)
         self.policy_losses = deque(maxlen=100)
         self.vae_losses = deque(maxlen=100)
         self.episode_rewards = deque(maxlen=100)
-        
-        # Enhanced tracking for detailed analysis
-        self.episode_details = []                    # NEW: Store episode details
-        self.training_start_time = datetime.now()    # NEW: Track training duration
-        self.episode_start_time = None               # NEW: Track individual episode timing
-        self.portfolio_metrics_history = []          # NEW: Portfolio performance history
-        
-        logger.info("PPO Trainer initialized")  # This is the module logger, not exp_logger
+
+        # Extra tracking (kept for potential analysis hooks)
+        self.episode_details = []
+        self.training_start_time = datetime.now()
+        self.episode_start_time = None
+        self.portfolio_metrics_history = []
+
+        logger.info("PPO Trainer initialized")
         logger.info(f"Policy LR: {config.policy_lr}, VAE LR: {config.vae_lr}")
         logger.info(f"PPO epochs: {config.ppo_epochs}, clip ratio: {config.ppo_clip_ratio}")
-        if csv_logger:
-            logger.info(f"CSV logging enabled: {csv_logger.summary_dir}")
-    
+
+    # ----------------------------
+    # Public training entry point
+    # ----------------------------
     def train_episode(self):
-        """Train for one episode and return enhanced results with detailed logging"""
-        # Collect episode trajectory
+        """Train for one episode and return a rich dict of episode metrics."""
+        # 1) Collect on-policy trajectory (with online latent)
         trajectory = self.collect_trajectory()
-        
-        # Add to VAE training buffer
+
+        # 2) Add to buffers
         self.vae_buffer.append(trajectory)
-        
-        # Add to PPO experience buffer
         self.experience_buffer.add_trajectory(trajectory)
-        
-        # Update models if we have enough data
-        policy_loss = 0
-        vae_loss = 0
-        
-        # PPO update
+
+        # 3) Updates
+        policy_loss = 0.0
+        vae_loss = 0.0
+
         if self.experience_buffer.is_ready():
-            policy_loss = self.update_policy()
+            policy_loss = float(self.update_policy())
             self.experience_buffer.clear()
-        
-        # VAE update (less frequent)
+
         if self.episode_count % self.config.vae_update_freq == 0 and len(self.vae_buffer) >= self.config.vae_batch_size:
-            vae_loss = self.update_vae()
-        
-        # Calculate episode metrics
-        episode_reward = sum(trajectory['rewards'])  # This might be a tensor sum
+            vae_loss = float(self.update_vae())
+
+        # 4) Episode-level metrics
+        episode_reward = sum(trajectory["rewards"])
         if torch.is_tensor(episode_reward):
             episode_reward = episode_reward.item()
-        
-        # Enhanced episode analysis
-        episode_length = len(trajectory['rewards'])
+
+        episode_length = len(trajectory["rewards"])
         initial_capital = self.env.initial_capital
         final_capital = self.env.current_capital
         cumulative_return = (final_capital - initial_capital) / initial_capital
-        
-        # Portfolio analysis
+
+        # Portfolio metrics computed from env episode trajectory
         portfolio_allocations = []
         significant_changes = 0
-        
-        for i, step in enumerate(self.env.episode_trajectory):
-            if 'action' in step:
-                portfolio_allocations.append(step['action'])
-                
-                # Count significant portfolio changes
-                if i > 0 and 'action' in self.env.episode_trajectory[i-1]:
-                    prev_action = self.env.episode_trajectory[i-1]['action']
-                    change = np.linalg.norm(np.array(step['action']) - np.array(prev_action))
-                    if change > 0.1:  # Threshold for "significant" change
+        for i, step in enumerate(getattr(self.env, "episode_trajectory", [])):
+            if "action" in step:
+                portfolio_allocations.append(step["action"])
+                if i > 0 and "action" in self.env.episode_trajectory[i - 1]:
+                    prev = self.env.episode_trajectory[i - 1]["action"]
+                    change = np.linalg.norm(np.array(step["action"]) - np.array(prev))
+                    if change > 0.1:
                         significant_changes += 1
-        
-        # Calculate portfolio metrics
+
         if len(portfolio_allocations) > 0:
-            portfolio_allocations = np.array(portfolio_allocations)
-            avg_allocation = np.mean(portfolio_allocations, axis=0)
-            allocation_variance = np.var(portfolio_allocations, axis=0).mean()
-            portfolio_concentration = np.max(avg_allocation)  # Max weight in any asset
-            portfolio_turnover = significant_changes / episode_length if episode_length > 0 else 0.0
+            allocations_np = np.array(portfolio_allocations)
+            avg_allocation = np.mean(allocations_np, axis=0)
+            allocation_variance = float(np.var(allocations_np, axis=0).mean())
+            portfolio_concentration = float(np.max(avg_allocation))
+            portfolio_turnover = float(significant_changes / episode_length) if episode_length > 0 else 0.0
         else:
             avg_allocation = np.zeros(self.config.num_assets)
             allocation_variance = 0.0
             portfolio_concentration = 0.0
             portfolio_turnover = 0.0
-        
-        # Risk metrics
-        if hasattr(self.env, 'capital_history') and len(self.env.capital_history) > 1:
+
+        # Risk metrics from capital history
+        if hasattr(self.env, "capital_history") and len(self.env.capital_history) > 1:
             capital_history = np.array(self.env.capital_history)
             returns_series = np.diff(capital_history) / capital_history[:-1]
-            
-            # Maximum drawdown
+
             running_max = np.maximum.accumulate(capital_history)
             drawdown = (capital_history - running_max) / running_max
             max_drawdown = float(np.min(drawdown))
-            
-            # Volatility
-            returns_volatility = np.std(returns_series) if len(returns_series) > 1 else 0.0
-            
-            # Sharpe ratio (episode reward should already be Sharpe)
-            sharpe_ratio = float(episode_reward)
+
+            returns_volatility = float(np.std(returns_series)) if len(returns_series) > 1 else 0.0
+            sharpe_ratio = float(episode_reward)  # your reward is Sharpe per step aggregated as episode sum/mean
         else:
             max_drawdown = 0.0
             returns_volatility = 0.0
-            sharpe_ratio = 0.0
-        
-        # Update statistics - ensure we store Python floats, not tensors
+            sharpe_ratio = float(episode_reward)
+
+        # Update rolling stats
         self.episode_rewards.append(float(episode_reward))
-        
         if policy_loss > 0:
             self.policy_losses.append(float(policy_loss))
         if vae_loss > 0:
             self.vae_losses.append(float(vae_loss))
-        
+
         self.episode_count += 1
-        
-        # Enhanced logging for TensorBoard
-        if self.exp_logger and self.episode_count % self.config.log_interval == 0:
-            self._log_training_stats()
-            
-            # Additional portfolio-specific metrics
-            self.exp_logger.log_scalar('portfolio/concentration', portfolio_concentration, self.episode_count)
-            self.exp_logger.log_scalar('portfolio/turnover', portfolio_turnover, self.episode_count)
-            self.exp_logger.log_scalar('portfolio/allocation_variance', allocation_variance, self.episode_count)
-            self.exp_logger.log_scalar('risk/max_drawdown', max_drawdown, self.episode_count)
-            self.exp_logger.log_scalar('risk/volatility', returns_volatility, self.episode_count)
-            self.exp_logger.log_scalar('performance/cumulative_return', cumulative_return, self.episode_count)
-        
-        # Prepare detailed episode results for CSV logging
+
+        # 5) Pack episode details (returned to caller; caller logs via RunLogger)
         episode_details = {
-            'episode_reward': float(episode_reward),
-            'policy_loss': float(policy_loss),
-            'vae_loss': float(vae_loss),
-            'episode_length': episode_length,
-            'initial_capital': float(initial_capital),
-            'final_capital': float(final_capital),
-            'cumulative_return': float(cumulative_return),
-            'sharpe_ratio': float(sharpe_ratio),
-            'max_drawdown': float(max_drawdown),
-            'returns_volatility': float(returns_volatility),
-            'portfolio_concentration': float(portfolio_concentration),
-            'portfolio_turnover': float(portfolio_turnover),
-            'allocation_variance': float(allocation_variance),
-            'num_trades': int(significant_changes),
-            'avg_cash_position': float(1.0 - np.mean([np.sum(alloc) for alloc in portfolio_allocations])) if len(portfolio_allocations) > 0 else 0.0,
-            'task_id': getattr(self.env, 'task_id', None),
-            'total_steps': self.total_steps
+            "episode_reward": float(episode_reward),
+            "policy_loss": float(policy_loss),
+            "vae_loss": float(vae_loss),
+            "episode_length": int(episode_length),
+            "initial_capital": float(initial_capital),
+            "final_capital": float(final_capital),
+            "cumulative_return": float(cumulative_return),
+            "sharpe_ratio": float(sharpe_ratio),
+            "max_drawdown": float(max_drawdown),
+            "returns_volatility": float(returns_volatility),
+            "portfolio_concentration": float(portfolio_concentration),
+            "portfolio_turnover": float(portfolio_turnover),
+            "allocation_variance": float(allocation_variance),
+            "num_trades": int(significant_changes),
+            "avg_cash_position": float(
+                1.0 - np.mean([np.sum(a) for a in portfolio_allocations])
+            ) if len(portfolio_allocations) > 0 else 0.0,
+            "task_id": getattr(self.env, "task_id", None),
+            "total_steps": int(self.total_steps),
         }
-        
-        # Add latent magnitude statistics if available
-        if hasattr(self, 'latent_magnitudes') and self.latent_magnitudes:
-            episode_details.update({
-                'avg_latent_magnitude': float(np.mean(list(self.latent_magnitudes))),
-                'std_latent_magnitude': float(np.std(list(self.latent_magnitudes))),
-                'max_latent_magnitude': float(np.max(list(self.latent_magnitudes))),
-            })
-        
-        # Log to CSV if available
-        if hasattr(self, 'csv_logger') and self.csv_logger:
-            self.csv_logger.log_episode_details(self.episode_count, episode_details)
-        
+
+        # Optional latent magnitude stats (kept for analysis; not required)
+        if hasattr(self, "latent_magnitudes") and self.latent_magnitudes:
+            lm = list(self.latent_magnitudes)
+            episode_details.update(
+                {
+                    "avg_latent_magnitude": float(np.mean(lm)),
+                    "std_latent_magnitude": float(np.std(lm)),
+                    "max_latent_magnitude": float(np.max(lm)),
+                }
+            )
+
         return episode_details
 
-
+    # ----------------------------
+    # Trajectory collection
+    # ----------------------------
     def collect_trajectory(self):
-        """Collect a single episode trajectory with online latent updates"""
-        trajectory = {
-            'observations': [],
-            'actions': [],
-            'rewards': [],
-            'values': [],
-            'log_probs': [],
-            'latents': [],
-            'dones': []
+        """Collect a single episode trajectory with online latent updates."""
+        traj = {
+            "observations": [],
+            "actions": [],
+            "rewards": [],
+            "values": [],
+            "log_probs": [],
+            "latents": [],
+            "dones": [],
         }
-        
-        # Reset environment
+
+        # Reset env and prepare tensors
         obs = self.env.reset()
         obs_tensor = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
-        
-        # Initialize empty trajectory context for encoder
-        trajectory_context = {
-            'observations': [],
-            'actions': [],
-            'rewards': []
-        }
-        
-        # Episode loop
+
+        # Context τ:t for VAE encoder
+        context = {"observations": [], "actions": [], "rewards": []}
+
         done = False
         step = 0
-        
+
         while not done and step < self.config.max_horizon:
-            # Encode current trajectory context τ:t to get posterior q(m|τ:t)
-            if len(trajectory_context['observations']) == 0:
-                # First step: use prior
+            # Encode context to get latent
+            if len(context["observations"]) == 0:
                 latent = torch.zeros(1, self.config.latent_dim, device=self.device)
             else:
-                # Subsequent steps: encode trajectory so far
                 with torch.no_grad():
-                    # Prepare sequences for encoder
-                    obs_seq = torch.stack(trajectory_context['observations']).unsqueeze(0)  # (1, t, N, F)
-                    action_seq = torch.stack(trajectory_context['actions']).unsqueeze(0)    # (1, t, N)
-                    reward_seq = torch.stack(trajectory_context['rewards']).unsqueeze(0).unsqueeze(-1)  # (1, t, 1)
-                    
-                    mu, logvar, _ = self.vae.encode(obs_seq, action_seq, reward_seq)
+                    obs_seq = torch.stack(context["observations"]).unsqueeze(0)  # (1, t, N, F)
+                    act_seq = torch.stack(context["actions"]).unsqueeze(0)       # (1, t, N)
+                    rew_seq = torch.stack(context["rewards"]).unsqueeze(0).unsqueeze(-1)  # (1, t, 1)
+                    mu, logvar, _ = self.vae.encode(obs_seq, act_seq, rew_seq)
                     latent = self.vae.reparameterize(mu, logvar)
-            
-            if not hasattr(self, 'latent_magnitudes'):
+
+            # Track latent norms (for optional analysis)
+            if not hasattr(self, "latent_magnitudes"):
                 self.latent_magnitudes = deque(maxlen=1000)
+            self.latent_magnitudes.append(torch.norm(latent).item())
 
-            latent_norm = torch.norm(latent).item()
-            self.latent_magnitudes.append(latent_norm)
-
+            # Policy step
             with torch.no_grad():
-                # Get action and value from policy
                 action, value = self.policy.act(obs_tensor, latent, deterministic=False)
                 _, log_prob, _ = self.policy.evaluate_actions(obs_tensor, latent, action)
-            
-            # Take environment step - ensure action is on CPU for numpy conversion
+
+            # Env step (requires numpy)
             action_cpu = action.squeeze(0).detach().cpu().numpy()
             next_obs, reward, done, info = self.env.step(action_cpu)
-            
-            # Store transition - move tensors to CPU where needed
-            trajectory['observations'].append(obs_tensor.squeeze(0).cpu())
-            trajectory['actions'].append(action.squeeze(0).cpu())
-            trajectory['rewards'].append(float(reward))  # Store as Python float
-            trajectory['values'].append(value.squeeze().cpu())
-            trajectory['log_probs'].append(log_prob.squeeze().cpu())
-            trajectory['latents'].append(latent.squeeze(0).cpu())
-            trajectory['dones'].append(done)
-            
-            # Update trajectory context for next iteration - keep on device for VAE
-            trajectory_context['observations'].append(obs_tensor.squeeze(0).detach())
-            trajectory_context['actions'].append(action.squeeze(0).detach())
-            trajectory_context['rewards'].append(torch.tensor(reward, device=self.device))
-            
-            # Update for next step
+
+            # Store transition (CPU where appropriate)
+            traj["observations"].append(obs_tensor.squeeze(0).cpu())
+            traj["actions"].append(action.squeeze(0).cpu())
+            traj["rewards"].append(float(reward))
+            traj["values"].append(value.squeeze().cpu())
+            traj["log_probs"].append(log_prob.squeeze().cpu())
+            traj["latents"].append(latent.squeeze(0).cpu())
+            traj["dones"].append(bool(done))
+
+            # Update context for VAE (keep on device)
+            context["observations"].append(obs_tensor.squeeze(0).detach())
+            context["actions"].append(action.squeeze(0).detach())
+            context["rewards"].append(torch.tensor(reward, device=self.device))
+
+            # Next step
             if not done:
                 obs_tensor = torch.tensor(next_obs, dtype=torch.float32, device=self.device).unsqueeze(0)
-            
+
             step += 1
             self.total_steps += 1
-        
-        # Convert to tensors - move to device for training
-        for key in ['observations', 'actions', 'values', 'log_probs', 'latents']:
-            if key == 'rewards':
-                trajectory[key] = torch.tensor(trajectory[key], device=self.device)
-            else:
-                trajectory[key] = torch.stack(trajectory[key]).to(self.device)
-        
-        # Keep rewards as tensor for computation, but ensure it's on the right device
-        trajectory['rewards'] = torch.tensor(trajectory['rewards'], device=self.device)
-        
-        return trajectory
-    
+
+        # Stack to tensors on device
+        traj["observations"] = torch.stack(traj["observations"]).to(self.device)  # (T, N, F)
+        traj["actions"] = torch.stack(traj["actions"]).to(self.device)            # (T, N)
+        traj["values"] = torch.stack(traj["values"]).to(self.device)              # (T,)
+        traj["log_probs"] = torch.stack(traj["log_probs"]).to(self.device)        # (T,)
+        traj["latents"] = torch.stack(traj["latents"]).to(self.device)            # (T, latent_dim)
+        traj["rewards"] = torch.tensor(traj["rewards"], dtype=torch.float32, device=self.device)  # (T,)
+        # dones remain list[bool] for GAE logic
+        return traj
+
+    # ----------------------------
+    # PPO / VAE updates
+    # ----------------------------
     def compute_advantages(self, trajectory):
-        """Compute GAE advantages"""
-        rewards = trajectory['rewards']         # (T,)
-        values = trajectory['values']           # (T,)
-        dones = trajectory['dones']
-        
+        """Compute GAE advantages."""
+        rewards = trajectory["rewards"]  # (T,)
+        values = trajectory["values"]    # (T,)
+        dones = trajectory["dones"]
+
         advantages = torch.zeros_like(rewards)
         returns = torch.zeros_like(rewards)
-        
-        # GAE computation
-        gae = 0
-        next_value = 0  # Value of terminal state is 0
-        
+
+        gae = 0.0
+        next_value = 0.0  # terminal value = 0
+
         for t in reversed(range(len(rewards))):
-            delta = rewards[t] + self.config.discount_factor * next_value * (1 - dones[t]) - values[t]
-            gae = delta + self.config.discount_factor * self.config.gae_lambda * (1 - dones[t]) * gae
+            delta = rewards[t] + self.config.discount_factor * next_value * (1 - int(dones[t])) - values[t]
+            gae = delta + self.config.discount_factor * self.config.gae_lambda * (1 - int(dones[t])) * gae
             advantages[t] = gae
             returns[t] = gae + values[t]
             next_value = values[t]
-        
-        # Normalize advantages
+
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-        
         return advantages, returns
-    
+
     def update_policy(self):
-        """Update policy using PPO"""
-        all_trajectories = self.experience_buffer.get_all()
-        total_loss = 0
-        
-        # Compute advantages for all trajectories
-        batch_obs = []
-        batch_actions = []
-        batch_latents = []
-        batch_advantages = []
-        batch_returns = []
-        batch_old_log_probs = []
-        
-        for trajectory in all_trajectories:
-            advantages, returns = self.compute_advantages(trajectory)
-            
-            batch_obs.append(trajectory['observations'])
-            batch_actions.append(trajectory['actions'])
-            batch_latents.append(trajectory['latents'])
-            batch_advantages.append(advantages)
-            batch_returns.append(returns)
-            batch_old_log_probs.append(trajectory['log_probs'])
-        
-        # Concatenate all data
-        batch_obs = torch.cat(batch_obs, dim=0)                    # (batch_size, N, F)
-        batch_actions = torch.cat(batch_actions, dim=0)            # (batch_size, N)
-        batch_latents = torch.cat(batch_latents, dim=0)            # (batch_size, latent_dim)
-        batch_advantages = torch.cat(batch_advantages, dim=0)      # (batch_size,)
-        batch_returns = torch.cat(batch_returns, dim=0)           # (batch_size,)
-        batch_old_log_probs = torch.cat(batch_old_log_probs, dim=0)  # (batch_size,)
-        
+        """Update policy using PPO."""
+        all_traj = self.experience_buffer.get_all()
+        total_loss = 0.0
+
+        # Build batch
+        b_obs, b_act, b_lat, b_adv, b_ret, b_logp_old = [], [], [], [], [], []
+        for tr in all_traj:
+            adv, ret = self.compute_advantages(tr)
+            b_obs.append(tr["observations"])
+            b_act.append(tr["actions"])
+            b_lat.append(tr["latents"])
+            b_adv.append(adv)
+            b_ret.append(ret)
+            b_logp_old.append(tr["log_probs"])
+
+        batch_obs = torch.cat(b_obs, dim=0)         # (B, N, F)
+        batch_actions = torch.cat(b_act, dim=0)     # (B, N)
+        batch_latents = torch.cat(b_lat, dim=0)     # (B, latent_dim)
+        batch_adv = torch.cat(b_adv, dim=0)         # (B,)
+        batch_ret = torch.cat(b_ret, dim=0)         # (B,)
+        batch_logp_old = torch.cat(b_logp_old, dim=0)  # (B,)
+
         # PPO epochs
-        for epoch in range(self.config.ppo_epochs):
-            # Forward pass
-            values, log_probs, entropy = self.policy.evaluate_actions(
-                batch_obs, batch_latents, batch_actions
-            )
-            
-            values = values.squeeze(-1)    # (batch_size,)
-            log_probs = log_probs.squeeze(-1)  # (batch_size,)
-            entropy = entropy.mean()       # scalar
-            
-            # Compute PPO loss
-            ratio = torch.exp(log_probs - batch_old_log_probs)
-            surr1 = ratio * batch_advantages
-            surr2 = torch.clamp(ratio, 1 - self.config.ppo_clip_ratio, 
-                               1 + self.config.ppo_clip_ratio) * batch_advantages
+        for _ in range(self.config.ppo_epochs):
+            values, log_probs, entropy = self.policy.evaluate_actions(batch_obs, batch_latents, batch_actions)
+            values = values.squeeze(-1)        # (B,)
+            log_probs = log_probs.squeeze(-1)  # (B,)
+            entropy = entropy.mean()           # scalar
+
+            ratio = torch.exp(log_probs - batch_logp_old)
+            surr1 = ratio * batch_adv
+            surr2 = torch.clamp(ratio, 1 - self.config.ppo_clip_ratio, 1 + self.config.ppo_clip_ratio) * batch_adv
             policy_loss = -torch.min(surr1, surr2).mean()
-            
-            # Value loss
-            value_loss = F.mse_loss(values, batch_returns)
-            
-            # Total loss
-            loss = (policy_loss + 
-                   self.config.value_loss_coef * value_loss - 
-                   self.config.entropy_coef * entropy)
-            
-            # Update
+            value_loss = F.mse_loss(values, batch_ret)
+
+            loss = policy_loss + self.config.value_loss_coef * value_loss - self.config.entropy_coef * entropy
+
             self.policy_optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
             self.policy_optimizer.step()
-            
-            total_loss += loss.item()
-        
-        return total_loss / self.config.ppo_epochs
-    
+
+            total_loss += float(loss.item())
+
+        return total_loss / max(self.config.ppo_epochs, 1)
+
     def update_vae(self):
-        """Update VAE using trajectory prefixes of different lengths"""
+        """Update VAE using random trajectory prefixes."""
         if len(self.vae_buffer) < self.config.vae_batch_size:
-            return 0
-        
-        # Sample batch of trajectories
+            return 0.0
+
         indices = np.random.choice(len(self.vae_buffer), self.config.vae_batch_size, replace=False)
-        batch_trajectories = [self.vae_buffer[i] for i in indices]
-        
-        total_loss = 0
+        batch_traj = [self.vae_buffer[i] for i in indices]
+
+        total_loss = 0.0
         loss_count = 0
-        
-        for trajectory in batch_trajectories:
-            seq_len = len(trajectory['rewards'])
-            if seq_len < 2:  # Need at least 2 steps
+
+        for tr in batch_traj:
+            seq_len = len(tr["rewards"])
+            if seq_len < 2:
                 continue
-                
-            # Sample random prefix length t (paper: ELBO for all timesteps t)
-            max_t = min(seq_len - 1, 20)  # Limit for computational efficiency
+
+            max_t = min(seq_len - 1, 20)  # cap for efficiency
             t = np.random.randint(1, max_t + 1)
-            
-            # Extract τ:t (context) and τ:H+ (full trajectory for decoding)
-            obs_context = trajectory['observations'][:t].unsqueeze(0)      # (1, t, N, F)
-            action_context = trajectory['actions'][:t].unsqueeze(0)        # (1, t, N)
-            reward_context = trajectory['rewards'][:t].unsqueeze(0).unsqueeze(-1)  # (1, t, 1)
-            
-            # Full trajectory for decoder
-            obs_full = trajectory['observations'].unsqueeze(0)             # (1, T, N, F)
-            action_full = trajectory['actions'].unsqueeze(0)               # (1, T, N)
-            reward_full = trajectory['rewards'].unsqueeze(0).unsqueeze(-1) # (1, T, 1)
-            
-            # Compute ELBO_t
+
+            obs_ctx = tr["observations"][:t].unsqueeze(0)        # (1, t, N, F)
+            act_ctx = tr["actions"][:t].unsqueeze(0)             # (1, t, N)
+            rew_ctx = tr["rewards"][:t].unsqueeze(0).unsqueeze(-1)  # (1, t, 1)
+
+            # Full trajectory (if your VAE decoder needs it)
+            # obs_full = tr["observations"].unsqueeze(0)
+            # act_full = tr["actions"].unsqueeze(0)
+            # rew_full = tr["rewards"].unsqueeze(0).unsqueeze(-1)
+
             vae_loss, _ = self.vae.compute_loss(
-                obs_context, action_context, reward_context,
-                beta=self.config.vae_beta,
-                context_len=t
+                obs_ctx, act_ctx, rew_ctx, beta=self.config.vae_beta, context_len=t
             )
-            
-            total_loss += vae_loss
+            total_loss += float(vae_loss)
             loss_count += 1
-        
+
         if loss_count == 0:
-            return 0
-        
-        # Backward pass
+            return 0.0
+
         avg_loss = total_loss / loss_count
         self.vae_optimizer.zero_grad()
-        avg_loss.backward()
+        # If compute_loss returns a tensor on device, backprop it:
+        torch.tensor(avg_loss, device=self.device, dtype=torch.float32).backward()
         torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
         self.vae_optimizer.step()
-        
-        return avg_loss.item()
+        return avg_loss
 
-
-    def _calculate_portfolio_metrics(self, trajectory):
-        """Calculate detailed portfolio performance metrics"""
-        if not hasattr(self.env, 'episode_trajectory') or not self.env.episode_trajectory:
-            return {
-                'avg_allocation': np.zeros(self.config.num_assets),
-                'allocation_variance': 0.0,
-                'portfolio_concentration': 0.0,
-                'num_trades': 0,
-                'portfolio_turnover': 0.0
-            }
-        
-        # Extract portfolio allocations from episode
-        allocations = []
-        for step in self.env.episode_trajectory:
-            if 'action' in step:
-                allocations.append(step['action'])
-        
-        if not allocations:
-            return {
-                'avg_allocation': np.zeros(self.config.num_assets),
-                'allocation_variance': 0.0,
-                'portfolio_concentration': 0.0,
-                'num_trades': 0,
-                'portfolio_turnover': 0.0
-            }
-        
-        allocations = np.array(allocations)
-        
-        # Calculate metrics
-        avg_allocation = np.mean(allocations, axis=0)
-        allocation_variance = np.var(allocations, axis=0).mean()
-        portfolio_concentration = np.max(avg_allocation)
-        
-        # Count significant trades
-        num_trades = 0
-        for i in range(1, len(allocations)):
-            change = np.linalg.norm(allocations[i] - allocations[i-1])
-            if change > 0.1:  # 10% threshold for significant change
-                num_trades += 1
-        
-        portfolio_turnover = num_trades / len(allocations) if len(allocations) > 0 else 0.0
-        
-        return {
-            'avg_allocation': avg_allocation,
-            'allocation_variance': float(allocation_variance),
-            'portfolio_concentration': float(portfolio_concentration),
-            'num_trades': int(num_trades),
-            'portfolio_turnover': float(portfolio_turnover)
-        }
-
-    def _calculate_risk_metrics(self):
-        """Calculate risk metrics from capital history"""
-        if not hasattr(self.env, 'capital_history') or len(self.env.capital_history) < 2:
-            return {
-                'max_drawdown': 0.0,
-                'volatility': 0.0,
-                'var_95': 0.0,
-                'calmar_ratio': 0.0
-            }
-        
-        capital_history = np.array(self.env.capital_history)
-        returns_series = np.diff(capital_history) / capital_history[:-1]
-        
-        # Maximum drawdown
-        running_max = np.maximum.accumulate(capital_history)
-        drawdown = (capital_history - running_max) / running_max
-        max_drawdown = float(np.min(drawdown))
-        
-        # Volatility (annualized, assuming daily returns)
-        volatility = float(np.std(returns_series) * np.sqrt(252)) if len(returns_series) > 1 else 0.0
-        
-        # Value at Risk (95%)
-        var_95 = float(np.percentile(returns_series, 5)) if len(returns_series) > 1 else 0.0
-        
-        # Calmar ratio (annualized return / max drawdown)
-        total_return = (capital_history[-1] - capital_history[0]) / capital_history[0]
-        calmar_ratio = float(total_return / abs(max_drawdown)) if max_drawdown < 0 else float('inf')
-        
-        return {
-            'max_drawdown': max_drawdown,
-            'volatility': volatility,
-            'var_95': var_95,
-            'calmar_ratio': calmar_ratio
-        }
-
-    def _enhanced_log_training_stats(self):
-        """Enhanced logging with portfolio-specific metrics"""
-        if not self.exp_logger:
-            return
-        
-        # Standard metrics
-        if self.episode_rewards:
-            episode_rewards_list = [float(r) if torch.is_tensor(r) else r for r in self.episode_rewards]
-            self.exp_logger.log_scalar('train/episode_reward_mean', 
-                                    np.mean(episode_rewards_list), self.episode_count)
-            self.exp_logger.log_scalar('train/episode_reward_std', 
-                                    np.std(episode_rewards_list), self.episode_count)
-        
-        # VariBAD-specific metrics
-        if hasattr(self, 'latent_magnitudes') and self.latent_magnitudes:
-            self.exp_logger.log_scalar('varibad/latent_magnitude_mean',
-                                    np.mean(self.latent_magnitudes), self.episode_count)
-            self.exp_logger.log_histogram('varibad/latent_values',
-                                        np.array(self.latent_magnitudes), self.episode_count)
-
-        # Loss statistics
-        if self.policy_losses:
-            policy_losses_list = [float(l) if torch.is_tensor(l) else l for l in self.policy_losses]
-            self.exp_logger.log_scalar('train/policy_loss', 
-                                    np.mean(policy_losses_list), self.episode_count)
-        
-        if self.vae_losses:
-            vae_losses_list = [float(l) if torch.is_tensor(l) else l for l in self.vae_losses]
-            self.exp_logger.log_scalar('train/vae_loss', 
-                                    np.mean(vae_losses_list), self.episode_count)
-        
-        # General stats
-        self.exp_logger.log_scalar('train/episode_count', self.episode_count, self.episode_count)
-        self.exp_logger.log_scalar('train/total_steps', self.total_steps, self.episode_count)
-
-
-    def _log_training_stats(self):
-        """Log training statistics"""
-        if not self.exp_logger:
-            return
-        
-        # Episode statistics - ensure all values are Python floats
-        if self.episode_rewards:
-            # Convert any tensor elements to floats
-            episode_rewards_list = [float(r) if torch.is_tensor(r) else r for r in self.episode_rewards]
-            self.exp_logger.log_scalar('train/episode_reward_mean', 
-                                     np.mean(episode_rewards_list), self.episode_count)
-            self.exp_logger.log_scalar('train/episode_reward_std', 
-                                     np.std(episode_rewards_list), self.episode_count)
-        
-        # Add VariBAD-specific metrics
-        if hasattr(self, 'latent_magnitudes') and self.latent_magnitudes:
-            self.exp_logger.log_scalar('varibad/latent_magnitude_mean',
-                                    np.mean(self.latent_magnitudes), self.episode_count)
-            self.exp_logger.log_histogram('varibad/latent_values',
-                                        np.array(self.latent_magnitudes), self.episode_count)
-
-        # Loss statistics
-        if self.policy_losses:
-            policy_losses_list = [float(l) if torch.is_tensor(l) else l for l in self.policy_losses]
-            self.exp_logger.log_scalar('train/policy_loss', 
-                                     np.mean(policy_losses_list), self.episode_count)
-        
-        if self.vae_losses:
-            vae_losses_list = [float(l) if torch.is_tensor(l) else l for l in self.vae_losses]
-            self.exp_logger.log_scalar('train/vae_loss', 
-                                     np.mean(vae_losses_list), self.episode_count)
-        
-        # General stats
-        self.exp_logger.log_scalar('train/episode_count', self.episode_count, self.episode_count)
-        self.exp_logger.log_scalar('train/total_steps', self.total_steps, self.episode_count)
-    
+    # ----------------------------
+    # Checkpoint helpers
+    # ----------------------------
     def get_state(self):
-        """Get trainer state for checkpointing"""
+        """Get trainer state for checkpointing."""
         return {
-            'episode_count': self.episode_count,
-            'total_steps': self.total_steps,
-            'policy_optimizer': self.policy_optimizer.state_dict(),
-            'vae_optimizer': self.vae_optimizer.state_dict()
+            "episode_count": self.episode_count,
+            "total_steps": self.total_steps,
+            "policy_optimizer": self.policy_optimizer.state_dict(),
+            "vae_optimizer": self.vae_optimizer.state_dict(),
         }
-    
+
     def load_state(self, state):
-        """Load trainer state from checkpoint"""
-        self.episode_count = state.get('episode_count', 0)
-        self.total_steps = state.get('total_steps', 0)
-        if 'policy_optimizer' in state:
-            self.policy_optimizer.load_state_dict(state['policy_optimizer'])
-        if 'vae_optimizer' in state:
-            self.vae_optimizer.load_state_dict(state['vae_optimizer'])
+        """Load trainer state from checkpoint."""
+        self.episode_count = state.get("episode_count", 0)
+        self.total_steps = state.get("total_steps", 0)
+        if "policy_optimizer" in state:
+            self.policy_optimizer.load_state_dict(state["policy_optimizer"])
+        if "vae_optimizer" in state:
+            self.vae_optimizer.load_state_dict(state["vae_optimizer"])
 
 
 class ExperienceBuffer:
-    """Buffer for storing PPO training data"""
-    
+    """Buffer for storing PPO training data."""
+
     def __init__(self, min_batch_size=64):
         self.min_batch_size = min_batch_size
         self.trajectories = []
         self.total_steps = 0
-    
+
     def add_trajectory(self, trajectory):
-        """Add a complete trajectory"""
         self.trajectories.append(trajectory)
-        self.total_steps += len(trajectory['rewards'])
-    
+        self.total_steps += len(trajectory["rewards"])
+
     def is_ready(self):
-        """Check if buffer has enough data for training"""
         return self.total_steps >= self.min_batch_size
-    
+
     def get_all(self):
-        """Get all trajectories"""
         return self.trajectories
-    
+
     def clear(self):
-        """Clear buffer"""
         self.trajectories = []
         self.total_steps = 0
