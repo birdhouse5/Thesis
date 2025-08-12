@@ -554,3 +554,7 @@ def main():
         print("Plots saved: history.html, importance.html")
     except ImportError:
         print("Plotly not available - skipping plots")
+
+
+if __name__ == "__main__":
+    main()
