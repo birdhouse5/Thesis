@@ -50,6 +50,7 @@ multitasking==0.0.11
 nest-asyncio==1.6.0
 networkx==3.4.2
 numpy==2.2.6
+optuna==3.6.1
 packaging==25.0
 pandas==2.3.0
 pandas-ta==0.3.14b0

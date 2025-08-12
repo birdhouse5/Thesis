@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 class Config:
     """Training configuration that can load from JSON files"""
-    def __init__(self, config_file=None):
+    def __init__(self, config_file=None, trial=None):
         # Defaults
         self.data_path = "environments/data/sp500_rl_ready_cleaned.parquet"
         self.train_end = '2015-12-31'

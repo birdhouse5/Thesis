@@ -1,7 +1,2 @@
-- understand and develop buffer system
-- understand training pipeline
-- build and run
-
-
-
-
+- use Optuna for Hyperparameter Optimization HPO
+- sample > grid search (find papers)
