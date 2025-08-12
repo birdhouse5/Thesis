@@ -142,6 +142,20 @@ def update_vae_fixed(trainer):
     
     return float(avg_loss.item())
 
+# --- GPU cache helper ---
+def _free_cuda_cache(tag: str = ""):
+    """Release unreferenced CUDA memory back to the driver + Python GC."""
+    import torch, gc, time
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception:
+        pass
+    gc.collect()
+    time.sleep(0.02)  # tiny pause to let the allocator settle
+
 
 def objective(trial: optuna.Trial) -> float:
     """
@@ -293,8 +307,7 @@ def objective(trial: optuna.Trial) -> float:
                     f"hidden_dim={getattr(config,'hidden_dim',None)}, "
                     f"latent_dim={getattr(config,'latent_dim',None)})"
                 )
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                _free_cuda_cache("oom")
                 try: run.close()
                 except Exception: pass
                 raise optuna.TrialPruned() from e
@@ -303,8 +316,7 @@ def objective(trial: optuna.Trial) -> float:
                 # Some OOMs surface as generic RuntimeError with 'out of memory'
                 if "out of memory" in str(e).lower():
                     logger.warning(f"RuntimeError OOM on trial {trial.number}; pruning.")
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
+                    _free_cuda_cache("oom")
                     try: run.close()
                     except Exception: pass
                     raise optuna.TrialPruned() from e
@@ -316,9 +328,15 @@ def objective(trial: optuna.Trial) -> float:
                          "split_tensors", "split_datasets", "initial_obs"):
                 if name in locals():
                     del locals()[name]
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            gc.collect()
+            logger.info(
+                f"[mem before free] allocated={torch.cuda.memory_allocated()/1e6:.0f}MB "
+                f"reserved={torch.cuda.memory_reserved()/1e6:.0f}MB"
+            )
+            _free_cuda_cache("finally")
+            logger.info(
+                f"[mem after free]  allocated={torch.cuda.memory_allocated()/1e6:.0f}MB "
+                f"reserved={torch.cuda.memory_reserved()/1e6:.0f}MB"
+            )
 
     except optuna.TrialPruned:
         # already handled/logged; just propagate
