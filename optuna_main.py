@@ -167,135 +167,178 @@ def objective(trial: optuna.Trial) -> float:
             f"vae_lr={config.vae_lr:.2e}, policy_lr={config.policy_lr:.2e}"
         )
 
-        # Prepare datasets
-        split_tensors, split_datasets = prepare_split_datasets(config)
+        # ------- dataset/env prep (CPU) -------
+        try:
+            # Prepare datasets
+            split_tensors, split_datasets = prepare_split_datasets(config)
 
-        # Create environments
-        train_env = create_meta_env(
-            split_tensors['train'], split_tensors['train']['feature_columns'], config
-        )
-        val_env = create_meta_env(
-            split_tensors['val'], split_tensors['val']['feature_columns'], config
-        )
+            # Create environments
+            train_env = create_meta_env(
+                split_tensors['train'], split_tensors['train']['feature_columns'], config
+            )
+            val_env = create_meta_env(
+                split_tensors['val'], split_tensors['val']['feature_columns'], config
+            )
 
-        # Get observation shape
-        task = train_env.sample_task()
-        train_env.set_task(task)
-        initial_obs = train_env.reset()
-        obs_shape = initial_obs.shape
+            # ------- OOM GUARD (GPU-heavy section) -------
+            try:
+                # Get observation shape
+                task = train_env.sample_task()
+                train_env.set_task(task)
+                initial_obs = train_env.reset()
+                obs_shape = initial_obs.shape
 
-        # Initialize models
-        vae, policy = initialize_models(
-            config, obs_shape, split_tensors['train']['feature_columns']
-        )
-
-        # Initialize trainer
-        trainer = PPOTrainer(env=train_env, policy=policy, vae=vae, config=config)
-
-        # CRITICAL FIX (kept): replace broken VAE update
-        trainer.update_vae = lambda: update_vae_fixed(trainer)
-
-        # Training loop with early stopping (your logic, unchanged)
-        episodes_trained = 0
-        best_val_sharpe = float('-inf')
-        patience = 3
-        no_improvement_count = 0
-
-        logger.info(f"Starting training for trial {trial.number}")
-
-        while episodes_trained < config.max_episodes:
-            task = train_env.sample_task()
-            train_env.set_task(task)
-
-            for _ in range(config.episodes_per_task):
-                episode_result = trainer.train_episode()
-
-                # Log training metrics
-                run.log_train_episode(
-                    episodes_trained,
-                    reward=episode_result.get('episode_reward'),
-                    sharpe=episode_result.get('sharpe_ratio', episode_result.get('episode_reward')),
-                    cum_wealth=episode_result.get('cumulative_return'),
+                # Initialize models
+                vae, policy = initialize_models(
+                    config, obs_shape, split_tensors['train']['feature_columns']
                 )
 
-                episodes_trained += 1
+                # Initialize trainer
+                trainer = PPOTrainer(env=train_env, policy=policy, vae=vae, config=config)
 
-                # Validation check
-                if episodes_trained % config.val_interval == 0:
-                    val_results = evaluate_on_split(
-                        val_env, policy, vae, config, config.val_episodes, 'validation'
-                    )
-                    current_val_sharpe = val_results['avg_reward']
+                # CRITICAL FIX (kept): replace broken VAE update
+                trainer.update_vae = lambda: update_vae_fixed(trainer)
 
-                    # Log validation
-                    run.log_val(
-                        episodes_trained,
-                        sharpe=current_val_sharpe,
-                        reward=current_val_sharpe,
-                        cum_wealth=val_results['avg_return'],
-                    )
+                # Training loop with early stopping (your logic, unchanged)
+                episodes_trained = 0
+                best_val_sharpe = float('-inf')
+                patience = 3
+                no_improvement_count = 0
 
-                    logger.info(
-                        f"Trial {trial.number}, Episode {episodes_trained}: "
-                        f"val_sharpe={current_val_sharpe:.4f}"
-                    )
+                logger.info(f"Starting training for trial {trial.number}")
 
-                    # Early stopping + save best
-                    if current_val_sharpe > best_val_sharpe:
-                        best_val_sharpe = current_val_sharpe
-                        no_improvement_count = 0
-                        save_path = run_dir / "best_model.pt"
-                        torch.save(
-                            {
-                                'trial_number': trial.number,
-                                'episodes_trained': episodes_trained,
-                                'vae_state_dict': vae.state_dict(),
-                                'policy_state_dict': policy.state_dict(),
-                                'best_val_sharpe': best_val_sharpe,
-                                'config': config.to_dict(),
-                            },
-                            save_path,
+                while episodes_trained < config.max_episodes:
+                    task = train_env.sample_task()
+                    train_env.set_task(task)
+
+                    for _ in range(config.episodes_per_task):
+                        episode_result = trainer.train_episode()
+
+                        # Log training metrics
+                        run.log_train_episode(
+                            episodes_trained,
+                            reward=episode_result.get('episode_reward'),
+                            sharpe=episode_result.get('sharpe_ratio', episode_result.get('episode_reward')),
+                            cum_wealth=episode_result.get('cumulative_return'),
                         )
-                    else:
-                        no_improvement_count += 1
 
-                    # Report to Optuna / pruning
-                    trial.report(current_val_sharpe, episodes_trained)
-                    if trial.should_prune():
-                        logger.info(f"Trial {trial.number} pruned at episode {episodes_trained}")
-                        run.close()
-                        raise optuna.TrialPruned()
+                        episodes_trained += 1
 
-                    if no_improvement_count >= patience:
-                        logger.info(f"Trial {trial.number} early stopped due to no improvement")
+                        # Validation check
+                        if episodes_trained % config.val_interval == 0:
+                            val_results = evaluate_on_split(
+                                val_env, policy, vae, config, config.val_episodes, 'validation'
+                            )
+                            current_val_sharpe = val_results['avg_reward']
+
+                            # Log validation
+                            run.log_val(
+                                episodes_trained,
+                                sharpe=current_val_sharpe,
+                                reward=current_val_sharpe,
+                                cum_wealth=val_results['avg_return'],
+                            )
+
+                            logger.info(
+                                f"Trial {trial.number}, Episode {episodes_trained}: "
+                                f"val_sharpe={current_val_sharpe:.4f}"
+                            )
+
+                            # Early stopping + save best
+                            if current_val_sharpe > best_val_sharpe:
+                                best_val_sharpe = current_val_sharpe
+                                no_improvement_count = 0
+                                save_path = run_dir / "best_model.pt"
+                                torch.save(
+                                    {
+                                        'trial_number': trial.number,
+                                        'episodes_trained': episodes_trained,
+                                        'vae_state_dict': vae.state_dict(),
+                                        'policy_state_dict': policy.state_dict(),
+                                        'best_val_sharpe': best_val_sharpe,
+                                        'config': config.to_dict(),
+                                    },
+                                    save_path,
+                                )
+                            else:
+                                no_improvement_count += 1
+
+                            # Report to Optuna / pruning
+                            trial.report(current_val_sharpe, episodes_trained)
+                            if trial.should_prune():
+                                logger.info(f"Trial {trial.number} pruned at episode {episodes_trained}")
+                                # close run before pruning
+                                try: run.close()
+                                except Exception: pass
+                                raise optuna.TrialPruned()
+
+                            if no_improvement_count >= patience:
+                                logger.info(f"Trial {trial.number} early stopped due to no improvement")
+                                break
+
+                        if episodes_trained >= config.max_episodes:
+                            break
+
+                    if episodes_trained >= config.max_episodes:
                         break
 
-                if episodes_trained >= config.max_episodes:
-                    break
+                logger.info(f"Trial {trial.number} completed: best_val_sharpe={best_val_sharpe:.4f}")
+                run.close()
+                return best_val_sharpe
 
-            if episodes_trained >= config.max_episodes:
-                break
+            except torch.cuda.OutOfMemoryError as e:
+                logger.warning(
+                    f"CUDA OOM on trial {trial.number}; pruning this trial. "
+                    f"(batch_size={getattr(config,'batch_size',None)}, "
+                    f"hidden_dim={getattr(config,'hidden_dim',None)}, "
+                    f"latent_dim={getattr(config,'latent_dim',None)})"
+                )
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                try: run.close()
+                except Exception: pass
+                raise optuna.TrialPruned() from e
 
-        logger.info(f"Trial {trial.number} completed: best_val_sharpe={best_val_sharpe:.4f}")
-        run.close()
-        return best_val_sharpe
+            except RuntimeError as e:
+                # Some OOMs surface as generic RuntimeError with 'out of memory'
+                if "out of memory" in str(e).lower():
+                    logger.warning(f"RuntimeError OOM on trial {trial.number}; pruning.")
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    try: run.close()
+                    except Exception: pass
+                    raise optuna.TrialPruned() from e
+                raise  # not an OOM → bubble up
+
+        finally:
+            # Aggressive cleanup regardless of success/exception in the middle block
+            for name in ("trainer", "vae", "policy", "train_env", "val_env",
+                         "split_tensors", "split_datasets", "initial_obs"):
+                if name in locals():
+                    del locals()[name]
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
 
     except optuna.TrialPruned:
+        # already handled/logged; just propagate
         raise
+
     except Exception as e:
+        # catch-all for anything before/after the inner try/finally
         import traceback
         logger.error(f"Trial {trial.number} failed with exception: {str(e)}")
         logger.error(f"Full traceback:\n{traceback.format_exc()}")
         raise
+
     finally:
-        # Aggressive cleanup to keep 15 parallel trials stable on one GPU
-        for name in ("trainer", "vae", "policy", "train_env", "val_env",
-                     "split_tensors", "split_datasets", "initial_obs"):
-            if name in locals():
-                del locals()[name]
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        gc.collect()
+        # Ensure run logger is closed even if failure happened very early
+        try:
+            if 'run' in locals():
+                run.close()
+        except Exception:
+            pass
+
 
 
 
