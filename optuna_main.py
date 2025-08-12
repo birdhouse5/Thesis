@@ -70,8 +70,8 @@ class OptunaConfig:
         self.hidden_dim = trial.suggest_categorical('hidden_dim', [256, 512, 1024, 2048])
         
         # Learning rate parameters
-        self.vae_lr = trial.suggest_loguniform('vae_lr', 1e-5, 3e-3)
-        self.policy_lr = trial.suggest_loguniform('policy_lr', 1e-5, 3e-3)
+        self.vae_lr = trial.suggest_float('vae_lr', 1e-5, 3e-3, log=True)
+        self.policy_lr = trial.suggest_float('policy_lr', 1e-5, 3e-3, log=True)
         
         # Generate experiment name
         self.exp_name = f"optuna_t{trial.number}_l{self.latent_dim}_h{self.hidden_dim}"
@@ -82,6 +82,53 @@ class OptunaConfig:
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary for logging"""
         return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+
+
+def update_vae_fixed(trainer):
+    """Fixed VAE update with proper gradient handling"""
+    if len(trainer.vae_buffer) < trainer.config.vae_batch_size:
+        return 0.0
+
+    indices = np.random.choice(len(trainer.vae_buffer), trainer.config.vae_batch_size, replace=False)
+    batch_traj = [trainer.vae_buffer[i] for i in indices]
+
+    total_loss = None
+    loss_count = 0
+
+    trainer.vae_optimizer.zero_grad()
+
+    for tr in batch_traj:
+        seq_len = len(tr["rewards"])
+        if seq_len < 2:
+            continue
+
+        max_t = min(seq_len - 1, 20)  
+        t = np.random.randint(1, max_t + 1)
+
+        obs_ctx = tr["observations"][:t].unsqueeze(0)        
+        act_ctx = tr["actions"][:t].unsqueeze(0)             
+        rew_ctx = tr["rewards"][:t].unsqueeze(0).unsqueeze(-1)  
+
+        vae_loss, _ = trainer.vae.compute_loss(
+            obs_ctx, act_ctx, rew_ctx, beta=trainer.config.vae_beta, context_len=t
+        )
+        
+        if total_loss is None:
+            total_loss = vae_loss
+        else:
+            total_loss = total_loss + vae_loss
+        loss_count += 1
+
+    if loss_count == 0:
+        return 0.0
+
+    # Backprop through the accumulated tensor loss
+    avg_loss = total_loss / loss_count
+    avg_loss.backward()
+    torch.nn.utils.clip_grad_norm_(trainer.vae.parameters(), trainer.config.max_grad_norm)
+    trainer.vae_optimizer.step()
+    
+    return float(avg_loss.item())
 
 
 def objective(trial: optuna.Trial) -> float:
@@ -123,6 +170,9 @@ def objective(trial: optuna.Trial) -> float:
         
         # Initialize trainer
         trainer = PPOTrainer(env=train_env, policy=policy, vae=vae, config=config)
+        
+        # CRITICAL FIX: Replace the broken VAE update method
+        trainer.update_vae = lambda: update_vae_fixed(trainer)
         
         # Training loop with early stopping
         episodes_trained = 0
