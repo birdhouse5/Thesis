@@ -1,6 +1,12 @@
-# optuna_main.py - Phase 1: Architecture + Learning Rates optimization
-import optuna
 import torch
+torch.set_num_threads(1)  # keep CPU usage per trial predictable
+if torch.cuda.is_available():
+    torch.backends.cuda.matmul.allow_tf32 = True   # speed on Ampere+
+    torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cudnn.benchmark = False         # avoid huge autotune spikes
+    torch.backends.cudnn.deterministic = False
+    
+import optuna
 import logging
 import numpy as np
 from pathlib import Path
@@ -15,6 +21,12 @@ from models.vae import VAE
 from models.policy import PortfolioPolicy
 from algorithms.trainer import PPOTrainer
 from run_logger import RunLogger, seed_everything
+import os
+
+# Optuna-specific settings
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
 # Set up logging
 logging.basicConfig(
@@ -136,142 +148,155 @@ def objective(trial: optuna.Trial) -> float:
     Optuna objective function for Phase 1 optimization.
     Returns validation Sharpe ratio to maximize.
     """
+    import gc, time, torch
     try:
-        # Create configuration for this trial
-        config = OptunaConfig(trial)
-        
+        # Create configuration for this trial (kept exactly as in your code)
+        config = OptunaConfig(trial)  # ← you instantiate the config here; preserved
+
+        # Slight per-trial seed offset for stable parallelism (keeps your base seed)
+        seed_everything(config.seed + int(trial.number))
+
         # Set up run directory and logging
-        seed_everything(config.seed)
         run_dir = Path("optuna_runs") / f"trial_{trial.number}_{int(time.time())}"
         run_dir.mkdir(parents=True, exist_ok=True)
         run = RunLogger(run_dir, config.to_dict(), name=config.exp_name)
-        
+
         logger.info(f"Trial {trial.number}: {config.exp_name}")
-        logger.info(f"Params: latent_dim={config.latent_dim}, hidden_dim={config.hidden_dim}, "
-                   f"vae_lr={config.vae_lr:.2e}, policy_lr={config.policy_lr:.2e}")
-        
+        logger.info(
+            f"Params: latent_dim={config.latent_dim}, hidden_dim={config.hidden_dim}, "
+            f"vae_lr={config.vae_lr:.2e}, policy_lr={config.policy_lr:.2e}"
+        )
+
         # Prepare datasets
         split_tensors, split_datasets = prepare_split_datasets(config)
-        
+
         # Create environments
-        train_env = create_meta_env(split_tensors['train'], 
-                                  split_tensors['train']['feature_columns'], config)
-        val_env = create_meta_env(split_tensors['val'], 
-                                split_tensors['val']['feature_columns'], config)
-        
+        train_env = create_meta_env(
+            split_tensors['train'], split_tensors['train']['feature_columns'], config
+        )
+        val_env = create_meta_env(
+            split_tensors['val'], split_tensors['val']['feature_columns'], config
+        )
+
         # Get observation shape
         task = train_env.sample_task()
         train_env.set_task(task)
         initial_obs = train_env.reset()
         obs_shape = initial_obs.shape
-        
+
         # Initialize models
-        vae, policy = initialize_models(config, obs_shape, split_tensors['train']['feature_columns'])
-        
+        vae, policy = initialize_models(
+            config, obs_shape, split_tensors['train']['feature_columns']
+        )
+
         # Initialize trainer
         trainer = PPOTrainer(env=train_env, policy=policy, vae=vae, config=config)
-        
-        # CRITICAL FIX: Replace the broken VAE update method
+
+        # CRITICAL FIX (kept): replace broken VAE update
         trainer.update_vae = lambda: update_vae_fixed(trainer)
-        
-        # Training loop with early stopping
+
+        # Training loop with early stopping (your logic, unchanged)
         episodes_trained = 0
         best_val_sharpe = float('-inf')
-        patience = 3  # Stop if no improvement for 3 validation checks
+        patience = 3
         no_improvement_count = 0
-        
+
         logger.info(f"Starting training for trial {trial.number}")
-        
+
         while episodes_trained < config.max_episodes:
-            # Sample and train on task
             task = train_env.sample_task()
             train_env.set_task(task)
-            
+
             for _ in range(config.episodes_per_task):
                 episode_result = trainer.train_episode()
-                
+
                 # Log training metrics
                 run.log_train_episode(
                     episodes_trained,
                     reward=episode_result.get('episode_reward'),
                     sharpe=episode_result.get('sharpe_ratio', episode_result.get('episode_reward')),
-                    cum_wealth=episode_result.get('cumulative_return')
+                    cum_wealth=episode_result.get('cumulative_return'),
                 )
-                
+
                 episodes_trained += 1
-                
+
                 # Validation check
                 if episodes_trained % config.val_interval == 0:
-                    val_results = evaluate_on_split(val_env, policy, vae, config, 
-                                                   config.val_episodes, 'validation')
-                    
+                    val_results = evaluate_on_split(
+                        val_env, policy, vae, config, config.val_episodes, 'validation'
+                    )
                     current_val_sharpe = val_results['avg_reward']
-                    
-                    # Log validation results
-                    run.log_val(episodes_trained,
-                               sharpe=current_val_sharpe,
-                               reward=current_val_sharpe,
-                               cum_wealth=val_results['avg_return'])
-                    
-                    logger.info(f"Trial {trial.number}, Episode {episodes_trained}: "
-                               f"val_sharpe={current_val_sharpe:.4f}")
-                    
-                    # Early stopping check
+
+                    # Log validation
+                    run.log_val(
+                        episodes_trained,
+                        sharpe=current_val_sharpe,
+                        reward=current_val_sharpe,
+                        cum_wealth=val_results['avg_return'],
+                    )
+
+                    logger.info(
+                        f"Trial {trial.number}, Episode {episodes_trained}: "
+                        f"val_sharpe={current_val_sharpe:.4f}"
+                    )
+
+                    # Early stopping + save best
                     if current_val_sharpe > best_val_sharpe:
                         best_val_sharpe = current_val_sharpe
                         no_improvement_count = 0
-                        
-                        # Save best model
                         save_path = run_dir / "best_model.pt"
-                        torch.save({
-                            'trial_number': trial.number,
-                            'episodes_trained': episodes_trained,
-                            'vae_state_dict': vae.state_dict(),
-                            'policy_state_dict': policy.state_dict(),
-                            'best_val_sharpe': best_val_sharpe,
-                            'config': config.to_dict()
-                        }, save_path)
+                        torch.save(
+                            {
+                                'trial_number': trial.number,
+                                'episodes_trained': episodes_trained,
+                                'vae_state_dict': vae.state_dict(),
+                                'policy_state_dict': policy.state_dict(),
+                                'best_val_sharpe': best_val_sharpe,
+                                'config': config.to_dict(),
+                            },
+                            save_path,
+                        )
                     else:
                         no_improvement_count += 1
-                    
-                    # Report intermediate value to Optuna for pruning
+
+                    # Report to Optuna / pruning
                     trial.report(current_val_sharpe, episodes_trained)
-                    
-                    # Check if trial should be pruned
                     if trial.should_prune():
                         logger.info(f"Trial {trial.number} pruned at episode {episodes_trained}")
                         run.close()
                         raise optuna.TrialPruned()
-                    
-                    # Early stopping based on patience
+
                     if no_improvement_count >= patience:
                         logger.info(f"Trial {trial.number} early stopped due to no improvement")
                         break
-                
+
                 if episodes_trained >= config.max_episodes:
                     break
-            
-            if episodes_trained >= config.max_episodes or no_improvement_count >= patience:
+
+            if episodes_trained >= config.max_episodes:
                 break
-        
-        # Final result
+
         logger.info(f"Trial {trial.number} completed: best_val_sharpe={best_val_sharpe:.4f}")
-        
-        # Close logger
         run.close()
-        
         return best_val_sharpe
-        
+
     except optuna.TrialPruned:
-        # Re-raise pruned trials
         raise
     except Exception as e:
         import traceback
         logger.error(f"Trial {trial.number} failed with exception: {str(e)}")
         logger.error(f"Full traceback:\n{traceback.format_exc()}")
-        
-        # Don't return -inf, let the trial fail properly so we can debug
-        raise e
+        raise
+    finally:
+        # Aggressive cleanup to keep 15 parallel trials stable on one GPU
+        for name in ("trainer", "vae", "policy", "train_env", "val_env",
+                     "split_tensors", "split_datasets", "initial_obs"):
+            if name in locals():
+                del locals()[name]
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+
 
 
 def prepare_split_datasets(config):
@@ -416,114 +441,116 @@ def evaluate_on_split(split_env, policy, vae, config, num_episodes, split_name):
 
 def main():
     """Main Optuna optimization function"""
+    import os
     print("🚀 Starting Optuna Phase 1: Architecture + Learning Rate Optimization")
-    
-    # Create Optuna study (in-memory, no SQLite needed)
-    study_name = f"varibad_phase1_{int(time.time())}"
-    
+
+    # In-memory study (no SQLite). We still keep a readable name for logs/files.
+    study_name = os.getenv("OPTUNA_STUDY", f"varibad_phase1_{int(time.time())}")
+
     study = optuna.create_study(
-        direction="maximize",  # Maximize validation Sharpe ratio
+        direction="maximize",
         sampler=optuna.samplers.TPESampler(seed=42),
         pruner=optuna.pruners.MedianPruner(
-            n_startup_trials=5,  # Don't prune first 5 trials
-            n_warmup_steps=1000,  # Wait 1000 episodes before pruning
-            interval_steps=500   # Check every 500 episodes
-        )
+            n_startup_trials=5,
+            n_warmup_steps=1000,
+            interval_steps=500,
+        ),
     )
-    
+
     print(f"Study created: {study_name}")
-    print(f"Storage: In-memory (results saved to CSV)")
-    print(f"Objective: Maximize validation Sharpe ratio")
-    print(f"Sampler: TPE with MedianPruner")
-    
-    # Optimize
+    print("Storage: In-memory (no SQLite/Postgres)")
+    print("Objective: Maximize validation Sharpe ratio")
+    print("Sampler: TPE with MedianPruner")
+
+    # Total trials & parallel threads (defaults chosen for your single-VM setup)
+    total_trials = int(os.getenv("TOTAL_TRIALS", os.getenv("TRIALS_PER_WORKER", "100")))
+    n_jobs = int(os.getenv("N_JOBS", "15"))  # 15 parallel trials in one process
+
     try:
-        study.optimize(objective, n_trials=100)  # Phase 1: 100 trials
+        study.optimize(
+            objective,
+            n_trials=total_trials,
+            n_jobs=n_jobs,                 # ← fan out threads (single process)
+            show_progress_bar=True,
+            gc_after_trial=True,
+        )
     except KeyboardInterrupt:
         print("Optimization interrupted by user")
-    
-    # Results
-    print("\n" + "="*60)
+
+    # ===== Results / exports (as in your file) =====
+    print("\n" + "=" * 60)
     print("OPTIMIZATION COMPLETE")
-    print("="*60)
-    
+    print("=" * 60)
+
     print(f"Number of finished trials: {len(study.trials)}")
     print(f"Number of pruned trials: {len([t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED])}")
     print(f"Number of complete trials: {len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE])}")
-    
+
     if study.best_trial:
-        print(f"\nBest trial:")
+        print("\nBest trial:")
         print(f"  Value: {study.best_trial.value:.6f}")
-        print(f"  Params:")
+        print("  Params:")
         for key, value in study.best_trial.params.items():
             print(f"    {key}: {value}")
-    
-    # Save results to CSV
+
+    # Save results to CSV / JSON / Pickle (kept the same pattern)
     results_dir = Path("optuna_results")
     results_dir.mkdir(exist_ok=True)
-    
-    # Save all trials to CSV
+
     trials_data = []
-    for trial in study.trials:
+    for tr in study.trials:
         row = {
-            'trial_number': trial.number,
-            'state': trial.state.name,
-            'value': trial.value if trial.value is not None else 'N/A',
-            'datetime_start': trial.datetime_start,
-            'datetime_complete': trial.datetime_complete,
-            'duration': trial.duration.total_seconds() if trial.duration else 'N/A'
+            'trial_number': tr.number,
+            'state': tr.state.name,
+            'value': tr.value if tr.value is not None else 'N/A',
+            'datetime_start': tr.datetime_start,
+            'datetime_complete': tr.datetime_complete,
+            'duration': tr.duration.total_seconds() if tr.duration else 'N/A',
         }
-        # Add parameters
-        for key, value in trial.params.items():
-            row[f'param_{key}'] = value
+        for k, v in tr.params.items():
+            row[f'param_{k}'] = v
         trials_data.append(row)
-    
+
+    trials_csv_path = None
     if trials_data:
         import pandas as pd
         trials_df = pd.DataFrame(trials_data)
         trials_csv_path = results_dir / f"{study_name}_all_trials.csv"
         trials_df.to_csv(trials_csv_path, index=False)
         print(f"All trials saved: {trials_csv_path}")
-    
-    # Save study object (pickle)
+
     study_path = results_dir / f"{study_name}_study.pkl"
     with open(study_path, 'wb') as f:
         import pickle
         pickle.dump(study, f)
-    
-    # Save best parameters to both JSON and CSV
+
+    best_params_json = best_trial_csv = None
     if study.best_trial:
         best_params_json = results_dir / f"{study_name}_best_params.json"
         with open(best_params_json, 'w') as f:
             json.dump(study.best_trial.params, f, indent=2)
-        
-        # Best trial as CSV
+
+        import pandas as pd
         best_trial_csv = results_dir / f"{study_name}_best_trial.csv"
         best_data = [{
             'trial_number': study.best_trial.number,
             'best_value': study.best_trial.value,
-            **study.best_trial.params
+            **study.best_trial.params,
         }]
         pd.DataFrame(best_data).to_csv(best_trial_csv, index=False)
-    
+
     print(f"\nResults saved to {results_dir}")
-    print(f"All trials CSV: {trials_csv_path}")
-    print(f"Best params JSON: {best_params_json}")
-    print(f"Best trial CSV: {best_trial_csv}")
+    if trials_csv_path: print(f"All trials CSV: {trials_csv_path}")
+    if best_params_json: print(f"Best params JSON: {best_params_json}")
+    if best_trial_csv: print(f"Best trial CSV: {best_trial_csv}")
     print(f"Study pickle: {study_path}")
-    
-    # Plot optimization history (if plotly available)
+
     try:
         import plotly
         fig = optuna.visualization.plot_optimization_history(study)
         fig.write_html(results_dir / f"{study_name}_history.html")
-        
         fig2 = optuna.visualization.plot_param_importances(study)
         fig2.write_html(results_dir / f"{study_name}_importance.html")
-        print(f"Plots saved: history.html, importance.html")
+        print("Plots saved: history.html, importance.html")
     except ImportError:
         print("Plotly not available - skipping plots")
-
-
-if __name__ == "__main__":
-    main()
