@@ -1,2 +1,2 @@
-- use Optuna for Hyperparameter Optimization HPO
-- sample > grid search (find papers)
+-> wehave implemente Optuna
+-> we now run a first architecture sweep, later we will do more parameter sweeps with the optimal architecture setting

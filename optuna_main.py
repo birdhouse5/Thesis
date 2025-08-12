@@ -51,7 +51,7 @@ class OptunaConfig:
         self.max_horizon = 60
         
         # Fixed training parameters (reasonable defaults)
-        self.max_episodes = 2000  # Reduced for faster trials
+        self.max_episodes = 5000  # Reduced for faster trials
         self.episodes_per_task = 5
         self.batch_size = 4096  # Memory-safe for 24GB
         self.vae_batch_size = 1024
