@@ -295,6 +295,10 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     
     logger.info(f"    Initial: {initial_rows:,} rows, {initial_nans:,} NaN values")
     
+    # === Remove rows with missing essential data first ===
+    df = df.dropna(subset=['date', 'ticker', 'close'])
+    logger.info(f"    After removing rows with missing essentials: {len(df):,} rows")
+    
     # === Check for rectangular structure ===
     date_counts = df.groupby('date').size()
     expected_tickers = df['ticker'].nunique()
@@ -302,19 +306,69 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     
     if len(irregular_dates) > 0:
         logger.warning(f"Found {len(irregular_dates)} dates with irregular ticker counts")
-        logger.info("Removing dates that don't have all tickers...")
+        
+        # Strategy 1: Keep only dates that have ALL tickers (most conservative)
         valid_dates = date_counts[date_counts == expected_tickers].index
-        df = df[df['date'].isin(valid_dates)]
-        logger.info(f"Kept {len(valid_dates)} dates with complete data")    
-
-    # === Remove rows with missing essential data ===
-    df = df.dropna(subset=['date', 'ticker', 'close', 'returns'])
+        df_filtered = df[df['date'].isin(valid_dates)]
+        
+        # Strategy 2: If we lose too much data, try filling missing tickers
+        data_loss_pct = (len(df) - len(df_filtered)) / len(df) * 100
+        
+        if data_loss_pct > 20:  # If we lose more than 20% of data
+            logger.info(f"High data loss ({data_loss_pct:.1f}%), trying to fill missing tickers...")
+            
+            # Create complete rectangular index
+            all_dates = sorted(df['date'].unique())
+            all_tickers = sorted(df['ticker'].unique())
+            complete_idx = pd.MultiIndex.from_product(
+                [all_dates, all_tickers], names=['date', 'ticker']
+            )
+            
+            # Reindex to ensure all date-ticker combinations exist
+            df_rect = df.set_index(['date', 'ticker']).reindex(complete_idx).reset_index()
+            
+            # Forward fill missing values within each ticker (carry last observation forward)
+            numeric_cols = df_rect.select_dtypes(include=[np.number]).columns
+            df_rect = df_rect.sort_values(['ticker', 'date'])
+            
+            for ticker in all_tickers:
+                ticker_mask = df_rect['ticker'] == ticker
+                # Forward fill within ticker, then backward fill for any remaining NaNs at start
+                df_rect.loc[ticker_mask, numeric_cols] = (
+                    df_rect.loc[ticker_mask, numeric_cols]
+                    .fillna(method='ffill')
+                    .fillna(method='bfill')
+                )
+            
+            # If still have NaNs, use cross-sectional median for that date
+            for col in numeric_cols:
+                if df_rect[col].isnull().any():
+                    df_rect[col] = df_rect.groupby('date')[col].transform(
+                        lambda x: x.fillna(x.median())
+                    )
+            
+            # Final fallback: use overall column median
+            df_rect[numeric_cols] = df_rect[numeric_cols].fillna(df_rect[numeric_cols].median())
+            
+            df = df_rect
+            logger.info(f"    After rectangular completion: {len(df):,} rows")
+        else:
+            df = df_filtered
+            logger.info(f"    After removing irregular dates: {len(df):,} rows")
     
-    # === Fill remaining NaNs with appropriate values ===
+    # === Generate returns if missing ===
+    if 'returns' not in df.columns or df['returns'].isnull().any():
+        logger.info("    Generating returns from close prices...")
+        df = df.sort_values(['ticker', 'date'])
+        df['returns'] = df.groupby('ticker')['close'].pct_change()
+    
+    # === Final cleanup ===
+    # Remove infinite values
+    df = df.replace([np.inf, -np.inf], np.nan)
+    
+    # Handle remaining NaNs with appropriate defaults
     numeric_columns = df.select_dtypes(include=[np.number]).columns
-    
-    # Create a copy to avoid SettingWithCopyWarning
-    df = df.copy()
+    df = df.copy()  # Avoid SettingWithCopyWarning
     
     for col in numeric_columns:
         if col.endswith('_norm'):
@@ -324,17 +378,19 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
             # RSI: fill with neutral value (50)
             df.loc[:, col] = df[col].fillna(50.0)
         elif 'volatility' in col.lower():
-            # Volatility: fill with median
-            df.loc[:, col] = df[col].fillna(df[col].median())
+            # Volatility: fill with small positive value
+            df.loc[:, col] = df[col].fillna(0.01)
         elif col in ['bb_position', 'high_low_pct']:
             # Bounded ratios: fill with neutral value (0.5)
             df.loc[:, col] = df[col].fillna(0.5)
+        elif col == 'returns':
+            # Returns: fill with 0 (no change)
+            df.loc[:, col] = df[col].fillna(0.0)
         else:
-            # Other features: forward fill then backward fill (using modern methods)
-            df.loc[:, col] = df[col].ffill().bfill()
+            # Other features: forward fill then use median
+            df.loc[:, col] = df[col].fillna(df[col].median())
     
-    # === Remove rows with infinite values ===
-    df = df.replace([np.inf, -np.inf], np.nan)
+    # Remove any remaining rows with NaNs (should be very few)
     df = df.dropna()
     
     # === Remove duplicates ===
@@ -342,23 +398,30 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     
     # === Ensure proper data types ===
     df['date'] = pd.to_datetime(df['date'])
+    df = df.sort_values(['date', 'ticker']).reset_index(drop=True)
     
-    complete_idx = pd.MultiIndex.from_product(
-        [sorted(df['date'].unique()), sorted(df['ticker'].unique())],
-        names=['date', 'ticker']
-    )
-    df = df.set_index(['date', 'ticker']).reindex(complete_idx).reset_index()
+    # === Final verification ===
+    final_dates = df['date'].nunique()
+    final_tickers = df['ticker'].nunique()
+    expected_rows = final_dates * final_tickers
+    actual_rows = len(df)
     
-    # Fill any gaps created by reindexing
-    numeric_cols = df.select_dtypes(include=[np.number]).columns
-    df[numeric_cols] = df.groupby('ticker')[numeric_cols].ffill().bfill()
-
-
-    final_rows = len(df)
     final_nans = df.isnull().sum().sum()
     
-    logger.info(f"    Final: {final_rows:,} rows, {final_nans:,} NaN values")
-    logger.info(f"     Removed: {initial_rows - final_rows:,} rows ({100*(initial_rows - final_rows)/initial_rows:.1f}%)")
+    logger.info(f"    Final: {actual_rows:,} rows, {final_nans:,} NaN values")
+    logger.info(f"    Removed: {initial_rows - actual_rows:,} rows ({100*(initial_rows - actual_rows)/initial_rows:.1f}%)")
+    logger.info(f"    Structure: {final_dates} dates × {final_tickers} tickers = {expected_rows} expected")
+    
+    if actual_rows != expected_rows:
+        logger.warning(f"    ⚠️  Not perfectly rectangular: {actual_rows} vs {expected_rows} rows")
+        # Show which dates are problematic
+        remaining_date_counts = df.groupby('date').size()
+        still_irregular = remaining_date_counts[remaining_date_counts != final_tickers]
+        if len(still_irregular) > 0:
+            logger.warning(f"    Still irregular dates: {len(still_irregular)}")
+            logger.warning(f"    Sample problematic dates: {list(still_irregular.index[:5])}")
+    else:
+        logger.info(f"    ✅ Dataset is perfectly rectangular")
     
     return df
 
