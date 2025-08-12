@@ -216,8 +216,12 @@ def objective(trial: optuna.Trial) -> float:
         # Re-raise pruned trials
         raise
     except Exception as e:
-        logger.error(f"Trial {trial.number} failed: {str(e)}")
-        return float('-inf')  # Return worst possible score for failed trials
+        import traceback
+        logger.error(f"Trial {trial.number} failed with exception: {str(e)}")
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
+        
+        # Don't return -inf, let the trial fail properly so we can debug
+        raise e
 
 
 def prepare_split_datasets(config):
