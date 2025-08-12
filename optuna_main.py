@@ -41,8 +41,8 @@ class OptunaConfig:
         # Fixed training parameters (reasonable defaults)
         self.max_episodes = 2000  # Reduced for faster trials
         self.episodes_per_task = 5
-        self.batch_size = 512  # Memory-safe for 24GB
-        self.vae_batch_size = 256
+        self.batch_size = 2048  # Memory-safe for 24GB
+        self.vae_batch_size = 1024
         
         # Fixed PPO parameters
         self.ppo_epochs = 4
@@ -59,7 +59,7 @@ class OptunaConfig:
         
         # Fixed validation parameters
         self.val_interval = 500
-        self.val_episodes = 30  # Reduced for faster validation
+        self.val_episodes = 50  # Reduced for faster validation
         self.test_episodes = 50
         self.log_interval = 100
         self.save_interval = 1000
