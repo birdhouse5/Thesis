@@ -54,7 +54,7 @@ class OptunaConfig:
         self.max_episodes = 4000  # Reduced for faster trials
         self.episodes_per_task = 5
         self.batch_size = 4096  # Memory-safe for 24GB
-        self.vae_batch_size = 1024
+        self.vae_batch_size = 2048
         
         # Fixed PPO parameters
         self.ppo_epochs = 4
