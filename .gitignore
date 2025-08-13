@@ -6,6 +6,7 @@ checkpoints/
 logs/
 experiments/
 environments/data/
+optuna_results/
 
 # python noise
 __pycache__/
