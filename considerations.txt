@@ -36,3 +36,8 @@ Policy:
     somewhere to see if there is improvement.
 - try large vs. small buffer size: variance-bias trade-off
 - try Portfolio policy using Dirichlet distribution for portfolio weights. (More principled than categorical approximation but computationally heavier)
+
+
+
+Graphs for Paper:
+- visualize the results of the first optuna run ()
