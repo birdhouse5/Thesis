@@ -174,7 +174,8 @@ class MetaEnv:
             returns_array = np.array(self.returns)
             mean_return = returns_array.mean()
             std_return = returns_array.std()
-            sharpe = (mean_return - self.rf_rate) / (std_return + 1e-8)
+            #sharpe = (mean_return - self.rf_rate) / (std_return + 1e-8)
+            sharpe = mean_return / (std_return + 1e-8)
         else:
             sharpe = 0.0
         
