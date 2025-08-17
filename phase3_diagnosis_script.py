@@ -233,9 +233,16 @@ def quick_validation(env, policy, vae, config, episodes=5):
                     obs_seq = torch.stack(trajectory_context['observations']).unsqueeze(0)
                     action_seq = torch.stack(trajectory_context['actions']).unsqueeze(0)
                     reward_seq = torch.stack(trajectory_context['rewards']).unsqueeze(0)
+                    
+                    # DEBUG: Print shapes before VAE encode
+                    print(f"    DEBUG - obs_seq: {obs_seq.shape}, action_seq: {action_seq.shape}, reward_seq: {reward_seq.shape}")
+                    
                     # Ensure reward has correct shape: (batch, seq_len, 1)
                     if reward_seq.dim() == 2:
                         reward_seq = reward_seq.unsqueeze(-1)
+                    
+                    print(f"    DEBUG - After reshape, reward_seq: {reward_seq.shape}")
+                    
                     mu, logvar, _ = vae.encode(obs_seq, action_seq, reward_seq)
                     latent = vae.reparameterize(mu, logvar)
                 
