@@ -232,7 +232,10 @@ def quick_validation(env, policy, vae, config, episodes=5):
                 else:
                     obs_seq = torch.stack(trajectory_context['observations']).unsqueeze(0)
                     action_seq = torch.stack(trajectory_context['actions']).unsqueeze(0)
-                    reward_seq = torch.stack(trajectory_context['rewards']).unsqueeze(0).unsqueeze(-1)
+                    reward_seq = torch.stack(trajectory_context['rewards']).unsqueeze(0)
+                    # Ensure reward has correct shape: (batch, seq_len, 1)
+                    if reward_seq.dim() == 2:
+                        reward_seq = reward_seq.unsqueeze(-1)
                     mu, logvar, _ = vae.encode(obs_seq, action_seq, reward_seq)
                     latent = vae.reparameterize(mu, logvar)
                 
