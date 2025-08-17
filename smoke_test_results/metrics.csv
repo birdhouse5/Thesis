@@ -1,0 +1,7 @@
+timestamp,split,scope,metric,value,episode,step
+2025-08-17T10:11:46,train,episode,reward,-73.39399719238281,1,
+2025-08-17T10:11:47,train,episode,reward,-73.37899017333984,2,
+2025-08-17T10:11:47,val,eval,reward,0.7796910002727693,2,
+2025-08-17T10:11:47,val,eval,cum_wealth,0.0,2,
+2025-08-17T10:11:47,val,eval,sharpe,0.7796910002727693,2,
+2025-08-17T10:11:47,train,episode,reward,-73.46113586425781,3,

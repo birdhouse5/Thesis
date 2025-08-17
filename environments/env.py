@@ -5,7 +5,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class MetaEnv:
-    def __init__(self, dataset: dict, feature_columns: list, seq_len: int = 60, min_horizon: int = 45, max_horizon: int = 60):
+    def __init__(self, dataset: dict, feature_columns: list, seq_len: int = 60, min_horizon: int = 45, max_horizon: int = 60, rf_rate=0.02):
         """
         Args:
             dataset: Dict with 'features' and 'raw_prices' tensors
@@ -19,6 +19,7 @@ class MetaEnv:
         self.seq_len = seq_len
         self.min_horizon = min_horizon
         self.max_horizon = max_horizon
+        self.rf_rate = rf_rate
         
         # Current episode state
         self.current_step = 0
@@ -173,7 +174,7 @@ class MetaEnv:
             returns_array = np.array(self.returns)
             mean_return = returns_array.mean()
             std_return = returns_array.std()
-            sharpe = mean_return / (std_return + 1e-8)
+            sharpe = mean_return - self.rf_rate / (std_return + 1e-8)
         else:
             sharpe = 0.0
         

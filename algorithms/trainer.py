@@ -393,6 +393,77 @@ class PPOTrainer:
         if "vae_optimizer" in state:
             self.vae_optimizer.load_state_dict(state["vae_optimizer"])
 
+# ----------------------------
+    # PHASE 3: Early stopping extension (add to end of PPOTrainer class)
+    # ----------------------------
+    
+    def __init_early_stopping(self):
+        """Initialize early stopping state (call this once)"""
+        if not hasattr(self, '_early_stopping_initialized'):
+            self.validation_scores = []
+            self.best_val_score = float('-inf')
+            self.patience_counter = 0
+            self.early_stopped = False
+            
+            # Get config params (with defaults)
+            self.es_patience = getattr(self.config, 'early_stopping_patience', 5)
+            self.es_min_delta = getattr(self.config, 'early_stopping_min_delta', 0.01)
+            self.es_min_episodes = getattr(self.config, 'min_episodes_before_stopping', 1000)
+            
+            self._early_stopping_initialized = True
+    
+    def add_validation_score(self, score: float) -> bool:
+        """
+        Add validation score and check if should stop early.
+        
+        Args:
+            score: Current validation score (higher is better)
+            
+        Returns:
+            bool: True if training should stop, False otherwise
+        """
+        self.__init_early_stopping()
+        
+        # Don't stop too early
+        if self.episode_count < self.es_min_episodes:
+            self.validation_scores.append(score)
+            return False
+        
+        self.validation_scores.append(score)
+        
+        # Check for improvement
+        if score > self.best_val_score + self.es_min_delta:
+            # Significant improvement
+            self.best_val_score = score
+            self.patience_counter = 0
+            logger.info(f"New best validation: {self.best_val_score:.4f}")
+            return False
+        else:
+            # No improvement
+            self.patience_counter += 1
+            logger.info(f"No improvement. Patience: {self.patience_counter}/{self.es_patience}")
+            
+            if self.patience_counter >= self.es_patience:
+                logger.info(f"Early stopping at episode {self.episode_count}")
+                self.early_stopped = True
+                return True
+            
+            return False
+    
+    def should_stop_early(self) -> bool:
+        """Check if training should stop early"""
+        self.__init_early_stopping()
+        return self.early_stopped
+    
+    def get_early_stopping_state(self) -> dict:
+        """Get early stopping state for checkpointing"""
+        self.__init_early_stopping()
+        return {
+            'validation_scores': self.validation_scores,
+            'best_val_score': self.best_val_score,
+            'patience_counter': self.patience_counter,
+            'early_stopped': self.early_stopped
+        }
 
 class ExperienceBuffer:
     """Buffer for storing PPO training data."""
