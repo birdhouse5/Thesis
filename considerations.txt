@@ -41,3 +41,14 @@ Policy:
 
 Graphs for Paper:
 - visualize the results of the first optuna run ()
+- compare the mean,var over sharpe ratios over all runs?
+
+
+Benchmarks:
+- random allocation
+- simple markowitz
+- buy and hold
+- RL
+- metatrader implementation?
+
+

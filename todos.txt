@@ -1,2 +1,11 @@
--> wehave implemente Optuna
--> we now run a first architecture sweep, later we will do more parameter sweeps with the optimal architecture setting
+-> we would like to run our phase3 where we test 
+        self.seq_len = trial.suggest_categorical('seq_len', [120, 150, 200])
+        self.max_episodes = trial.suggest_categorical('max_episodes', [2000, 4000, 6000, 8000])
+        self.early_stopping_patience = trial.suggest_categorical('early_stopping_patience', [3, 5, 8, 12])
+        self.early_stopping_min_delta = trial.suggest_categorical('early_stopping_min_delta', [0.001, 0.01, 0.05])
+        self.val_interval = trial.suggest_categorical('val_interval', [200, 300, 500])
+
+        and the rest being equal to the best trial run from phase 2 (46)
+    
+    issues:
+    we need to debug the negative sharpe (and potentially some dimensionality issue)

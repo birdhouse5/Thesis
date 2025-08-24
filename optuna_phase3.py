@@ -44,7 +44,8 @@ class OptunaPhase3Config:
         self.policy_lr = 0.0020289998766945
         self.vae_beta = 0.0125762666385515
         self.vae_update_freq = 5
-        self.seq_len = trial.suggest_categorical('seq_len', [120, 150, 200])
+        #self.seq_len = trial.suggest_categorical('seq_len', [120, 150, 200])
+        self.seq_len = 120
         self.episodes_per_task = 3
         self.batch_size = 8192
         self.vae_batch_size = 1024
