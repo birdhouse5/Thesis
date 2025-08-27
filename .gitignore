@@ -1,6 +1,7 @@
 # experiments
 runs/
 checkpoints/
+results/
 *.pt
 *.ckpt
 logs/
