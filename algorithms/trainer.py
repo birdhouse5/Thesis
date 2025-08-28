@@ -219,12 +219,15 @@ class PPOTrainer:
             next_obs, reward, done, info = self.env.step(action_cpu)
 
             # Store transition (CPU where appropriate)
-            traj["observations"].append(obs_tensor.squeeze(0).cpu())
-            traj["actions"].append(action.squeeze(0).cpu())
+            #traj["observations"].append(obs_tensor.squeeze(0).cpu())
+            #traj["actions"].append(action.squeeze(0).cpu())
+            traj["observations"].append(obs_tensor.squeeze(0).detach().cpu())#
+            traj["actions"].append(action.squeeze(0).detach().cpu())#
+            traj["latents"].append(latent.squeeze(0).detach().cpu()) #
             traj["rewards"].append(float(reward))
             traj["values"].append(value.squeeze().cpu())
             traj["log_probs"].append(log_prob.squeeze().cpu())
-            traj["latents"].append(latent.squeeze(0).cpu())
+            #traj["latents"].append(latent.squeeze(0).cpu())
             traj["dones"].append(bool(done))
 
             # Update context for VAE (keep on device)
@@ -369,39 +372,38 @@ class PPOTrainer:
     def update_vae(trainer):
         if len(trainer.vae_buffer) < trainer.config.vae_batch_size:
             return 0.0
-
+        
         indices = np.random.choice(len(trainer.vae_buffer), trainer.config.vae_batch_size, replace=False)
         batch_traj = [trainer.vae_buffer[i] for i in indices]
-
-        total_loss_value = 0.0  # Track loss as float, not tensor
+        total_loss_value = 0.0
         loss_count = 0
-
         trainer.vae_optimizer.zero_grad()
-
+        
         for tr in batch_traj:
             seq_len = len(tr["rewards"])
             if seq_len < 2:
                 continue
-
+                
             max_t = min(seq_len - 1, 20)  
             t = np.random.randint(1, max_t + 1)
-
-            obs_ctx = tr["observations"][:t].unsqueeze(0)        
-            act_ctx = tr["actions"][:t].unsqueeze(0)             
-            rew_ctx = tr["rewards"][:t].unsqueeze(0).unsqueeze(-1)  
-
+            
+            # CRITICAL FIX: Detach and clone to break computation graphs
+            obs_ctx = tr["observations"][:t].detach().clone().unsqueeze(0)        
+            act_ctx = tr["actions"][:t].detach().clone().unsqueeze(0)            
+            rew_ctx = tr["rewards"][:t].detach().clone().unsqueeze(0).unsqueeze(-1)
+            
             vae_loss, _ = trainer.vae.compute_loss(
                 obs_ctx, act_ctx, rew_ctx, beta=trainer.config.vae_beta, context_len=t
             )
             
-            # Backprop each loss individually instead of accumulating tensors
+            # Now safe to backprop - no shared computation graphs
             vae_loss.backward(retain_graph=False)
             total_loss_value += float(vae_loss.item())
             loss_count += 1
-
+        
         if loss_count == 0:
             return 0.0
-
+        
         torch.nn.utils.clip_grad_norm_(trainer.vae.parameters(), trainer.config.max_grad_norm)
         trainer.vae_optimizer.step()
         
