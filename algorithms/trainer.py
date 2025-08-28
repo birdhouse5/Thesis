@@ -75,7 +75,9 @@ class PPOTrainer:
             policy_loss = float(self.update_policy())
             self.experience_buffer.clear()
 
-        if self.episode_count % self.config.vae_update_freq == 0 and len(self.vae_buffer) >= self.config.vae_batch_size:
+        if (not getattr(self.config, 'disable_vae', False) and 
+            self.episode_count % self.config.vae_update_freq == 0 and 
+            len(self.vae_buffer) >= self.config.vae_batch_size):
             vae_loss = float(self.update_vae())
 
         # 4) Episode-level metrics
@@ -200,15 +202,7 @@ class PPOTrainer:
 
         while not done and step < self.config.max_horizon:
             # Encode context to get latent
-            if len(context["observations"]) == 0:
-                latent = torch.zeros(1, self.config.latent_dim, device=self.device)
-            else:
-                with torch.no_grad():
-                    obs_seq = torch.stack(context["observations"]).unsqueeze(0)  # (1, t, N, F)
-                    act_seq = torch.stack(context["actions"]).unsqueeze(0)       # (1, t, N)
-                    rew_seq = torch.stack(context["rewards"]).unsqueeze(0).unsqueeze(-1)  # (1, t, 1)
-                    mu, logvar, _ = self.vae.encode(obs_seq, act_seq, rew_seq)
-                    latent = self.vae.reparameterize(mu, logvar)
+            latent = self._get_latent_for_step(obs_tensor, context)
 
             # Track latent norms (for optional analysis)
             if not hasattr(self, "latent_magnitudes"):
@@ -392,6 +386,22 @@ class PPOTrainer:
             self.policy_optimizer.load_state_dict(state["policy_optimizer"])
         if "vae_optimizer" in state:
             self.vae_optimizer.load_state_dict(state["vae_optimizer"])
+    
+    def _get_latent_for_step(self, obs_tensor, trajectory_context):
+        """Get latent embedding - supports VAE ablation"""
+        if getattr(self.config, 'disable_vae', False):
+            # Ablation: use zero latent instead of VAE
+            return torch.zeros(1, self.config.latent_dim, device=self.device)
+        
+        # Normal VAE path (existing logic)
+        if len(trajectory_context['observations']) == 0:
+            return torch.zeros(1, self.config.latent_dim, device=self.device)
+        else:
+            obs_seq = torch.stack(trajectory_context['observations']).unsqueeze(0)
+            act_seq = torch.stack(trajectory_context['actions']).unsqueeze(0)  
+            rew_seq = torch.stack(trajectory_context['rewards']).unsqueeze(0).unsqueeze(-1)
+            mu, logvar, _ = self.vae.encode(obs_seq, act_seq, rew_seq)
+            return self.vae.reparameterize(mu, logvar)
 
 # ----------------------------
     # PHASE 3: Early stopping extension (add to end of PPOTrainer class)
