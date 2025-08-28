@@ -321,50 +321,91 @@ class PPOTrainer:
 
         return total_loss / max(self.config.ppo_epochs, 1)
 
-    def update_vae(self):
-        """Update VAE using random trajectory prefixes."""
-        if len(self.vae_buffer) < self.config.vae_batch_size:
+    # def update_vae(self):
+    #     """Update VAE using random trajectory prefixes."""
+    #     if len(self.vae_buffer) < self.config.vae_batch_size:
+    #         return 0.0
+
+    #     indices = np.random.choice(len(self.vae_buffer), self.config.vae_batch_size, replace=False)
+    #     batch_traj = [self.vae_buffer[i] for i in indices]
+
+    #     total_loss = 0.0
+    #     loss_count = 0
+
+    #     for tr in batch_traj:
+    #         seq_len = len(tr["rewards"])
+    #         if seq_len < 2:
+    #             continue
+
+    #         max_t = min(seq_len - 1, 20)  # cap for efficiency
+    #         t = np.random.randint(1, max_t + 1)
+
+    #         obs_ctx = tr["observations"][:t].unsqueeze(0)        # (1, t, N, F)
+    #         act_ctx = tr["actions"][:t].unsqueeze(0)             # (1, t, N)
+    #         rew_ctx = tr["rewards"][:t].unsqueeze(0).unsqueeze(-1)  # (1, t, 1)
+
+    #         # Full trajectory (if your VAE decoder needs it)
+    #         # obs_full = tr["observations"].unsqueeze(0)
+    #         # act_full = tr["actions"].unsqueeze(0)
+    #         # rew_full = tr["rewards"].unsqueeze(0).unsqueeze(-1)
+
+    #         vae_loss, _ = self.vae.compute_loss(
+    #             obs_ctx, act_ctx, rew_ctx, beta=self.config.vae_beta, context_len=t
+    #         )
+    #         total_loss += float(vae_loss)
+    #         loss_count += 1
+
+    #     if loss_count == 0:
+    #         return 0.0
+
+    #     avg_loss = total_loss / loss_count
+    #     self.vae_optimizer.zero_grad()
+    #     # If compute_loss returns a tensor on device, backprop it:
+    #     torch.tensor(avg_loss, device=self.device, dtype=torch.float32).backward()
+    #     torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
+    #     self.vae_optimizer.step()
+    #     return avg_loss
+
+    def update_vae(trainer):
+        if len(trainer.vae_buffer) < trainer.config.vae_batch_size:
             return 0.0
 
-        indices = np.random.choice(len(self.vae_buffer), self.config.vae_batch_size, replace=False)
-        batch_traj = [self.vae_buffer[i] for i in indices]
+        indices = np.random.choice(len(trainer.vae_buffer), trainer.config.vae_batch_size, replace=False)
+        batch_traj = [trainer.vae_buffer[i] for i in indices]
 
-        total_loss = 0.0
+        total_loss_value = 0.0  # Track loss as float, not tensor
         loss_count = 0
+
+        trainer.vae_optimizer.zero_grad()
 
         for tr in batch_traj:
             seq_len = len(tr["rewards"])
             if seq_len < 2:
                 continue
 
-            max_t = min(seq_len - 1, 20)  # cap for efficiency
+            max_t = min(seq_len - 1, 20)  
             t = np.random.randint(1, max_t + 1)
 
-            obs_ctx = tr["observations"][:t].unsqueeze(0)        # (1, t, N, F)
-            act_ctx = tr["actions"][:t].unsqueeze(0)             # (1, t, N)
-            rew_ctx = tr["rewards"][:t].unsqueeze(0).unsqueeze(-1)  # (1, t, 1)
+            obs_ctx = tr["observations"][:t].unsqueeze(0)        
+            act_ctx = tr["actions"][:t].unsqueeze(0)             
+            rew_ctx = tr["rewards"][:t].unsqueeze(0).unsqueeze(-1)  
 
-            # Full trajectory (if your VAE decoder needs it)
-            # obs_full = tr["observations"].unsqueeze(0)
-            # act_full = tr["actions"].unsqueeze(0)
-            # rew_full = tr["rewards"].unsqueeze(0).unsqueeze(-1)
-
-            vae_loss, _ = self.vae.compute_loss(
-                obs_ctx, act_ctx, rew_ctx, beta=self.config.vae_beta, context_len=t
+            vae_loss, _ = trainer.vae.compute_loss(
+                obs_ctx, act_ctx, rew_ctx, beta=trainer.config.vae_beta, context_len=t
             )
-            total_loss += float(vae_loss)
+            
+            # Backprop each loss individually instead of accumulating tensors
+            vae_loss.backward(retain_graph=False)
+            total_loss_value += float(vae_loss.item())
             loss_count += 1
 
         if loss_count == 0:
             return 0.0
 
-        avg_loss = total_loss / loss_count
-        self.vae_optimizer.zero_grad()
-        # If compute_loss returns a tensor on device, backprop it:
-        torch.tensor(avg_loss, device=self.device, dtype=torch.float32).backward()
-        torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
-        self.vae_optimizer.step()
-        return avg_loss
+        torch.nn.utils.clip_grad_norm_(trainer.vae.parameters(), trainer.config.max_grad_norm)
+        trainer.vae_optimizer.step()
+        
+        return total_loss_value / loss_count
 
     # ----------------------------
     # Checkpoint helpers
