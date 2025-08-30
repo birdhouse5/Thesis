@@ -1,2 +1,20 @@
--> Do ablation study
+-> Do ablation study [done]
 -> clean up repo
+	- write up clean flow
+-> re-run training on best hyperparameters to quantify randomness
+-> re-run benchmarking using multiple N whenever non-deterministic
+
+
+
+-----
+
+repo
+
+I ran optuna phase 1-3 for hyperparameter sweeps
+I analyzed results in 3 distinct scripts. Here I can consolidate into one analysis script.
+I ran backtests, this one I need to alter into a stochsticity-controlling version.
+I analyzed benchmarks and produces plots. This needs to be streamlined.
+
+What about main.py, deeper_analysis.py, generate_configs.py, validate_best_model.py and validate_phase2_results.py?
+
+I am using experiments/ and results/ -> this should be unified

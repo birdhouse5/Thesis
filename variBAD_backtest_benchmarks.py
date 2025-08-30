@@ -32,7 +32,7 @@ Usage examples:
     python variBAD_backtest_benchmarks.py --benchmarks equal_weight momentum risk_parity_invvol
 
     # Search specific directories for checkpoints
-    python variBAD_backtest_benchmarks.py --search-dirs experiments/results/optuna_phase1_runs validation_results
+    python variBAD_backtest_benchmarks.py --search-dirs results/optuna_phase1_runs validation_results
 
 Notes:
 - This script relies on your existing project modules:
@@ -182,9 +182,9 @@ class ModelLoader:
 def auto_discover_models(search_dirs: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     if search_dirs is None:
         search_dirs = [
-            "experiments/results/optuna_phase1_runs",
-            "experiments/results/optuna_phase2_runs",
-            "experiments/results/optuna_phase3_runs",
+            "results/optuna_phase1_runs",
+            "results/optuna_phase2_runs",
+            "results/optuna_phase3_runs",
             "optuna_phase1_results",
             "optuna_phase2_results",
             "optuna_phase3_results",

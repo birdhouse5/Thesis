@@ -16,7 +16,7 @@ def analyze_best_trial_details():
     print("="*60)
     
     # Look for trial 46 folder
-    trial_dirs = list(Path("experiments/results/optuna_phase2_runs").glob("trial_46_*"))
+    trial_dirs = list(Path("results/optuna_phase2_runs").glob("trial_46_*"))
     if not trial_dirs:
         print("❌ Trial 46 folder not found. Looking for alternative evidence...")
         return False

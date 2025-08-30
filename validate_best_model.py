@@ -55,7 +55,7 @@ class ModelValidator:
         
         if not self.model_path.exists():
             # Try to find the best model in phase 2 results
-            phase2_dir = Path("experiments/results/optuna_phase2_results")
+            phase2_dir = Path("results/optuna_phase2_results")
             if phase2_dir.exists():
                 best_model = phase2_dir / "best_model.pt"
                 if best_model.exists():
@@ -63,7 +63,7 @@ class ModelValidator:
                     logger.info(f"Found best model at {best_model}")
                 else:
                     # Look for trial 46 specifically
-                    trial_dirs = list(Path("experiments/results/optuna_phase2_runs").glob("trial_46_*"))
+                    trial_dirs = list(Path("results/optuna_phase2_runs").glob("trial_46_*"))
                     if trial_dirs:
                         trial_model = trial_dirs[0] / "best_model.pt"
                         if trial_model.exists():
@@ -611,12 +611,12 @@ def main():
     if not args.model_path:
         # Look for Phase 2 results
         possible_paths = [
-            "experiments/results/optuna_phase2_results/best_model.pt",
+            "results/optuna_phase2_results/best_model.pt",
             "optuna_phase2_results/best_model.pt"
         ]
         
         # Look for trial 46 specifically
-        trial_dirs = list(Path("experiments/results/optuna_phase2_runs").glob("trial_46_*"))
+        trial_dirs = list(Path("results/optuna_phase2_runs").glob("trial_46_*"))
         if trial_dirs:
             possible_paths.append(str(trial_dirs[0] / "best_model.pt"))
         
