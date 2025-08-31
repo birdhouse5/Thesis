@@ -627,6 +627,8 @@ def run_confirmatory_study(configs: List[Dict[str, Any]], results_dir: Path) -> 
             logger.info(f"  Seed {sidx + 1}/{len(seeds)}: seed={seed}")
             run_config = StudyConfig(trial_id=cfg["trial_id"], seed=seed, exp_name=f"final_t{cfg['trial_id']}_seed{seed}")
             for k, v in cfg.items():
+                if k in ("seed", "trial_id", "exp_name"):
+                    continue
                 if hasattr(run_config, k):
                     setattr(run_config, k, v)
 
@@ -721,6 +723,8 @@ def run_final_test_evaluation(study_results: Dict[str, Any], run_ablation: bool,
                 disable_vae=(method == "No_VAE"),
             )
             for k, v in winner_cfg.items():
+                if k in ("seed", "trial_id", "exp_name"):
+                    continue
                 if hasattr(test_cfg, k):
                     setattr(test_cfg, k, v)
 
