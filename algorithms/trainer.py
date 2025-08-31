@@ -2,11 +2,15 @@
 import logging
 from collections import deque
 from datetime import datetime
+from typing import Dict, List
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.optim import Adam
+
+# Needed to clone environments for batched rollouts
+from environments.env import MetaEnv
 
 logger = logging.getLogger(__name__)
 
@@ -14,23 +18,21 @@ logger = logging.getLogger(__name__)
 class PPOTrainer:
     """
     PPO Trainer for VariBAD Portfolio Optimization.
-    Handles both policy updates and VAE training.
+    Now supports optional batched rollouts (num_envs > 1) to improve GPU utilization.
     """
 
     def __init__(self, env, policy, vae, config):
-        """
-        NOTE: `logger` and `csv_logger` args are kept only for backward compatibility.
-        They are ignored in this refactor to keep the trainer decoupled from I/O.
-        """
         self.env = env
         self.policy = policy
         self.vae = vae
         self.config = config
 
-        # Training state
         self.episode_count = 0
         self.total_steps = 0
         self.device = torch.device(config.device)
+
+        # Vectorization knob
+        self.num_envs = max(1, int(getattr(config, "num_envs", 1)))
 
         # Optimizers
         self.policy_optimizer = Adam(policy.parameters(), lr=config.policy_lr)
@@ -54,20 +56,33 @@ class PPOTrainer:
         logger.info("PPO Trainer initialized")
         logger.info(f"Policy LR: {config.policy_lr}, VAE LR: {config.vae_lr}")
         logger.info(f"PPO epochs: {config.ppo_epochs}, clip ratio: {config.ppo_clip_ratio}")
+        if self.num_envs > 1:
+            logger.info(f"Trainer batched rollouts enabled: num_envs={self.num_envs}")
 
-    # ----------------------------
+    # ---------------------------------------------------------------------
     # Public training entry point
-    # ----------------------------
-    def train_episode(self):
-        """Train for one episode and return a rich dict of episode metrics."""
-        # 1) Collect on-policy trajectory (with online latent)
-        trajectory = self.collect_trajectory()
+    # ---------------------------------------------------------------------
+    def train_episode(self) -> Dict[str, float]:
+        """
+        Train for one (or many) episode(s).
+        If num_envs > 1, this collects *num_envs* trajectories in parallel and
+        pushes each into PPO/vae buffers.
+        """
+        if self.num_envs > 1:
+            trajectories = self.collect_trajectories_batched(self.num_envs)
+            # Add to buffers
+            for tr in trajectories:
+                self.vae_buffer.append(tr)
+                self.experience_buffer.add_trajectory(tr)
+            # Produce a compact summary (mean across the batch)
+            episode_reward_mean = float(np.mean([float(sum(tr["rewards"])) for tr in trajectories]))
+        else:
+            tr = self.collect_trajectory()
+            self.vae_buffer.append(tr)
+            self.experience_buffer.add_trajectory(tr)
+            episode_reward_mean = float(sum(tr["rewards"]))
 
-        # 2) Add to buffers
-        self.vae_buffer.append(trajectory)
-        self.experience_buffer.add_trajectory(trajectory)
-
-        # 3) Updates
+        # Updates
         policy_loss = 0.0
         vae_loss = 0.0
 
@@ -75,63 +90,14 @@ class PPOTrainer:
             policy_loss = float(self.update_policy())
             self.experience_buffer.clear()
 
-        if (not getattr(self.config, 'disable_vae', False) and 
-            self.episode_count % self.config.vae_update_freq == 0 and 
-            len(self.vae_buffer) >= self.config.vae_batch_size):
+        if (
+            not getattr(self.config, "disable_vae", False)
+            and self.episode_count % self.config.vae_update_freq == 0
+            and len(self.vae_buffer) >= self.config.vae_batch_size
+        ):
             vae_loss = float(self.update_vae())
 
-        # 4) Episode-level metrics
-        episode_reward = sum(trajectory["rewards"])
-        if torch.is_tensor(episode_reward):
-            episode_reward = episode_reward.item()
-
-        episode_length = len(trajectory["rewards"])
-        initial_capital = self.env.initial_capital
-        final_capital = self.env.current_capital
-        cumulative_return = (final_capital - initial_capital) / initial_capital
-
-        # Portfolio metrics computed from env episode trajectory
-        portfolio_allocations = []
-        significant_changes = 0
-        for i, step in enumerate(getattr(self.env, "episode_trajectory", [])):
-            if "action" in step:
-                portfolio_allocations.append(step["action"])
-                if i > 0 and "action" in self.env.episode_trajectory[i - 1]:
-                    prev = self.env.episode_trajectory[i - 1]["action"]
-                    change = np.linalg.norm(np.array(step["action"]) - np.array(prev))
-                    if change > 0.1:
-                        significant_changes += 1
-
-        if len(portfolio_allocations) > 0:
-            allocations_np = np.array(portfolio_allocations)
-            avg_allocation = np.mean(allocations_np, axis=0)
-            allocation_variance = float(np.var(allocations_np, axis=0).mean())
-            portfolio_concentration = float(np.max(avg_allocation))
-            portfolio_turnover = float(significant_changes / episode_length) if episode_length > 0 else 0.0
-        else:
-            avg_allocation = np.zeros(self.config.num_assets)
-            allocation_variance = 0.0
-            portfolio_concentration = 0.0
-            portfolio_turnover = 0.0
-
-        # Risk metrics from capital history
-        if hasattr(self.env, "capital_history") and len(self.env.capital_history) > 1:
-            capital_history = np.array(self.env.capital_history)
-            returns_series = np.diff(capital_history) / capital_history[:-1]
-
-            running_max = np.maximum.accumulate(capital_history)
-            drawdown = (capital_history - running_max) / running_max
-            max_drawdown = float(np.min(drawdown))
-
-            returns_volatility = float(np.std(returns_series)) if len(returns_series) > 1 else 0.0
-            sharpe_ratio = float(episode_reward)  # your reward is Sharpe per step aggregated as episode sum/mean
-        else:
-            max_drawdown = 0.0
-            returns_volatility = 0.0
-            sharpe_ratio = float(episode_reward)
-
-        # Update rolling stats
-        self.episode_rewards.append(float(episode_reward))
+        self.episode_rewards.append(float(episode_reward_mean))
         if policy_loss > 0:
             self.policy_losses.append(float(policy_loss))
         if vae_loss > 0:
@@ -139,133 +105,184 @@ class PPOTrainer:
 
         self.episode_count += 1
 
-        # 5) Pack episode details (returned to caller; caller logs via RunLogger)
-        episode_details = {
-            "episode_reward": float(episode_reward),
+        return {
+            "episode_reward": float(episode_reward_mean),
             "policy_loss": float(policy_loss),
             "vae_loss": float(vae_loss),
-            "episode_length": int(episode_length),
-            "initial_capital": float(initial_capital),
-            "final_capital": float(final_capital),
-            "cumulative_return": float(cumulative_return),
-            "sharpe_ratio": float(sharpe_ratio),
-            "max_drawdown": float(max_drawdown),
-            "returns_volatility": float(returns_volatility),
-            "portfolio_concentration": float(portfolio_concentration),
-            "portfolio_turnover": float(portfolio_turnover),
-            "allocation_variance": float(allocation_variance),
-            "num_trades": int(significant_changes),
-            "avg_cash_position": float(
-                1.0 - np.mean([np.sum(a) for a in portfolio_allocations])
-            ) if len(portfolio_allocations) > 0 else 0.0,
-            "task_id": getattr(self.env, "task_id", None),
             "total_steps": int(self.total_steps),
         }
 
-        # Optional latent magnitude stats (kept for analysis; not required)
-        if hasattr(self, "latent_magnitudes") and self.latent_magnitudes:
-            lm = list(self.latent_magnitudes)
-            episode_details.update(
-                {
-                    "avg_latent_magnitude": float(np.mean(lm)),
-                    "std_latent_magnitude": float(np.std(lm)),
-                    "max_latent_magnitude": float(np.max(lm)),
-                }
-            )
-
-        return episode_details
-
-    # ----------------------------
-    # Trajectory collection
-    # ----------------------------
+    # ---------------------------------------------------------------------
+    # Trajectory collection (single)
+    # ---------------------------------------------------------------------
     def collect_trajectory(self):
-        """Collect a single episode trajectory with online latent updates."""
-        traj = {
-            "observations": [],
-            "actions": [],
-            "rewards": [],
-            "values": [],
-            "log_probs": [],
-            "latents": [],
-            "dones": [],
-        }
+        traj = {"observations": [], "actions": [], "rewards": [], "values": [], "log_probs": [], "latents": [], "dones": []}
 
-        # Reset env and prepare tensors
         obs = self.env.reset()
-        obs_tensor = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+        obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=self.device, non_blocking=True).unsqueeze(0)
 
-        # Context τ:t for VAE encoder
         context = {"observations": [], "actions": [], "rewards": []}
-
         done = False
         step = 0
 
         while not done and step < self.config.max_horizon:
-            # Encode context to get latent
             latent = self._get_latent_for_step(obs_tensor, context)
 
-            # Track latent norms (for optional analysis)
-            if not hasattr(self, "latent_magnitudes"):
-                self.latent_magnitudes = deque(maxlen=1000)
-            self.latent_magnitudes.append(torch.norm(latent).item())
-
-            # Policy step
             with torch.no_grad():
-                action, value = self.policy.act(obs_tensor, latent, deterministic=False)
-                _, log_prob, _ = self.policy.evaluate_actions(obs_tensor, latent, action)
+                action, _ = self.policy.act(obs_tensor, latent, deterministic=False)
+                values, log_prob, _ = self.policy.evaluate_actions(obs_tensor, latent, action)
 
-            # Env step (requires numpy)
             action_cpu = action.squeeze(0).detach().cpu().numpy()
-            next_obs, reward, done, info = self.env.step(action_cpu)
+            next_obs, reward, done, _ = self.env.step(action_cpu)
 
-            # Store transition (CPU where appropriate)
-            #traj["observations"].append(obs_tensor.squeeze(0).cpu())
-            #traj["actions"].append(action.squeeze(0).cpu())
-            traj["observations"].append(obs_tensor.squeeze(0).detach().cpu())#
-            traj["actions"].append(action.squeeze(0).detach().cpu())#
-            traj["latents"].append(latent.squeeze(0).detach().cpu()) #
+            # Store (CPU)
+            traj["observations"].append(obs_tensor.squeeze(0).detach().cpu())
+            traj["actions"].append(action.squeeze(0).detach().cpu())
+            traj["latents"].append(latent.squeeze(0).detach().cpu())
             traj["rewards"].append(float(reward))
-            traj["values"].append(value.squeeze().cpu())
+            traj["values"].append(values.squeeze().cpu())
             traj["log_probs"].append(log_prob.squeeze().cpu())
-            #traj["latents"].append(latent.squeeze(0).cpu())
             traj["dones"].append(bool(done))
 
-            # Update context for VAE (keep on device)
+            # Update context (GPU)
             context["observations"].append(obs_tensor.squeeze(0).detach())
             context["actions"].append(action.squeeze(0).detach())
             context["rewards"].append(torch.tensor(reward, device=self.device))
 
-            # Next step
             if not done:
-                obs_tensor = torch.tensor(next_obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+                obs_tensor = torch.as_tensor(next_obs, dtype=torch.float32, device=self.device, non_blocking=True).unsqueeze(0)
 
             step += 1
             self.total_steps += 1
 
-        # Stack to tensors on device
-        traj["observations"] = torch.stack(traj["observations"]).to(self.device)  # (T, N, F)
-        traj["actions"] = torch.stack(traj["actions"]).to(self.device)            # (T, N)
-        traj["values"] = torch.stack(traj["values"]).to(self.device)              # (T,)
-        traj["log_probs"] = torch.stack(traj["log_probs"]).to(self.device)        # (T,)
-        traj["latents"] = torch.stack(traj["latents"]).to(self.device)            # (T, latent_dim)
-        traj["rewards"] = torch.tensor(traj["rewards"], dtype=torch.float32, device=self.device)  # (T,)
-        # dones remain list[bool] for GAE logic
+        # Stack to device
+        traj["observations"] = torch.stack(traj["observations"]).to(self.device)
+        traj["actions"] = torch.stack(traj["actions"]).to(self.device)
+        traj["values"] = torch.stack(traj["values"]).to(self.device)
+        traj["log_probs"] = torch.stack(traj["log_probs"]).to(self.device)
+        traj["latents"] = torch.stack(traj["latents"]).to(self.device)
+        traj["rewards"] = torch.tensor(traj["rewards"], dtype=torch.float32, device=self.device)
         return traj
 
-    # ----------------------------
+    # ---------------------------------------------------------------------
+    # Trajectory collection (batched)
+    # ---------------------------------------------------------------------
+    def _clone_env(self) -> MetaEnv:
+        # Rebuild MetaEnv with same dataset + parameters
+        src = self.env
+        return MetaEnv(
+            dataset={"features": src.dataset["features"], "raw_prices": src.dataset["raw_prices"]},
+            feature_columns=src.feature_columns,
+            seq_len=src.seq_len,
+            min_horizon=src.min_horizon,
+            max_horizon=src.max_horizon,
+        )
+
+    def collect_trajectories_batched(self, B: int) -> List[Dict]:
+        B = max(1, int(B))
+        envs = [self._clone_env() for _ in range(B)]
+        for e in envs:
+            e.set_task(e.sample_task())
+        obs_np = [e.reset() for e in envs]
+        obs = torch.as_tensor(np.stack(obs_np, axis=0), dtype=torch.float32, device=self.device, non_blocking=True)
+
+        done = np.zeros(B, dtype=bool)
+        step = 0
+
+        # Per-env context for VAE
+        ctx_obs = [[] for _ in range(B)]
+        ctx_act = [[] for _ in range(B)]
+        ctx_rew = [[] for _ in range(B)]
+
+        # Per-env trajectories
+        trajs = [
+            {"observations": [], "actions": [], "rewards": [], "values": [], "log_probs": [], "latents": [], "dones": []}
+            for _ in range(B)
+        ]
+
+        while not np.all(done) and step < self.config.max_horizon:
+            # Build latent per env
+            latents = []
+            for i in range(B):
+                if getattr(self.config, "disable_vae", False) or len(ctx_obs[i]) == 0 or done[i]:
+                    latents.append(torch.zeros(1, self.config.latent_dim, device=self.device))
+                else:
+                    o = torch.stack(ctx_obs[i]).unsqueeze(0)
+                    a = torch.stack(ctx_act[i]).unsqueeze(0)
+                    r = torch.stack(ctx_rew[i]).unsqueeze(0).unsqueeze(-1)
+                    mu, logvar, _ = self.vae.encode(o, a, r)
+                    latents.append(self.vae.reparameterize(mu, logvar))
+            latent = torch.cat(latents, dim=0)  # [B, latent]
+
+            # Policy step (batched)
+            with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
+                action, _ = self.policy.act(obs, latent, deterministic=False)
+                values, log_probs, _ = self.policy.evaluate_actions(obs, latent, action)
+
+            action_np = action.detach().cpu().numpy()
+
+            next_obs_list = []
+            for i, e in enumerate(envs):
+                if done[i]:
+                    next_obs_list.append(obs_np[i])
+                    continue
+
+                o2, r, d, _ = e.step(action_np[i])
+                # Store transition for env i
+                trajs[i]["observations"].append(obs[i].detach().cpu())
+                trajs[i]["actions"].append(action[i].detach().cpu())
+                trajs[i]["latents"].append(latent[i].detach().cpu())
+                trajs[i]["rewards"].append(float(r))
+                trajs[i]["values"].append(values[i].detach().cpu())
+                trajs[i]["log_probs"].append(log_probs[i].detach().cpu())
+                trajs[i]["dones"].append(bool(d))
+
+                if not getattr(self.config, "disable_vae", False):
+                    ctx_obs[i].append(obs[i].detach())
+                    ctx_act[i].append(action[i].detach())
+                    ctx_rew[i].append(torch.tensor(r, device=self.device))
+
+                done[i] = d
+                next_obs_list.append(o2)
+
+            obs_np = next_obs_list
+            obs = torch.as_tensor(np.stack(obs_np, axis=0), dtype=torch.float32, device=self.device, non_blocking=True)
+
+            step += 1
+            self.total_steps += int(np.sum(~done))  # count active steps
+
+        # Stack to device per env
+        for i in range(B):
+            if len(trajs[i]["rewards"]) == 0:
+                # Ensure non-empty trajectories
+                trajs[i]["observations"] = torch.zeros((1,) + self.env.reset().shape, dtype=torch.float32, device=self.device)
+                trajs[i]["actions"] = torch.zeros((1, self.config.num_assets), dtype=torch.float32, device=self.device)
+                trajs[i]["values"] = torch.zeros(1, dtype=torch.float32, device=self.device)
+                trajs[i]["log_probs"] = torch.zeros(1, dtype=torch.float32, device=self.device)
+                trajs[i]["latents"] = torch.zeros((1, self.config.latent_dim), dtype=torch.float32, device=self.device)
+                trajs[i]["rewards"] = torch.zeros(1, dtype=torch.float32, device=self.device)
+                trajs[i]["dones"] = [True]
+                continue
+
+            for k in ["observations", "actions", "values", "log_probs", "latents"]:
+                trajs[i][k] = torch.stack(trajs[i][k]).to(self.device)
+            trajs[i]["rewards"] = torch.tensor(trajs[i]["rewards"], dtype=torch.float32, device=self.device)
+
+        return trajs
+
+    # ---------------------------------------------------------------------
     # PPO / VAE updates
-    # ----------------------------
+    # ---------------------------------------------------------------------
     def compute_advantages(self, trajectory):
-        """Compute GAE advantages."""
-        rewards = trajectory["rewards"]  # (T,)
-        values = trajectory["values"]    # (T,)
+        rewards = trajectory["rewards"]
+        values = trajectory["values"]
         dones = trajectory["dones"]
 
         advantages = torch.zeros_like(rewards)
         returns = torch.zeros_like(rewards)
 
         gae = 0.0
-        next_value = 0.0  # terminal value = 0
+        next_value = 0.0
 
         for t in reversed(range(len(rewards))):
             delta = rewards[t] + self.config.discount_factor * next_value * (1 - int(dones[t])) - values[t]
@@ -278,11 +295,10 @@ class PPOTrainer:
         return advantages, returns
 
     def update_policy(self):
-        """Update policy using PPO."""
         all_traj = self.experience_buffer.get_all()
-        total_loss = 0.0
+        if not all_traj:
+            return 0.0
 
-        # Build batch
         b_obs, b_act, b_lat, b_adv, b_ret, b_logp_old = [], [], [], [], [], []
         for tr in all_traj:
             adv, ret = self.compute_advantages(tr)
@@ -293,127 +309,76 @@ class PPOTrainer:
             b_ret.append(ret)
             b_logp_old.append(tr["log_probs"])
 
-        batch_obs = torch.cat(b_obs, dim=0)         # (B, N, F)
-        batch_actions = torch.cat(b_act, dim=0)     # (B, N)
-        batch_latents = torch.cat(b_lat, dim=0)     # (B, latent_dim)
-        batch_adv = torch.cat(b_adv, dim=0)         # (B,)
-        batch_ret = torch.cat(b_ret, dim=0)         # (B,)
-        batch_logp_old = torch.cat(b_logp_old, dim=0)  # (B,)
+        batch_obs = torch.cat(b_obs, dim=0)
+        batch_actions = torch.cat(b_act, dim=0)
+        batch_latents = torch.cat(b_lat, dim=0)
+        batch_adv = torch.cat(b_adv, dim=0)
+        batch_ret = torch.cat(b_ret, dim=0)
+        batch_logp_old = torch.cat(b_logp_old, dim=0)
 
-        # PPO epochs
+        total_loss = 0.0
         for _ in range(self.config.ppo_epochs):
-            values, log_probs, entropy = self.policy.evaluate_actions(batch_obs, batch_latents, batch_actions)
-            values = values.squeeze(-1)        # (B,)
-            log_probs = log_probs.squeeze(-1)  # (B,)
-            entropy = entropy.mean()           # scalar
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
+                values, log_probs, entropy = self.policy.evaluate_actions(batch_obs, batch_latents, batch_actions)
+                values = values.squeeze(-1)
+                log_probs = log_probs.squeeze(-1)
+                entropy = entropy.mean()
 
-            ratio = torch.exp(log_probs - batch_logp_old)
-            surr1 = ratio * batch_adv
-            surr2 = torch.clamp(ratio, 1 - self.config.ppo_clip_ratio, 1 + self.config.ppo_clip_ratio) * batch_adv
-            policy_loss = -torch.min(surr1, surr2).mean()
-            value_loss = F.mse_loss(values, batch_ret)
-
-            loss = policy_loss + self.config.value_loss_coef * value_loss - self.config.entropy_coef * entropy
+                ratio = torch.exp(log_probs - batch_logp_old)
+                surr1 = ratio * batch_adv
+                surr2 = torch.clamp(ratio, 1 - self.config.ppo_clip_ratio, 1 + self.config.ppo_clip_ratio) * batch_adv
+                policy_loss = -torch.min(surr1, surr2).mean()
+                value_loss = F.mse_loss(values, batch_ret)
+                loss = policy_loss + self.config.value_loss_coef * value_loss - self.config.entropy_coef * entropy
 
             self.policy_optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
             self.policy_optimizer.step()
-
             total_loss += float(loss.item())
 
         return total_loss / max(self.config.ppo_epochs, 1)
 
-    # def update_vae(self):
-    #     """Update VAE using random trajectory prefixes."""
-    #     if len(self.vae_buffer) < self.config.vae_batch_size:
-    #         return 0.0
-
-    #     indices = np.random.choice(len(self.vae_buffer), self.config.vae_batch_size, replace=False)
-    #     batch_traj = [self.vae_buffer[i] for i in indices]
-
-    #     total_loss = 0.0
-    #     loss_count = 0
-
-    #     for tr in batch_traj:
-    #         seq_len = len(tr["rewards"])
-    #         if seq_len < 2:
-    #             continue
-
-    #         max_t = min(seq_len - 1, 20)  # cap for efficiency
-    #         t = np.random.randint(1, max_t + 1)
-
-    #         obs_ctx = tr["observations"][:t].unsqueeze(0)        # (1, t, N, F)
-    #         act_ctx = tr["actions"][:t].unsqueeze(0)             # (1, t, N)
-    #         rew_ctx = tr["rewards"][:t].unsqueeze(0).unsqueeze(-1)  # (1, t, 1)
-
-    #         # Full trajectory (if your VAE decoder needs it)
-    #         # obs_full = tr["observations"].unsqueeze(0)
-    #         # act_full = tr["actions"].unsqueeze(0)
-    #         # rew_full = tr["rewards"].unsqueeze(0).unsqueeze(-1)
-
-    #         vae_loss, _ = self.vae.compute_loss(
-    #             obs_ctx, act_ctx, rew_ctx, beta=self.config.vae_beta, context_len=t
-    #         )
-    #         total_loss += float(vae_loss)
-    #         loss_count += 1
-
-    #     if loss_count == 0:
-    #         return 0.0
-
-    #     avg_loss = total_loss / loss_count
-    #     self.vae_optimizer.zero_grad()
-    #     # If compute_loss returns a tensor on device, backprop it:
-    #     torch.tensor(avg_loss, device=self.device, dtype=torch.float32).backward()
-    #     torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
-    #     self.vae_optimizer.step()
-    #     return avg_loss
-
-    def update_vae(trainer):
-        if len(trainer.vae_buffer) < trainer.config.vae_batch_size:
+    def update_vae(self):
+        if len(self.vae_buffer) < self.config.vae_batch_size:
             return 0.0
-        
-        indices = np.random.choice(len(trainer.vae_buffer), trainer.config.vae_batch_size, replace=False)
-        batch_traj = [trainer.vae_buffer[i] for i in indices]
+
+        indices = np.random.choice(len(self.vae_buffer), self.config.vae_batch_size, replace=False)
+        batch_traj = [self.vae_buffer[i] for i in indices]
         total_loss_value = 0.0
         loss_count = 0
-        trainer.vae_optimizer.zero_grad()
-        
+        self.vae_optimizer.zero_grad()
+
         for tr in batch_traj:
             seq_len = len(tr["rewards"])
             if seq_len < 2:
                 continue
-                
-            max_t = min(seq_len - 1, 20)  
+
+            max_t = min(seq_len - 1, 20)
             t = np.random.randint(1, max_t + 1)
-            
-            # CRITICAL FIX: Detach and clone to break computation graphs
-            obs_ctx = tr["observations"][:t].detach().clone().unsqueeze(0)        
-            act_ctx = tr["actions"][:t].detach().clone().unsqueeze(0)            
+
+            obs_ctx = tr["observations"][:t].detach().clone().unsqueeze(0)
+            act_ctx = tr["actions"][:t].detach().clone().unsqueeze(0)
             rew_ctx = tr["rewards"][:t].detach().clone().unsqueeze(0).unsqueeze(-1)
-            
-            vae_loss, _ = trainer.vae.compute_loss(
-                obs_ctx, act_ctx, rew_ctx, beta=trainer.config.vae_beta, context_len=t
-            )
-            
-            # Now safe to backprop - no shared computation graphs
+
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
+                vae_loss, _ = self.vae.compute_loss(obs_ctx, act_ctx, rew_ctx, beta=self.config.vae_beta, context_len=t)
+
             vae_loss.backward(retain_graph=False)
             total_loss_value += float(vae_loss.item())
             loss_count += 1
-        
+
         if loss_count == 0:
             return 0.0
-        
-        torch.nn.utils.clip_grad_norm_(trainer.vae.parameters(), trainer.config.max_grad_norm)
-        trainer.vae_optimizer.step()
-        
+
+        torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
+        self.vae_optimizer.step()
         return total_loss_value / loss_count
 
-    # ----------------------------
-    # Checkpoint helpers
-    # ----------------------------
+    # ---------------------------------------------------------------------
+    # Checkpoint helpers (unchanged)
+    # ---------------------------------------------------------------------
     def get_state(self):
-        """Get trainer state for checkpointing."""
         return {
             "episode_count": self.episode_count,
             "total_steps": self.total_steps,
@@ -422,102 +387,28 @@ class PPOTrainer:
         }
 
     def load_state(self, state):
-        """Load trainer state from checkpoint."""
         self.episode_count = state.get("episode_count", 0)
         self.total_steps = state.get("total_steps", 0)
         if "policy_optimizer" in state:
             self.policy_optimizer.load_state_dict(state["policy_optimizer"])
         if "vae_optimizer" in state:
             self.vae_optimizer.load_state_dict(state["vae_optimizer"])
-    
+
     def _get_latent_for_step(self, obs_tensor, trajectory_context):
-        """Get latent embedding - supports VAE ablation"""
-        if getattr(self.config, 'disable_vae', False):
-            # Ablation: use zero latent instead of VAE
+        if getattr(self.config, "disable_vae", False):
             return torch.zeros(1, self.config.latent_dim, device=self.device)
-        
-        # Normal VAE path (existing logic)
-        if len(trajectory_context['observations']) == 0:
+        if len(trajectory_context["observations"]) == 0:
             return torch.zeros(1, self.config.latent_dim, device=self.device)
-        else:
-            obs_seq = torch.stack(trajectory_context['observations']).unsqueeze(0)
-            act_seq = torch.stack(trajectory_context['actions']).unsqueeze(0)  
-            rew_seq = torch.stack(trajectory_context['rewards']).unsqueeze(0).unsqueeze(-1)
-            mu, logvar, _ = self.vae.encode(obs_seq, act_seq, rew_seq)
-            return self.vae.reparameterize(mu, logvar)
+        obs_seq = torch.stack(trajectory_context["observations"]).unsqueeze(0)
+        act_seq = torch.stack(trajectory_context["actions"]).unsqueeze(0)
+        rew_seq = torch.stack(trajectory_context["rewards"]).unsqueeze(0).unsqueeze(-1)
+        mu, logvar, _ = self.vae.encode(obs_seq, act_seq, rew_seq)
+        return self.vae.reparameterize(mu, logvar)
 
-# ----------------------------
-    # PHASE 3: Early stopping extension (add to end of PPOTrainer class)
-    # ----------------------------
-    
-    def __init_early_stopping(self):
-        """Initialize early stopping state (call this once)"""
-        if not hasattr(self, '_early_stopping_initialized'):
-            self.validation_scores = []
-            self.best_val_score = float('-inf')
-            self.patience_counter = 0
-            self.early_stopped = False
-            
-            # Get config params (with defaults)
-            self.es_patience = getattr(self.config, 'early_stopping_patience', 5)
-            self.es_min_delta = getattr(self.config, 'early_stopping_min_delta', 0.01)
-            self.es_min_episodes = getattr(self.config, 'min_episodes_before_stopping', 1000)
-            
-            self._early_stopping_initialized = True
-    
-    def add_validation_score(self, score: float) -> bool:
-        """
-        Add validation score and check if should stop early.
-        
-        Args:
-            score: Current validation score (higher is better)
-            
-        Returns:
-            bool: True if training should stop, False otherwise
-        """
-        self.__init_early_stopping()
-        
-        # Don't stop too early
-        if self.episode_count < self.es_min_episodes:
-            self.validation_scores.append(score)
-            return False
-        
-        self.validation_scores.append(score)
-        
-        # Check for improvement
-        if score > self.best_val_score + self.es_min_delta:
-            # Significant improvement
-            self.best_val_score = score
-            self.patience_counter = 0
-            logger.info(f"New best validation: {self.best_val_score:.4f}")
-            return False
-        else:
-            # No improvement
-            self.patience_counter += 1
-            logger.info(f"No improvement. Patience: {self.patience_counter}/{self.es_patience}")
-            
-            if self.patience_counter >= self.es_patience:
-                logger.info(f"Early stopping at episode {self.episode_count}")
-                self.early_stopped = True
-                return True
-            
-            return False
-    
-    def should_stop_early(self) -> bool:
-        """Check if training should stop early"""
-        self.__init_early_stopping()
-        return self.early_stopped
-    
-    def get_early_stopping_state(self) -> dict:
-        """Get early stopping state for checkpointing"""
-        self.__init_early_stopping()
-        return {
-            'validation_scores': self.validation_scores,
-            'best_val_score': self.best_val_score,
-            'patience_counter': self.patience_counter,
-            'early_stopped': self.early_stopped
-        }
 
+# ---------------------------------------------------------------------
+# Early stopping extension state getters (optional)
+# ---------------------------------------------------------------------
 class ExperienceBuffer:
     """Buffer for storing PPO training data."""
 
