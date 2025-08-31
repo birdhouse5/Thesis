@@ -184,7 +184,7 @@ class PPOTrainer:
         for e in envs:
             e.set_task(e.sample_task())
         obs_np = [e.reset() for e in envs]
-        obs = torch.as_tensor(np.stack(obs_np, axis=0), dtype=torch.float32, device=self.device, non_blocking=True)
+        obs = torch.as_tensor(np.stack(obs_np, axis=0), dtype=torch.float32, device=self.device)
 
         done = np.zeros(B, dtype=bool)
         step = 0
@@ -246,7 +246,7 @@ class PPOTrainer:
                 next_obs_list.append(o2)
 
             obs_np = next_obs_list
-            obs = torch.as_tensor(np.stack(obs_np, axis=0), dtype=torch.float32, device=self.device, non_blocking=True)
+            obs = torch.as_tensor(np.stack(obs_np, axis=0), dtype=torch.float32, device=self.device)
 
             step += 1
             self.total_steps += int(np.sum(~done))  # count active steps
