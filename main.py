@@ -535,8 +535,9 @@ def train_single_run(config: StudyConfig, split_tensors: Dict[str, Any]) -> Dict
             if episodes_trained % config.val_interval == 0:
                 # --- Use the NEW batched evaluator here ---
                 val_results = evaluate_on_split_batched(
-                    split_tensors, policy, vae, config, config.val_episodes, "validation"
+                    split_tensors, policy, vae, config, config.val_episodes, "val"
                 )
+
                 current_val_sharpe = val_results["sharpe_ratio"]
 
                 if current_val_sharpe > best_val_sharpe:
