@@ -397,8 +397,9 @@ def train_single_run(config: StudyConfig, split_tensors: Dict[str, Any]) -> Dict
     """Train a single model run with given configuration and seed"""
     logger.info(f"Training trial {config.trial_id}, seed {config.seed}")
     
-    # Set seed for reproducibility
+    # CRITICAL: Set seed for reproducibility for THIS specific run
     seed_everything(config.seed)
+    logger.info(f"Set random seed to {config.seed}")
     
     # Create environments
     envs = create_environments(split_tensors, config)
@@ -539,30 +540,39 @@ def run_confirmatory_study(configs: List[Dict[str, Any]], results_dir: Path) -> 
     val_runs = []
     
     # Load datasets once (they're the same for all configs)
-    sample_config = StudyConfig(trial_id=configs[0]['trial_id'], seed=seeds[0], exp_name="sample")
+    sample_config = StudyConfig(trial_id=configs[0]['trial_id'], seed=0, exp_name="sample")
     for key, value in configs[0].items():
         if hasattr(sample_config, key):
             setattr(sample_config, key, value)
     
     split_tensors, _ = prepare_datasets(sample_config)
     
+    logger.info(f"Running {len(configs)} configurations × {len(seeds)} seeds = {len(configs) * len(seeds)} total runs")
+    
     # Train all config-seed combinations on train, select on val
-    for config_dict in configs:
+    for config_idx, config_dict in enumerate(configs):
+        logger.info(f"Starting configuration {config_idx + 1}/{len(configs)}: Trial {config_dict['trial_id']}")
         trial_scores = []
         trial_runs = []
         
-        for seed in seeds:
-            # Create configuration for this run
+        for seed_idx, seed in enumerate(seeds):
+            logger.info(f"  Running seed {seed_idx + 1}/{len(seeds)}: seed={seed}")
+            
+            # Create configuration for this run with PROPER SEED
             run_config = StudyConfig(
                 trial_id=config_dict['trial_id'],
-                seed=seed,
+                seed=seed,  # Each run gets a different seed
                 exp_name=f"final_t{config_dict['trial_id']}_seed{seed}"
             )
             
-            # Update with config parameters
+            # Update with config parameters (this gives each trial its unique hyperparams)
             for key, value in config_dict.items():
                 if hasattr(run_config, key):
                     setattr(run_config, key, value)
+            
+            # Verify we have different configs by logging key parameters
+            logger.info(f"    Config check: trial_id={run_config.trial_id}, seed={run_config.seed}")
+            logger.info(f"    Key params: vae_lr={run_config.vae_lr:.6f}, batch_size={run_config.batch_size}")
             
             # Train this run
             run_result = train_single_run(run_config, split_tensors)
