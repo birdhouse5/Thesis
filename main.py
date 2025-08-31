@@ -141,7 +141,17 @@ def load_top5_configs(configs_dir: str = "experiment_configs") -> List[Dict[str,
     configs: List[Dict[str, Any]] = []
 
     for trial_num in top_trial_numbers:
-        config_files = list(configs_path.glob(f"*{trial_num}*.json"))
+        candidates = list(configs_path.glob("*.json"))
+        exact = [p for p in candidates if p.name == f"config_{trial_num}.json"]
+        suffix = [p for p in candidates if p.stem.endswith(f"_{trial_num}")]
+        config_files = exact or suffix  # prefer exact; fall back to *_<id>.json
+
+        if len(config_files) > 1:
+            # if multiple, keep only exact, otherwise raise to avoid accidental 69→9, 54→5, etc.
+            if exact:
+                config_files = exact
+            else:
+                raise RuntimeError(f"Multiple config files match trial {trial_num}: {[str(p) for p in config_files]}")
         if not config_files:
             logger.warning(f"No config found for trial {trial_num}, creating from optimal parameters")
             config = {
@@ -392,7 +402,7 @@ def evaluate_on_split_batched(
             for e in envs:
                 e.set_task(e.sample_task())
             obs_list = [e.reset() for e in envs]
-            obs = torch.as_tensor(np.stack(obs_list, axis=0), dtype=torch.float32, device=device, non_blocking=True)
+            obs = torch.as_tensor(np.stack(obs_list, axis=0), dtype=torch.float32, device=device)
 
             done = np.zeros(cur, dtype=bool)
             ep_rewards = np.zeros(cur, dtype=np.float32)
@@ -438,7 +448,7 @@ def evaluate_on_split_batched(
                     next_obs_np.append(o2)
 
                 obs_list = next_obs_np
-                obs = torch.as_tensor(np.stack(obs_list, axis=0), dtype=torch.float32, device=device, non_blocking=True)
+                obs = torch.as_tensor(np.stack(obs_list, axis=0), dtype=torch.float32, device=device)
 
             # Aggregate metrics for this block
             for i, e in enumerate(envs):
