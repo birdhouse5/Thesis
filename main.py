@@ -30,6 +30,12 @@ from models.policy import PortfolioPolicy
 from algorithms.trainer import PPOTrainer
 from run_logger import seed_everything
 
+try:
+    from tqdm.auto import tqdm
+except Exception:
+    def tqdm(iterable=None, **kwargs):
+        return iterable  # no-op fallback if tqdm isn't available
+
 # -----------------------------------------------------------------------------
 # Logging / warnings
 # -----------------------------------------------------------------------------
@@ -613,23 +619,25 @@ def run_confirmatory_study(configs: List[Dict[str, Any]], results_dir: Path) -> 
 
     sample_config = StudyConfig(trial_id=configs[0]["trial_id"], seed=0, exp_name="sample")
     for k, v in configs[0].items():
-        if hasattr(sample_config, k):
+        if hasattr(sample_config, k) and k not in ("seed", "trial_id", "exp_name"):  # don't clobber identity fields
             setattr(sample_config, k, v)
     split_tensors, _ = prepare_datasets(sample_config)
 
-    logger.info(f"Running {len(configs)} configurations × {len(seeds)} seeds = {len(configs) * len(seeds)} total runs")
+    total_runs = len(configs) * len(seeds)
+    logger.info(f"Running {len(configs)} configurations × {len(seeds)} seeds = {total_runs} total runs")
 
-    for cfg_idx, cfg in enumerate(configs):
-        logger.info(f"Starting configuration {cfg_idx + 1}/{len(configs)}: Trial {cfg['trial_id']}")
+    # Outer bar: trials
+    for cfg in tqdm(configs, desc="Trials", dynamic_ncols=True):
+        trial_id = cfg["trial_id"]
+        logger.info(f"Starting configuration: Trial {trial_id}")
         trial_scores, trial_runs = [], []
 
-        for sidx, seed in enumerate(seeds):
-            logger.info(f"  Seed {sidx + 1}/{len(seeds)}: seed={seed}")
-            run_config = StudyConfig(trial_id=cfg["trial_id"], seed=seed, exp_name=f"final_t{cfg['trial_id']}_seed{seed}")
+        # Inner bar: seeds for this trial
+        for seed in tqdm(seeds, desc=f"Seeds (trial {trial_id})", leave=False, dynamic_ncols=True):
+            logger.info(f"  Seed: seed={seed}")
+            run_config = StudyConfig(trial_id=trial_id, seed=seed, exp_name=f"final_t{trial_id}_seed{seed}")
             for k, v in cfg.items():
-                if k in ("seed", "trial_id", "exp_name"):
-                    continue
-                if hasattr(run_config, k):
+                if hasattr(run_config, k) and k not in ("seed", "trial_id", "exp_name"):  # keep loop seed
                     setattr(run_config, k, v)
 
             run_result = train_single_run(run_config, split_tensors)
@@ -637,7 +645,7 @@ def run_confirmatory_study(configs: List[Dict[str, Any]], results_dir: Path) -> 
             trial_scores.append(run_result["best_val_sharpe"])
             val_runs.append(
                 {
-                    "trial_id": cfg["trial_id"],
+                    "trial_id": trial_id,
                     "seed": seed,
                     "exp_name": run_config.exp_name,
                     "val_sharpe": run_result["best_val_sharpe"],
@@ -651,7 +659,7 @@ def run_confirmatory_study(configs: List[Dict[str, Any]], results_dir: Path) -> 
         scores = np.array(trial_scores)
         trial_iqm = interquartile_mean(scores)
         ci_low, ci_high = stratified_bootstrap(scores)
-        logger.info(f"Trial {cfg['trial_id']} validation IQM: {trial_iqm:.4f} (95% CI [{ci_low:.4f}, {ci_high:.4f}])")
+        logger.info(f"Trial {trial_id} validation IQM: {trial_iqm:.4f} (95% CI [{ci_low:.4f}, {ci_high:.4f}])")
         all_runs.extend(trial_runs)
 
     # Pick winner by IQM
@@ -689,7 +697,6 @@ def run_confirmatory_study(configs: List[Dict[str, Any]], results_dir: Path) -> 
 
     return {"winner_trial_id": winner_trial_id, "winner_iqm": winner_iqm, "all_runs": all_runs, "split_tensors": split_tensors}
 
-
 def run_final_test_evaluation(study_results: Dict[str, Any], run_ablation: bool, results_dir: Path) -> Dict[str, Any]:
     """Reuses the val env as proxy for train+val (same behavior as before)."""
     logger.info("Running final test evaluation with train+val retraining (proxy via val)")
@@ -714,8 +721,10 @@ def run_final_test_evaluation(study_results: Dict[str, Any], run_ablation: bool,
     methods = ["Full_VAE_PPO"] + (["No_VAE"] if run_ablation else [])
     test_runs = []
 
-    for method in methods:
-        for seed in seeds:
+    # Outer bar: methods (ablations)
+    for method in tqdm(methods, desc="Ablations/Methods", dynamic_ncols=True):
+        # Inner bar: seeds per method
+        for seed in tqdm(seeds, desc=f"Seeds ({method})", leave=False, dynamic_ncols=True):
             test_cfg = StudyConfig(
                 trial_id=winner_trial_id,
                 seed=seed,
@@ -723,9 +732,7 @@ def run_final_test_evaluation(study_results: Dict[str, Any], run_ablation: bool,
                 disable_vae=(method == "No_VAE"),
             )
             for k, v in winner_cfg.items():
-                if k in ("seed", "trial_id", "exp_name"):
-                    continue
-                if hasattr(test_cfg, k):
+                if hasattr(test_cfg, k) and k not in ("seed", "trial_id", "exp_name"):
                     setattr(test_cfg, k, v)
 
             seed_everything(seed)
@@ -737,11 +744,10 @@ def run_final_test_evaluation(study_results: Dict[str, Any], run_ablation: bool,
 
             vae, policy = initialize_models(test_cfg, obs_shape)
             best_run = next(r for r in winner_runs if r["seed"] == seed)
-            if best_run["best_model_state"]:
+            if best_run.get("best_model_state"):
                 vae.load_state_dict(best_run["best_model_state"]["vae_state_dict"])
                 policy.load_state_dict(best_run["best_model_state"]["policy_state_dict"])
 
-            # --- Use the NEW batched evaluator here ---
             test_results = evaluate_on_split_batched(
                 split_tensors, policy, vae, test_cfg, test_cfg.test_episodes, "test"
             )
@@ -781,6 +787,7 @@ def run_final_test_evaluation(study_results: Dict[str, Any], run_ablation: bool,
     pd.DataFrame(summary_rows).to_csv(results_dir / "test_summary.csv", index=False)
 
     return {"test_runs": test_runs, "summary": summary_rows}
+
 
 
 # -----------------------------------------------------------------------------
@@ -872,25 +879,25 @@ def main():
             _ = run_baselines(study_results["split_tensors"], results_dir)
 
         elif args.run_ablation:
-            # Minimal ablation runner (uses trial 69 if no winner present)
             logger.info("Running ablation study only.")
             configs = load_top5_configs(args.configs_dir)
-            best_config = next(c for c in configs if c["trial_id"] == 69)
-            seeds_local = seeds
+            best_config = next(c for c in configs if c["trial_id"] == 69)  # or however you pick
+            seeds_local = [int(s.strip()) for s in args.seeds.split(",")]
             results = []
-            for seed in seeds_local:
-                for disable_vae in [False, True]:
+            for seed in tqdm(seeds_local, desc="Ablation Seeds", dynamic_ncols=True):
+                for disable_vae in tqdm([False, True], desc="Methods", leave=False, dynamic_ncols=True):
                     cfg = StudyConfig(trial_id=best_config["trial_id"], seed=seed, exp_name=f"ablation_seed{seed}", disable_vae=disable_vae)
                     for k, v in best_config.items():
-                        if hasattr(cfg, k):
+                        if hasattr(cfg, k) and k not in ("seed", "trial_id", "exp_name"):
                             setattr(cfg, k, v)
                     split_tensors, _ = prepare_datasets(cfg)
                     run_result = train_single_run(cfg, split_tensors)
                     results.append(
                         {"method": "No_VAE" if disable_vae else "Full_VAE_PPO", "seed": seed, "val_sharpe": run_result["best_val_sharpe"],
-                         "episodes_trained": run_result["episodes_trained"]}
+                        "episodes_trained": run_result["episodes_trained"]}
                     )
             pd.DataFrame(results).to_csv(results_dir / "ablation_results.csv", index=False)
+
 
         create_readme(results_dir, seeds)
         logger.info("=" * 60)
