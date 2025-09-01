@@ -45,6 +45,25 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # -----------------------------------------------------------------------------
+# Helpers
+# -----------------------------------------------------------------------------
+def _append_csv_row(path: Path, row: dict, header_order: list):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not path.exists()
+    with path.open("a") as f:
+        if write_header:
+            f.write(",".join(header_order) + "\n")
+        vals = [row.get(col, "") for col in header_order]
+        f.write(",".join(str(v) for v in vals) + "\n")
+
+def _save_run_json(results_dir: Path, trial_id: int, seed: int, payload: dict):
+    out = results_dir / "runs" / f"trial_{trial_id}" / f"seed_{seed}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w") as f:
+        json.dump(payload, f, indent=2)
+
+
+# -----------------------------------------------------------------------------
 # Study config (added: num_envs)
 # -----------------------------------------------------------------------------
 @dataclass
@@ -611,74 +630,167 @@ def stratified_bootstrap(scores: np.ndarray, n_resamples: int = 5000, confidence
 # -----------------------------------------------------------------------------
 # Study runner (validation selection) & final test eval
 # -----------------------------------------------------------------------------
-def run_confirmatory_study(configs: List[Dict[str, Any]], results_dir: Path) -> Dict[str, Any]:
-    logger.info("Starting confirmatory study with validation selection")
-    seeds = [0, 1, 2, 3, 4]
-    all_runs: List[Dict[str, Any]] = []
-    val_runs: List[Dict[str, Any]] = []
+def run_confirmatory_study(configs, results_dir, start_trial_id=None, start_seed=0, seeds=None):
+    """
+    Run validation selection across trial configs with progress bars, resume, and incremental saving.
 
-    sample_config = StudyConfig(trial_id=configs[0]["trial_id"], seed=0, exp_name="sample")
+    Args:
+        configs: list of dicts from load_top5_configs()
+        results_dir: Path to results directory
+        start_trial_id: if set, resume starting from this trial id
+        start_seed: seed index to start from for the first resumed trial (0..)
+        seeds: explicit list of seeds; defaults to [0,1,2,3,4]
+
+    Returns:
+        dict with keys: winner_trial_id, winner_iqm, all_runs, split_tensors
+    """
+    import json as _json
+    from pathlib import Path as _Path
+    import torch as _torch
+
+    # tqdm (safe fallback if not installed)
+    try:
+        from tqdm.auto import tqdm as _tqdm
+    except Exception:
+        def _tqdm(iterable=None, **kwargs):
+            return iterable
+
+    # Helpers (local to this function)
+    def _append_csv_row(path: _Path, row: dict, header_order: list):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not path.exists()
+        with path.open("a") as f:
+            if write_header:
+                f.write(",".join(header_order) + "\n")
+            vals = [row.get(col, "") for col in header_order]
+            f.write(",".join(str(v) for v in vals) + "\n")
+
+    def _save_run_json(_results_dir: _Path, trial_id: int, seed: int, payload: dict):
+        out = _results_dir / "runs" / f"trial_{trial_id}" / f"seed_{seed}.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("w") as f:
+            _json.dump(payload, f, indent=2)
+
+    # Seed list
+    seeds = seeds if seeds is not None else [0, 1, 2, 3, 4]
+
+    logger.info(f"Running {len(configs)} configurations × {len(seeds)} seeds = {len(configs)*len(seeds)} total runs")
+
+    # Prepare data once (use first config to set shapes/params)
+    sample_cfg = StudyConfig(trial_id=configs[0]["trial_id"], seed=seeds[0], exp_name="sample")
     for k, v in configs[0].items():
-        if hasattr(sample_config, k) and k not in ("seed", "trial_id", "exp_name"):  # don't clobber identity fields
-            setattr(sample_config, k, v)
-    split_tensors, _ = prepare_datasets(sample_config)
+        if hasattr(sample_cfg, k) and k not in ("seed", "trial_id", "exp_name"):
+            setattr(sample_cfg, k, v)
+    split_tensors, _ = prepare_datasets(sample_cfg)
 
-    total_runs = len(configs) * len(seeds)
-    logger.info(f"Running {len(configs)} configurations × {len(seeds)} seeds = {total_runs} total runs")
+    # Live/incremental CSV
+    val_live_csv = _Path(results_dir) / "val_runs_live.csv"
+    val_header = ["trial_id", "seed", "exp_name", "val_sharpe", "episodes_trained", "early_stopped"]
 
-    # Outer bar: trials
-    for cfg in tqdm(configs, desc="Trials", dynamic_ncols=True):
-        trial_id = cfg["trial_id"]
-        logger.info(f"Starting configuration: Trial {trial_id}")
-        trial_scores, trial_runs = [], []
+    all_runs = []
+    trial_iqms_cache = {}  # tid -> (iqm, ci_low, ci_high) after trial finishes
 
-        # Inner bar: seeds for this trial
-        for seed in tqdm(seeds, desc=f"Seeds (trial {trial_id})", leave=False, dynamic_ncols=True):
+    # Figure out where to start
+    begin = start_trial_id is None
+
+    # Outer loop: Trials
+    for cfg in _tqdm(configs, desc="Trials", dynamic_ncols=True):
+        tid = cfg["trial_id"]
+
+        # Resume logic
+        if not begin:
+            if tid != start_trial_id:
+                continue
+            begin = True
+            seed_start_index = start_seed
+        else:
+            seed_start_index = 0
+
+        logger.info(f"Starting configuration: Trial {tid}")
+        trial_scores = []
+        trial_runs = []
+
+        # Inner loop: Seeds
+        for seed in _tqdm(seeds[seed_start_index:], desc=f"Seeds (trial {tid})", leave=False, dynamic_ncols=True):
             logger.info(f"  Seed: seed={seed}")
-            run_config = StudyConfig(trial_id=trial_id, seed=seed, exp_name=f"final_t{trial_id}_seed{seed}")
+            run_config = StudyConfig(trial_id=tid, seed=seed, exp_name=f"final_t{tid}_seed{seed}")
+            # Merge JSON -> dataclass (without clobbering identity fields)
             for k, v in cfg.items():
-                if hasattr(run_config, k) and k not in ("seed", "trial_id", "exp_name"):  # keep loop seed
+                if hasattr(run_config, k) and k not in ("seed", "trial_id", "exp_name"):
                     setattr(run_config, k, v)
 
-            run_result = train_single_run(run_config, split_tensors)
-            trial_runs.append(run_result)
-            trial_scores.append(run_result["best_val_sharpe"])
-            val_runs.append(
-                {
-                    "trial_id": trial_id,
+            try:
+                run_result = train_single_run(run_config, split_tensors)
+            except _torch.cuda.OutOfMemoryError as e:
+                logger.error(f"OOM on trial {tid} seed {seed}: {e}")
+                _save_run_json(_Path(results_dir), tid, seed, {
+                    "status": "oom",
+                    "trial_id": tid,
                     "seed": seed,
                     "exp_name": run_config.exp_name,
-                    "val_sharpe": run_result["best_val_sharpe"],
-                    "runtime_s": 0,
-                    "episodes_trained": run_result["episodes_trained"],
-                    "early_stopped": run_result["early_stopped"],
-                }
-            )
+                    "error": str(e),
+                })
+                _torch.cuda.empty_cache()
+                raise
 
-        # Per-trial IQM
-        scores = np.array(trial_scores)
+            trial_runs.append(run_result)
+            trial_scores.append(run_result["best_val_sharpe"])
+            all_runs.append(run_result)
+
+            # Incremental save after each seed
+            row = {
+                "trial_id": tid,
+                "seed": seed,
+                "exp_name": run_config.exp_name,
+                "val_sharpe": run_result["best_val_sharpe"],
+                "episodes_trained": run_result["episodes_trained"],
+                "early_stopped": run_result["early_stopped"],
+            }
+            _append_csv_row(val_live_csv, row, val_header)
+            _save_run_json(_Path(results_dir), tid, seed, {"status": "ok", **row})
+
+        # Per-trial IQM + CI after finishing all seeds for this trial
+        scores = np.array(trial_scores, dtype=float)
         trial_iqm = interquartile_mean(scores)
         ci_low, ci_high = stratified_bootstrap(scores)
-        logger.info(f"Trial {trial_id} validation IQM: {trial_iqm:.4f} (95% CI [{ci_low:.4f}, {ci_high:.4f}])")
-        all_runs.extend(trial_runs)
+        trial_iqms_cache[tid] = (trial_iqm, ci_low, ci_high)
+        logger.info(f"Trial {tid} validation IQM: {trial_iqm:.4f} (95% CI [{ci_low:.4f}, {ci_high:.4f}])")
 
-    # Pick winner by IQM
-    trial_iqms: Dict[int, float] = {}
+    # Build final selection table and write CSVs
+    # Aggregate per-trial IQMs from all_runs (in case of resume/partial)
+    trial_iqms = {}
     for cfg in configs:
         tid = cfg["trial_id"]
         tid_scores = [r["best_val_sharpe"] for r in all_runs if r["trial_id"] == tid]
-        trial_iqms[tid] = interquartile_mean(np.array(tid_scores))
+        if len(tid_scores) == 0:
+            continue
+        trial_iqms[tid] = interquartile_mean(np.array(tid_scores, dtype=float))
 
+    # Winner by IQM
+    if not trial_iqms:
+        raise RuntimeError("No completed runs to select a winner from.")
     winner_trial_id = max(trial_iqms, key=trial_iqms.get)
     winner_iqm = trial_iqms[winner_trial_id]
     logger.info(f"Winner: Trial {winner_trial_id} with validation IQM {winner_iqm:.4f}")
 
-    pd.DataFrame(val_runs).to_csv(results_dir / "val_runs.csv", index=False)
+    # Save val_runs.csv (from the in-memory all_runs) and selection summary
+    val_rows = []
+    for r in all_runs:
+        val_rows.append({
+            "trial_id": r["trial_id"],
+            "seed": r["seed"],
+            "exp_name": r.get("exp_name", f"final_t{r['trial_id']}_seed{r['seed']}"),
+            "val_sharpe": r["best_val_sharpe"],
+            "episodes_trained": r["episodes_trained"],
+            "early_stopped": r["early_stopped"],
+        })
+    if len(val_rows):
+        pd.DataFrame(val_rows).to_csv(_Path(results_dir) / "val_runs.csv", index=False)
 
     selection_summary = []
     for tid, iqm in trial_iqms.items():
         tid_scores = [r["best_val_sharpe"] for r in all_runs if r["trial_id"] == tid]
-        scores_array = np.array(tid_scores)
+        scores_array = np.array(tid_scores, dtype=float)
         ci_low, ci_high = stratified_bootstrap(scores_array)
         selection_summary.append(
             {
@@ -687,15 +799,21 @@ def run_confirmatory_study(configs: List[Dict[str, Any]], results_dir: Path) -> 
                 "iqm": iqm,
                 "ci_low": ci_low,
                 "ci_high": ci_high,
-                "mean": scores_array.mean(),
-                "std": scores_array.std(),
+                "mean": float(scores_array.mean()),
+                "std": float(scores_array.std()),
             }
         )
-    pd.DataFrame(selection_summary).sort_values("iqm", ascending=False).to_csv(
-        results_dir / "val_selection_summary.csv", index=False
-    )
+    if len(selection_summary):
+        pd.DataFrame(selection_summary).sort_values("iqm", ascending=False).to_csv(
+            _Path(results_dir) / "val_selection_summary.csv", index=False
+        )
 
-    return {"winner_trial_id": winner_trial_id, "winner_iqm": winner_iqm, "all_runs": all_runs, "split_tensors": split_tensors}
+    return {
+        "winner_trial_id": winner_trial_id,
+        "winner_iqm": winner_iqm,
+        "all_runs": all_runs,
+        "split_tensors": split_tensors,
+    }
 
 def run_final_test_evaluation(study_results: Dict[str, Any], run_ablation: bool, results_dir: Path) -> Dict[str, Any]:
     """Reuses the val env as proxy for train+val (same behavior as before)."""
@@ -846,6 +964,8 @@ def main():
     parser.add_argument("--top-n", type=int, default=5)
     parser.add_argument("--bootstrap", type=int, default=5000)
     parser.add_argument("--results-dir", type=str, default=None)
+    parser.add_argument("--start-trial-id", type=int, default=None, help="Resume: start at this trial id (e.g., 9)")
+    parser.add_argument("--start-seed", type=int, default=0, help="Resume: start at this seed index for the first resumed trial")
     # Optional: override num_envs at CLI
     parser.add_argument("--num-envs", type=int, default=None, help="Override StudyConfig.num_envs for batching")
     args = parser.parse_args()
@@ -873,7 +993,12 @@ def main():
                 for c in configs:
                     c["num_envs"] = int(args.num_envs)
 
-            study_results = run_confirmatory_study(configs, results_dir)
+            study_results = run_confirmatory_study(
+                                configs,
+                                results_dir,
+                                start_trial_id=args.start_trial_id,
+                                start_seed=args.start_seed,
+                            )
             run_ablation_flag = args.run_ablation or args.run_full_study_and_ablation
             _ = run_final_test_evaluation(study_results, run_ablation_flag, results_dir)
             _ = run_baselines(study_results["split_tensors"], results_dir)
