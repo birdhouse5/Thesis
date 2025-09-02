@@ -1043,6 +1043,7 @@ def main():
     parser.add_argument("--results-dir", type=str, default=None)
     parser.add_argument("--start-trial-id", type=int, default=None, help="Resume: start at this trial id (e.g., 9)")
     parser.add_argument("--start-seed", type=int, default=0, help="Resume: start at this seed index for the first resumed trial")
+    parser.add_argument("--trials", type=str, default=None, help="Comma-separated trial IDs to run (e.g., '5,69')")
     # Optional: override num_envs at CLI
     parser.add_argument("--num-envs", type=int, default=None, help="Override StudyConfig.num_envs for batching")
     args = parser.parse_args()
@@ -1065,6 +1066,14 @@ def main():
     try:
         if args.run_final_study or args.run_full_study_and_ablation:
             configs = load_top5_configs(args.configs_dir)
+            # Filter trials if specified
+            if args.trials:
+                requested_trials = [int(t.strip()) for t in args.trials.split(",")]
+                configs = [c for c in configs if c.get("trial_id") in requested_trials]
+                logger.info(f"Filtered to {len(configs)} trials: {[c.get('trial_id') for c in configs]}")
+                if len(configs) == 0:
+                    logger.error(f"No configs found for requested trials: {requested_trials}")
+                    return
             # Optional CLI override for num_envs applied to all configs
             if args.num_envs is not None:
                 for c in configs:
