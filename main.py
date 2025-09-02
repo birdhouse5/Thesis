@@ -306,82 +306,6 @@ def initialize_models(config: StudyConfig, obs_shape: Tuple[int, int]) -> Tuple[
     return vae, policy
 
 
-# -----------------------------------------------------------------------------
-# Evaluation (OLD single-env kept; NEW batched version used by callers)
-# -----------------------------------------------------------------------------
-def evaluate_on_split(
-    env: MetaEnv,
-    policy: PortfolioPolicy,
-    vae: VAE,
-    config: StudyConfig,
-    num_episodes: int,
-    split_name: str,
-) -> Dict[str, float]:
-    """Keep the original single-environment evaluator for reference / fallback."""
-    device = torch.device(config.device)
-    episode_rewards, terminal_wealths, max_drawdowns = [], [], []
-    vae.eval()
-    policy.eval()
-    with torch.no_grad():
-        for _ in range(num_episodes):
-            task = env.sample_task()
-            env.set_task(task)
-            obs = env.reset()
-            obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device, non_blocking=True).unsqueeze(0)
-
-            ep_reward = 0.0
-            done = False
-            trajectory_context = {"observations": [], "actions": [], "rewards": []}
-            capital_history = [env.initial_capital]
-
-            while not done:
-                if config.disable_vae or len(trajectory_context["observations"]) == 0:
-                    latent = torch.zeros(1, config.latent_dim, device=device)
-                else:
-                    o = torch.stack(trajectory_context["observations"]).unsqueeze(0)
-                    a = torch.stack(trajectory_context["actions"]).unsqueeze(0)
-                    r = torch.stack(trajectory_context["rewards"]).unsqueeze(0).unsqueeze(-1)
-                    mu, logvar, _ = vae.encode(o, a, r)
-                    latent = vae.reparameterize(mu, logvar)
-
-                action, _ = policy.act(obs_tensor, latent, deterministic=True)
-                next_obs, reward, done, _ = env.step(action.squeeze(0).detach().cpu().numpy())
-                ep_reward += reward
-                capital_history.append(env.current_capital)
-
-                if not config.disable_vae:
-                    trajectory_context["observations"].append(obs_tensor.squeeze(0).detach())
-                    trajectory_context["actions"].append(action.squeeze(0).detach())
-                    trajectory_context["rewards"].append(torch.tensor(reward, device=device))
-
-                if not done:
-                    obs_tensor = torch.as_tensor(next_obs, dtype=torch.float32, device=device, non_blocking=True).unsqueeze(0)
-
-            # Wealth metrics
-            cw = np.asarray(capital_history)
-            mdd = np.min((cw - np.maximum.accumulate(cw)) / np.maximum.accumulate(cw)) if len(cw) > 1 else 0.0
-
-            episode_rewards.append(ep_reward)
-            terminal_wealths.append(env.current_capital)
-            max_drawdowns.append(mdd)
-
-    vae.train()
-    policy.train()
-    results = {
-        "sharpe_ratio": float(np.mean(episode_rewards)),
-        "terminal_wealth": float(np.mean(terminal_wealths)),
-        "wealth_std": float(np.std(terminal_wealths)),
-        "max_drawdown": float(np.mean(max_drawdowns)),
-        "success_rate": float((np.array(terminal_wealths) > env.initial_capital).mean()),
-        "episode_rewards": episode_rewards,
-        "terminal_wealths": terminal_wealths,
-    }
-    logger.info(f"{split_name} evaluation ({num_episodes} eps): SR={results['sharpe_ratio']:.4f} "
-                f"TW=${results['terminal_wealth']:.2f}±${results['wealth_std']:.2f} "
-                f"MDD={results['max_drawdown']:.2%} SR={results['success_rate']:.2%}")
-    return results
-
-
 def _make_env_factory_from_split(split_tensors: Dict[str, Any], config: StudyConfig, split_name: str):
     def _factory():
         data = split_tensors[split_name]
@@ -451,7 +375,9 @@ def evaluate_on_split(
 
     with torch.no_grad():
         for ep in range(num_episodes):
-            obs = env.reset()  # expects single-environment eval
+            task = env.sample_task()
+            env.set_task(task)
+            obs = env.reset()  # expects single-environment evall
             obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
 
             # Per-episode trackers
@@ -944,7 +870,7 @@ def run_final_test_evaluation(study_results: Dict[str, Any], run_ablation: bool,
                 policy.load_state_dict(best_run["best_model_state"]["policy_state_dict"])
 
             test_results = evaluate_on_split(
-                envs["test"], policy, vae, config, config.test_episodes, "test"
+                envs["test"], policy, vae, test_cfg, test_cfg.test_episodes, "test"
             )
 
             initial_capital = 100000.0
