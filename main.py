@@ -636,8 +636,8 @@ def train_single_run(config: StudyConfig, split_tensors: Dict[str, Any]) -> Dict
 
             if episodes_trained % config.val_interval == 0:
                 # --- Use the NEW batched evaluator here ---
-                val_results = evaluate_on_split_batched(
-                    split_tensors, policy, vae, config, config.val_episodes, "val"
+                val_results = evaluate_on_split(
+                    envs["val"], policy, vae, config, config.val_episodes, "val"
                 )
 
                 current_val_sharpe = val_results["sharpe_ratio"]
@@ -943,8 +943,8 @@ def run_final_test_evaluation(study_results: Dict[str, Any], run_ablation: bool,
                 vae.load_state_dict(best_run["best_model_state"]["vae_state_dict"])
                 policy.load_state_dict(best_run["best_model_state"]["policy_state_dict"])
 
-            test_results = evaluate_on_split_batched(
-                split_tensors, policy, vae, test_cfg, test_cfg.test_episodes, "test"
+            test_results = evaluate_on_split(
+                envs["test"], policy, vae, config, config.test_episodes, "test"
             )
 
             initial_capital = 100000.0
