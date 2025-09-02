@@ -8,7 +8,7 @@ What's new vs your previous version:
 - Model compilation via torch.compile (falls back safely if unavailable).
 - Minor non-blocking host→device copies to reduce stalls.
 """
-
+import os
 import argparse
 import json
 import logging
@@ -394,115 +394,192 @@ def _make_env_factory_from_split(split_tensors: Dict[str, Any], config: StudyCon
         )
     return _factory
 
+def _safe_sharpe(daily_returns, eps=1e-12):
+    r = np.asarray(daily_returns, dtype=np.float64)
+    nan_cnt = np.count_nonzero(~np.isfinite(r))
+    r = r[np.isfinite(r)]
+    n = r.size
+    if n == 0:
+        return float('-inf'), {"mu": np.nan, "sigma": np.nan, "n": 0, "nan_cnt": nan_cnt}
+    mu = r.mean()
+    sigma = r.std(ddof=1)
+    if not np.isfinite(sigma) or sigma < eps:
+        return (-np.inf if mu <= 0 else np.inf), {"mu": mu, "sigma": sigma, "n": n, "nan_cnt": nan_cnt}
+    return float(mu * np.sqrt(252.0) / sigma), {"mu": mu, "sigma": sigma, "n": n, "nan_cnt": nan_cnt}
 
-def evaluate_on_split_batched(
-    split_tensors: Dict[str, Any],
+
+def evaluate_on_split(
+    env: MetaEnv,
     policy: PortfolioPolicy,
     vae: VAE,
     config: StudyConfig,
     num_episodes: int,
-    split_name: str,
+    split_name: str
 ) -> Dict[str, float]:
     """
-    NEW: Vectorized evaluator that runs up to `config.num_envs` episodes in lock-step.
-    Batches policy forward passes on GPU while still keeping per-env VAE context.
+    Evaluate the policy on a specific split with wealth-based metrics.
+    - Uses the same (env, policy, vae) as training.
+    - Computes a *real* Sharpe on step returns (with safe handling to avoid NaNs/-inf).
+    - Adds rich debugging for trial 5 (action stats & return percentiles).
     """
     device = torch.device(config.device)
-    B = min(max(1, int(config.num_envs)), num_episodes)
-
     vae.eval()
     policy.eval()
 
-    # Run in blocks of size B until num_episodes reached
-    ep_rewards_all, tw_all, mdd_all = [], [], []
+    episode_rewards: List[float] = []
+    terminal_wealths: List[float] = []
+    max_drawdowns: List[float] = []
+
+    # For a proper Sharpe we aggregate step returns from *all* episodes here
+    all_step_returns: List[float] = []
+
+    # Extra debugging for trial 5 (the one that produced -inf previously)
+    debug_trial5 = (getattr(config, "trial_id", None) == 5)
+
+    def _safe_sharpe(returns: np.ndarray) -> float:
+        """Compute mean/std Sharpe robustly; return -inf if undefined."""
+        r = np.asarray(returns, dtype=np.float64)
+        r = r[np.isfinite(r)]
+        if r.size < 2:
+            return float("-inf")
+        mu = r.mean()
+        sd = r.std(ddof=1)
+        if sd <= 1e-12:
+            return float("-inf")
+        # Not annualized on purpose to stay consistent with earlier scaling
+        return float(mu / sd)
 
     with torch.no_grad():
-        start = 0
-        while start < num_episodes:
-            cur = min(B, num_episodes - start)
-            env_factory = _make_env_factory_from_split(split_tensors, config, split_name)
-            envs = [env_factory() for _ in range(cur)]
+        for ep in range(num_episodes):
+            obs = env.reset()  # expects single-environment eval
+            obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
 
-            # Sample tasks and reset
-            for e in envs:
-                e.set_task(e.sample_task())
-            obs_list = [e.reset() for e in envs]
-            obs = torch.as_tensor(np.stack(obs_list, axis=0), dtype=torch.float32, device=device)
+            # Per-episode trackers
+            episode_reward = 0.0
+            capital_history: List[float] = [env.initial_capital]
+            traj = {'observations': [], 'actions': [], 'rewards': []}
 
-            done = np.zeros(cur, dtype=bool)
-            ep_rewards = np.zeros(cur, dtype=np.float32)
-            capitals = [[e.initial_capital] for e in envs]
+            done = False
+            while not done:
+                # Latent: zero on first step (or if VAE disabled), else use trajectory-conditioned encode
+                if getattr(config, "disable_vae", False) or len(traj['observations']) == 0:
+                    latent = torch.zeros(1, config.latent_dim, device=device)
+                else:
+                    obs_seq = torch.stack(traj['observations']).unsqueeze(0)                # [1, T, A, F] or [1, T, ...]
+                    act_seq = torch.stack(traj['actions']).unsqueeze(0)                      # [1, T, A]
+                    rew_seq = torch.stack(traj['rewards']).unsqueeze(0).unsqueeze(-1)       # [1, T, 1]
+                    try:
+                        mu, logvar, _ = vae.encode(obs_seq, act_seq, rew_seq)
+                        latent = vae.reparameterize(mu, logvar)
+                    except Exception:
+                        # Fallbacks for different VAE APIs
+                        try:
+                            z = vae.encode(obs_seq)
+                            latent = z[0] if isinstance(z, (tuple, list)) else z
+                        except Exception:
+                            latent = torch.zeros(1, config.latent_dim, device=device)
 
-            # Per-env VAE context (on device)
-            ctx_obs = [[] for _ in range(cur)]
-            ctx_act = [[] for _ in range(cur)]
-            ctx_rew = [[] for _ in range(cur)]
+                # Policy (deterministic for evaluation)
+                try:
+                    action, _ = policy.act(obs_tensor, latent, deterministic=True)
+                except TypeError:
+                    action, _ = policy.act(obs_tensor, deterministic=True)  # latent optional in some impls
+                action = action.squeeze(0).detach()
+                action_cpu = action.cpu().numpy()
 
-            while not np.all(done):
-                # Build latent per env (CPU loop but small; overall GPU batch is large)
-                latents = []
-                for i in range(cur):
-                    if config.disable_vae or len(ctx_obs[i]) == 0 or done[i]:
-                        latents.append(torch.zeros(1, config.latent_dim, device=device))
-                    else:
-                        o = torch.stack(ctx_obs[i]).unsqueeze(0)
-                        a = torch.stack(ctx_act[i]).unsqueeze(0)
-                        r = torch.stack(ctx_rew[i]).unsqueeze(0).unsqueeze(-1)
-                        mu, logvar, _ = vae.encode(o, a, r)
-                        latents.append(vae.reparameterize(mu, logvar))
-                latent = torch.cat(latents, dim=0)  # [cur, latent]
+                # Step env
+                next_obs, reward, done, info = env.step(action_cpu)
+                episode_reward += float(reward)
+                capital_history.append(env.current_capital)
 
-                # Policy step (batched)
-                action, _ = policy.act(obs, latent, deterministic=True)  # [cur, N]
-                action_np = action.detach().cpu().numpy()
+                # Append trajectories only if VAE is enabled
+                if not getattr(config, "disable_vae", False):
+                    traj['observations'].append(obs_tensor.squeeze(0).detach())
+                    traj['actions'].append(action)
+                    traj['rewards'].append(torch.tensor(reward, dtype=torch.float32, device=device))
 
-                # Step each env
-                next_obs_np = []
-                for i, e in enumerate(envs):
-                    if done[i]:
-                        next_obs_np.append(obs_list[i])
-                        continue
-                    o2, r, d, _ = e.step(action_np[i])
-                    ep_rewards[i] += r
-                    capitals[i].append(e.current_capital)
-                    if not config.disable_vae:
-                        ctx_obs[i].append(obs[i].detach())
-                        ctx_act[i].append(action[i].detach())
-                        ctx_rew[i].append(torch.tensor(r, device=device))
-                    done[i] = d
-                    next_obs_np.append(o2)
+                if not done:
+                    obs_tensor = torch.tensor(next_obs, dtype=torch.float32, device=device).unsqueeze(0)
 
-                obs_list = next_obs_np
-                obs = torch.as_tensor(np.stack(obs_list, axis=0), dtype=torch.float32, device=device)
+            # Wealth metrics per episode
+            final_capital = env.current_capital
+            terminal_wealth = float(final_capital)
 
-            # Aggregate metrics for this block
-            for i, e in enumerate(envs):
-                cw = np.asarray(capitals[i])
-                mdd = np.min((cw - np.maximum.accumulate(cw)) / np.maximum.accumulate(cw)) if len(cw) > 1 else 0.0
-                ep_rewards_all.append(float(ep_rewards[i]))
-                tw_all.append(float(e.current_capital))
-                mdd_all.append(float(mdd))
+            cap = np.asarray(capital_history, dtype=np.float64)
+            if cap.size > 1:
+                running_max = np.maximum.accumulate(cap)
+                dd = (cap - running_max) / running_max
+                max_dd = float(np.min(dd))
+                # step returns for Sharpe (simple gross-to-gross)
+                step_ret = (cap[1:] - cap[:-1]) / np.maximum(cap[:-1], 1e-12)
+                step_ret = step_ret[np.isfinite(step_ret)]
+                all_step_returns.extend(step_ret.tolist())
+            else:
+                max_dd = 0.0
 
-            start += cur
+            episode_rewards.append(episode_reward)
+            terminal_wealths.append(terminal_wealth)
+            max_drawdowns.append(max_dd)
+
+    # ---- Aggregate
+    # Primary selection metric: Sharpe computed from *all* step returns
+    sharpe = _safe_sharpe(np.asarray(all_step_returns)) if len(all_step_returns) else float("-inf")
+    tw = np.asarray(terminal_wealths, dtype=np.float64)
+    results = {
+        "sharpe_ratio": sharpe,
+        "terminal_wealth": float(np.nanmean(tw)) if tw.size else float("nan"),
+        "wealth_std": float(np.nanstd(tw)) if tw.size else float("nan"),
+        "max_drawdown": float(np.nanmean(max_drawdowns)) if max_drawdowns else float("nan"),
+        "success_rate": float((tw > getattr(env, "initial_capital", 1.0)).mean()) if tw.size else float("nan"),
+        "episode_rewards": episode_rewards,
+        "terminal_wealths": terminal_wealths,
+    }
+
+    # Summary log (keeps prior style mostly intact)
+    logger.info(
+        f"{split_name} evaluation ({num_episodes} episodes): "
+        f"Sharpe={results['sharpe_ratio']:.4f}, "
+        f"TW=${results['terminal_wealth']:.2f}±${results['wealth_std']:.2f}, "
+        f"MDD={results['max_drawdown']:.2%}, "
+        f"SR={results['success_rate']:.2%}"
+    )
+
+    # Trial-5 deep debug to diagnose -inf Sharpe cases
+    if debug_trial5:
+        tw_arr = np.asarray(terminal_wealths, dtype=np.float64)
+        sr_arr = np.asarray(all_step_returns, dtype=np.float64)
+        finite_sr = sr_arr[np.isfinite(sr_arr)]
+        logger.warning(
+            "[Trial 5 debug] returns_count=%d, finite=%d, sharpe=%.4f | "
+            "TW mean=%.2f std=%.2f min=%.2f p5=%.2f p50=%.2f p95=%.2f",
+            sr_arr.size, finite_sr.size, results["sharpe_ratio"],
+            np.nanmean(tw_arr) if tw_arr.size else float("nan"),
+            np.nanstd(tw_arr) if tw_arr.size else float("nan"),
+            np.nanmin(tw_arr) if tw_arr.size else float("nan"),
+            np.nanpercentile(tw_arr, 5) if tw_arr.size else float("nan"),
+            np.nanpercentile(tw_arr, 50) if tw_arr.size else float("nan"),
+            np.nanpercentile(tw_arr, 95) if tw_arr.size else float("nan"),
+        )
+        if finite_sr.size:
+            logger.warning(
+                "[Trial 5 debug] step-return stats: mean=%.6f std=%.6f min=%.6f "
+                "p1=%.6f p5=%.6f p50=%.6f p95=%.6f p99=%.6f max=%.6f",
+                float(finite_sr.mean()), float(finite_sr.std(ddof=1)),
+                float(finite_sr.min()),
+                float(np.percentile(finite_sr, 1)),
+                float(np.percentile(finite_sr, 5)),
+                float(np.percentile(finite_sr, 50)),
+                float(np.percentile(finite_sr, 95)),
+                float(np.percentile(finite_sr, 99)),
+                float(finite_sr.max()),
+            )
+        else:
+            logger.warning("[Trial 5 debug] No finite step returns — Sharpe forced to -inf.")
 
     vae.train()
     policy.train()
-
-    results = {
-        "sharpe_ratio": float(np.mean(ep_rewards_all)),
-        "terminal_wealth": float(np.mean(tw_all)),
-        "wealth_std": float(np.std(tw_all)),
-        "max_drawdown": float(np.mean(mdd_all)),
-        "success_rate": float((np.array(tw_all) > 100000.0).mean()),  # assumes env.initial_capital=100k
-        "episode_rewards": ep_rewards_all,
-        "terminal_wealths": tw_all,
-    }
-    logger.info(
-        f"{split_name} batched eval ({num_episodes} eps, B={B}): "
-        f"SR={results['sharpe_ratio']:.4f}, TW=${results['terminal_wealth']:.2f}±${results['wealth_std']:.2f}, "
-        f"MDD={results['max_drawdown']:.2%}, SR={results['success_rate']:.2%}"
-    )
     return results
+
 
 
 # -----------------------------------------------------------------------------
