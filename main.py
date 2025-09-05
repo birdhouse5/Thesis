@@ -271,10 +271,6 @@ class ExperimentRunner:
         last_log_time = start_time
         logger.info(f"Starting training for seed {config.seed}")
         
-        # Create progress bar for training episodes
-        pbar = tqdm(total=config.max_episodes, desc=f"Training Seed {config.seed}", 
-                   initial=episodes_trained, unit="episode")
-        
         while episodes_trained < config.max_episodes:
             # Sample new task
             task_start = datetime.now()
@@ -282,7 +278,9 @@ class ExperimentRunner:
             train_env.set_task(task)
             
             # Train episodes on this task
-            for _ in range(config.episodes_per_task):
+            for _ in tqdm(range(config.episodes_per_task), 
+                         desc=f"Task episodes (Seed {config.seed})", 
+                         leave=False, unit="episode"):
 
                 episode_start = datetime.now()
             
@@ -298,14 +296,6 @@ class ExperimentRunner:
                 episode_times.append(episode_duration)
             
                 episodes_trained += 1
-                
-                # Update progress bar
-                pbar.update(1)
-                pbar.set_postfix({
-                    'val_sharpe': f"{current_val_sharpe:.4f}" if 'current_val_sharpe' in locals() else "N/A",
-                    'best_sharpe': f"{best_val_sharpe:.4f}",
-                    'early_stopped': early_stopping.stopped
-                })
 
                 # DEBUG: Episode-level logging
                 if config.debug_mode and episodes_trained % config.debug_interval == 0:
@@ -375,9 +365,6 @@ class ExperimentRunner:
 
             if early_stopping.stopped or episodes_trained >= config.max_episodes:
                 break
-        
-        # Close progress bar
-        pbar.close()
         
         training_time = (datetime.now() - start_time).total_seconds()
         
