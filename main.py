@@ -43,7 +43,7 @@ class ValidationConfig:
     vae_batch_size: int = 1024
     ppo_epochs: int = 8
     entropy_coef: float = 0.0013141391952945
-    num_envs: int = 500
+    num_envs: int = 1000
 
     # Training schedule
     max_episodes: int = 6000
@@ -71,6 +71,10 @@ class ValidationConfig:
 
     # Ablation study flag
     disable_vae: bool = False
+
+    # Debug flags
+    debug_mode: bool = True
+    debug_interval: int = 10  # Log every 10 episodes
 
 def create_seed_configs(num_seeds: int = 25) -> List[ValidationConfig]:
     """Create 25 configs with different seeds plus 1 ablation config"""
@@ -207,9 +211,9 @@ class ExperimentRunner:
         logger.info("Data environment setup complete")
     
     def run_single_seed(self, config: ValidationConfig) -> RunResult:
-        """Run training for a single seed"""
         start_time = datetime.now()
-        logger.info(f"Starting seed {config.seed}")
+        logger.info(f"=== STARTING SEED {config.seed} DEBUG ===")
+        logger.info(f"Config: num_envs={config.num_envs}, max_episodes={config.max_episodes}")
         
         # Set seed for reproducibility
         seed_everything(config.seed)
@@ -256,26 +260,69 @@ class ExperimentRunner:
         final_val_sharpe = None
         best_model_state = None
         
+            # Add timing tracking
+        episode_times = []
+        last_log_time = start_time
         logger.info(f"Starting training for seed {config.seed}")
         
         while episodes_trained < config.max_episodes:
             # Sample new task
+            task_start = datetime.now()
             task = train_env.sample_task()
             train_env.set_task(task)
             
             # Train episodes on this task
             for _ in range(config.episodes_per_task):
+
+                episode_start = datetime.now()
+            
+                # DEBUG: Log trainer state
+                if config.debug_mode and episodes_trained % config.debug_interval == 0:
+                    logger.info(f"DEBUG Seed {config.seed}: Starting episode {episodes_trained}")
+                    logger.info(f"  Trainer num_envs: {getattr(trainer, 'num_envs', 'NOT_SET')}")
+                    logger.info(f"  GPU memory: {torch.cuda.memory_allocated()/1024**3:.2f}GB / {torch.cuda.memory_reserved()/1024**3:.2f}GB")
+
                 episode_result = trainer.train_episode()
+                episode_end = datetime.now()
+                episode_duration = (episode_end - episode_start).total_seconds()
+                episode_times.append(episode_duration)
+            
                 episodes_trained += 1
+
+                # DEBUG: Episode-level logging
+                if config.debug_mode and episodes_trained % config.debug_interval == 0:
+                    avg_episode_time = np.mean(episode_times[-config.debug_interval:])
+                    logger.info(f"DEBUG Seed {config.seed}, Episode {episodes_trained}:")
+                    logger.info(f"  Episode time: {episode_duration:.2f}s (avg last {config.debug_interval}: {avg_episode_time:.2f}s)")
+                    logger.info(f"  Episode result keys: {episode_result.keys()}")
+                    for key, value in episode_result.items():
+                        if isinstance(value, (int, float)):
+                            logger.info(f"    {key}: {value}")
                 
                 # Validation check
                 if episodes_trained % config.val_interval == 0:
+                    val_start = datetime.now()
+
+                    logger.info(f"=== VALIDATION DEBUG Seed {config.seed}, Episode {episodes_trained} ===")
+
                     val_results = self.evaluate_on_split(
                         val_env, policy, vae, config, config.val_episodes
                     )
+
+                    val_end = datetime.now()
+                    val_duration = (val_end - val_start).total_seconds()
+
                     current_val_sharpe = val_results['avg_reward']
                     final_val_sharpe = current_val_sharpe
                     
+                    # DEBUG: Detailed validation logging
+                    logger.info(f"VALIDATION RESULTS:")
+                    logger.info(f"  Time: {val_duration:.2f}s for {config.val_episodes} episodes")
+                    logger.info(f"  Raw validation results: {val_results}")
+                    logger.info(f"  Sharpe ratio: {current_val_sharpe:.6f}")
+                    logger.info(f"  Reward stats: mean={val_results['avg_reward']:.6f}, std={val_results['std_reward']:.6f}")
+                    logger.info(f"  Return stats: mean={val_results['avg_return']:.6f}, std={val_results['std_return']:.6f}")
+
                     logger.info(f"Seed {config.seed}, Episode {episodes_trained}: "
                               f"val_sharpe={current_val_sharpe:.4f}")
                     
@@ -288,6 +335,7 @@ class ExperimentRunner:
                             'episodes_trained': episodes_trained,
                             'val_sharpe': current_val_sharpe
                         }
+                    logger.info(f"  NEW BEST MODEL: {best_val_sharpe:.6f}")
                     
                     # Early stopping check
                     if early_stopping.check(current_val_sharpe, episodes_trained):
@@ -296,6 +344,17 @@ class ExperimentRunner:
                 if episodes_trained >= config.max_episodes:
                     break
             
+            # DEBUG: Task-level timing
+            task_end = datetime.now()
+            task_duration = (task_end - task_start).total_seconds()
+            
+            if config.debug_mode:
+                time_since_last = (task_end - last_log_time).total_seconds()
+                logger.info(f"DEBUG Task completed: {config.episodes_per_task} episodes in {task_duration:.2f}s")
+                logger.info(f"  Time since last log: {time_since_last:.2f}s")
+                logger.info(f"  Episodes/minute: {(config.episodes_per_task * 60) / task_duration:.2f}")
+                last_log_time = task_end
+
             if early_stopping.stopped or episodes_trained >= config.max_episodes:
                 break
         
@@ -312,16 +371,92 @@ class ExperimentRunner:
         )
     
     def evaluate_on_split(self, split_env, policy, vae, config, num_episodes):
-        """Evaluate policy on validation split (from your existing code)"""
+        """Evaluate policy on validation split with debug logging"""
+        logger.info(f"DEBUG: Starting evaluation with {num_episodes} episodes")
+
         device = torch.device(config.device)
         episode_rewards = []
         episode_returns = []
-        
+
         vae.eval()
         policy.eval()
         
         with torch.no_grad():
-            for episode in range(num_episodes):
+            # Debug first 5 episodes in detail
+            for episode in range(min(5, num_episodes)):
+                logger.info(f"DEBUG: Starting evaluation episode {episode}")
+
+                task = split_env.sample_task()
+                split_env.set_task(task)
+                obs = split_env.reset()
+                obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+                
+                episode_reward = 0
+                step_rewards = []
+                step_capitals = [split_env.initial_capital]
+                done = False
+                initial_capital = split_env.initial_capital
+                trajectory_context = {'observations': [], 'actions': [], 'rewards': []}
+                
+                step_count = 0
+                while not done and step_count < 10:  # Debug first 10 steps
+                    # Get latent - handle ablation case
+                    if config.disable_vae:
+                        latent = torch.zeros(1, config.latent_dim, device=device)
+                    elif len(trajectory_context['observations']) == 0:
+                        latent = torch.zeros(1, config.latent_dim, device=device)
+                    else:
+                        obs_seq = torch.stack(trajectory_context['observations']).unsqueeze(0)
+                        action_seq = torch.stack(trajectory_context['actions']).unsqueeze(0)
+                        reward_seq = torch.stack(trajectory_context['rewards']).unsqueeze(0).unsqueeze(-1)
+                        mu, logvar, _ = vae.encode(obs_seq, action_seq, reward_seq)
+                        latent = vae.reparameterize(mu, logvar)
+                    
+                    # Get action
+                    action, value = policy.act(obs_tensor, latent, deterministic=True)
+                    action_cpu = action.squeeze(0).detach().cpu().numpy()
+
+                    # DEBUG: Log action details
+                    if episode < 2:
+                        logger.info(f"  Step {step_count}: action_sum={action_cpu.sum():.6f}, action_max={action_cpu.max():.6f}")
+
+                    next_obs, reward, done, info = split_env.step(action_cpu)
+                    episode_reward += reward
+                    step_rewards.append(reward)
+                    step_capitals.append(split_env.current_capital)
+
+                    # DEBUG: Log reward details
+                    if episode < 2:
+                        capital_change = split_env.current_capital - step_capitals[-2]
+                        logger.info(f"    reward={reward:.6f}, capital_change={capital_change:.2f}")
+                        logger.info(f"    current_capital={split_env.current_capital:.2f}")
+                        
+                    # Update context
+                    trajectory_context['observations'].append(obs_tensor.squeeze(0).detach())
+                    trajectory_context['actions'].append(action.squeeze(0).detach())
+                    trajectory_context['rewards'].append(torch.tensor(reward, device=device))
+                    
+                    if not done:
+                        obs_tensor = torch.tensor(next_obs, dtype=torch.float32, device=device).unsqueeze(0)
+                    
+                    step_count += 1
+                
+                final_capital = split_env.current_capital
+                total_return = (final_capital - initial_capital) / initial_capital
+                episode_rewards.append(episode_reward)
+                episode_returns.append(total_return)
+
+                # DEBUG: Episode summary
+                if episode < 2:
+                    logger.info(f"  Episode {episode} summary:")
+                    logger.info(f"    Total reward: {episode_reward:.6f}")
+                    logger.info(f"    Total return: {total_return:.6f}")
+                    logger.info(f"    Steps: {len(step_rewards)}")
+                    logger.info(f"    Avg step reward: {np.mean(step_rewards):.6f}")
+                    logger.info(f"    Capital: {initial_capital:.2f} -> {final_capital:.2f}")
+
+            # Run remaining episodes without detailed logging
+            for episode in range(5, num_episodes):
                 task = split_env.sample_task()
                 split_env.set_task(task)
                 obs = split_env.reset()
@@ -335,7 +470,6 @@ class ExperimentRunner:
                 while not done:
                     # Get latent - handle ablation case
                     if config.disable_vae:
-                        # Ablation: always use zero latent (no VAE information)
                         latent = torch.zeros(1, config.latent_dim, device=device)
                     elif len(trajectory_context['observations']) == 0:
                         latent = torch.zeros(1, config.latent_dim, device=device)
@@ -364,9 +498,16 @@ class ExperimentRunner:
                 total_return = (final_capital - initial_capital) / initial_capital
                 episode_rewards.append(episode_reward)
                 episode_returns.append(total_return)
-        
+
         vae.train()
         policy.train()
+        
+        # Calculate Sharpe ratio with debugging
+        rewards_array = np.array(episode_rewards)
+        logger.info(f"DEBUG: Final evaluation stats:")
+        logger.info(f"  Episode rewards: min={rewards_array.min():.6f}, max={rewards_array.max():.6f}, mean={rewards_array.mean():.6f}")
+        logger.info(f"  Episode rewards std: {rewards_array.std():.6f}")
+        logger.info(f"  Sharpe calculation: mean={rewards_array.mean():.6f} / std={rewards_array.std():.6f}")
         
         return {
             'avg_reward': np.mean(episode_rewards),
@@ -377,6 +518,18 @@ class ExperimentRunner:
     
     def run_all_seeds(self, configs: List[ValidationConfig]) -> List[RunResult]:
         """Run all seed configurations"""
+
+        # DEBUG: Verify trainer configuration
+        logger.info(f"DEBUG: Trainer configuration:")
+        logger.info(f"  trainer.num_envs: {trainer.num_envs}")
+        logger.info(f"  trainer.device: {trainer.device}")
+        logger.info(f"  config.num_envs: {config.num_envs}")
+
+        # Test if vectorized training is working
+        if hasattr(trainer, 'collect_trajectories_batched'):
+            logger.info(f"  Vectorized training: AVAILABLE")
+        else:
+            logger.info(f"  Vectorized training: NOT AVAILABLE - using single env")
         logger.info(f"Starting validation with {len(configs)} seed runs")
         
         # Setup data environment once
