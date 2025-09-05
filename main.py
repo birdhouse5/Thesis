@@ -69,10 +69,25 @@ class ValidationConfig:
     gae_lambda: float = 0.95
     discount_factor: float = 0.99
 
+    # Ablation study flag
+    disable_vae: bool = False
+
 def create_seed_configs(num_seeds: int = 25) -> List[ValidationConfig]:
-    """Create 25 configs with different seeds"""
-    return [ValidationConfig(seed=i, exp_name=f"validation_seed_{i}") 
-            for i in range(num_seeds)]
+    """Create 25 configs with different seeds plus 1 ablation config"""
+    configs = []
+    
+    # Regular 25 seed runs
+    for i in range(num_seeds):
+        configs.append(ValidationConfig(seed=i, exp_name=f"validation_seed_{i}"))
+    
+    # Add one ablation run (VAE disabled)
+    configs.append(ValidationConfig(
+        seed=99,  # Use different seed for ablation
+        exp_name="ablation_no_vae",
+        disable_vae=True
+    ))
+    
+    return configs
 
 @dataclass
 class RunResult:
@@ -318,8 +333,11 @@ class ExperimentRunner:
                 trajectory_context = {'observations': [], 'actions': [], 'rewards': []}
                 
                 while not done:
-                    # Get latent
-                    if len(trajectory_context['observations']) == 0:
+                    # Get latent - handle ablation case
+                    if config.disable_vae:
+                        # Ablation: always use zero latent (no VAE information)
+                        latent = torch.zeros(1, config.latent_dim, device=device)
+                    elif len(trajectory_context['observations']) == 0:
                         latent = torch.zeros(1, config.latent_dim, device=device)
                     else:
                         obs_seq = torch.stack(trajectory_context['observations']).unsqueeze(0)
@@ -654,7 +672,10 @@ class BacktestEngine:
             for t in range(len(features) - 1):
                 obs_t = features[t].unsqueeze(0).to(device)  # [1, N, F]
                 
-                # Get latent representation
+                # Get latent representation and handle ablation
+                if config.disable_vae:
+                    # Ablation: always use zero latent
+                    latent = torch.zeros(1, config.latent_dim, device=device)
                 if len(trajectory_context['observations']) == 0:
                     latent = torch.zeros(1, config.latent_dim, device=device)
                 else:
@@ -896,7 +917,10 @@ def main():
    
    # Configuration
    num_seeds = 25
-   configs = create_seed_configs(num_seeds)
+   configs = create_seed_configs(num_seeds)   
+   logger.info(f"Configuration loaded: {len(configs)} total runs")
+   logger.info(f"  - {num_seeds} regular seed runs")
+   logger.info(f"  - 1 ablation run (VAE disabled)")
    results_dir = Path("validation_results")
    results_dir.mkdir(parents=True, exist_ok=True)
    
