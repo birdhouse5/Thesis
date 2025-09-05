@@ -1,0 +1,10 @@
+Implementations:
+
+- A2C
+- noise control
+- early stopping
+- backtesting and benchmarking
+- ablation
+- sharpe vs. max drawdown (or other metric) or DSR
+- transaction cost yes and no
+

@@ -9,6 +9,7 @@ experiments/
 environments/data/
 optuna_results/
 validation_results/
+Osptuna_HPO/
 
 # python noise
 __pycache__/
@@ -21,3 +22,4 @@ __pycache__/
 
 # venv (if local)
 venv/
+workbench.ipynb
