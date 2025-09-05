@@ -9,7 +9,7 @@ experiments/
 environments/data/
 optuna_results/
 validation_results/
-Osptuna_HPO/
+Optuna_HPO/
 
 # python noise
 __pycache__/
