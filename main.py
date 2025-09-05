@@ -246,6 +246,11 @@ class ExperimentRunner:
         
         # Initialize trainer
         trainer = PPOTrainer(env=train_env, policy=policy, vae=vae, config=config)
+
+        logger.info(f"DEBUG: Trainer configuration:")
+        logger.info(f"  trainer.num_envs: {trainer.num_envs}")
+        logger.info(f"  trainer.device: {trainer.device}")
+        logger.info(f"  config.num_envs: {config.num_envs}")
         
         # Early stopping tracker
         early_stopping = EarlyStoppingTracker(
@@ -518,19 +523,6 @@ class ExperimentRunner:
     
     def run_all_seeds(self, configs: List[ValidationConfig]) -> List[RunResult]:
         """Run all seed configurations"""
-
-        # DEBUG: Verify trainer configuration
-        logger.info(f"DEBUG: Trainer configuration:")
-        logger.info(f"  trainer.num_envs: {trainer.num_envs}")
-        logger.info(f"  trainer.device: {trainer.device}")
-        logger.info(f"  config.num_envs: {config.num_envs}")
-
-        # Test if vectorized training is working
-        if hasattr(trainer, 'collect_trajectories_batched'):
-            logger.info(f"  Vectorized training: AVAILABLE")
-        else:
-            logger.info(f"  Vectorized training: NOT AVAILABLE - using single env")
-        logger.info(f"Starting validation with {len(configs)} seed runs")
         
         # Setup data environment once
         self.setup_data_environment(configs[0])  # All configs are same except seed
