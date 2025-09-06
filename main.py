@@ -1050,7 +1050,7 @@ def quick_performance_test():
     import time
     
     # Test configurations
-    test_configs = [1, 4, 16, 50, 100, 200]
+    test_configs = [1, 50, 200]
     
     for num_envs in test_configs:
         print(f"\n=== Testing num_envs = {num_envs} ===")
