@@ -197,7 +197,7 @@ class PPOTrainer:
             context["rewards"].append(torch.tensor(reward, device=self.device))
 
             if not done:
-                obs_tensor = torch.as_tensor(next_obs, dtype=torch.float32, device=self.device, non_blocking=True).unsqueeze(0)
+                obs_tensor = torch.as_tensor(next_obs, dtype=torch.float32, device=self.device).unsqueeze(0)
 
             step += 1
             self.total_steps += 1
