@@ -166,7 +166,7 @@ class PPOTrainer:
         traj = {"observations": [], "actions": [], "rewards": [], "values": [], "log_probs": [], "latents": [], "dones": []}
 
         obs = self.env.reset()
-        obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=self.device, non_blocking=True).unsqueeze(0)
+        obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
 
         context = {"observations": [], "actions": [], "rewards": []}
         done = False
