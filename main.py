@@ -1046,31 +1046,51 @@ def run_unified_backtest(results: List[RunResult], config: ValidationConfig) -> 
    return combined_results
 
 def quick_performance_test():
-    """Test different num_envs values to find optimal setting"""
+    """Test different num_envs values with proper memory management"""
     import time
+    import gc
     
-    # Test configurations
-    test_configs = [1, 50, 200]
+    # Test configurations - start smaller to avoid OOM
+    test_configs = [1, 4, 8, 16, 24, 32]  # Smaller increments
     
     for num_envs in test_configs:
         print(f"\n=== Testing num_envs = {num_envs} ===")
+        
+        # AGGRESSIVE MEMORY CLEANUP BEFORE EACH TEST
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
+            torch.cuda.synchronize()
+        gc.collect()
+        
+        # Check available memory before test
+        if torch.cuda.is_available():
+            memory_free = torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated()
+            print(f"  Available GPU memory: {memory_free / 1024**3:.2f} GB")
+            
+            # Skip if insufficient memory
+            if memory_free < 4 * 1024**3:  # Less than 4GB free
+                print(f"  SKIPPED: Insufficient GPU memory")
+                continue
         
         # Create test config
         config = ValidationConfig(
             seed=42,
             num_envs=num_envs,
-            max_episodes=20,  # Short test
+            max_episodes=10,  # Even shorter test
             episodes_per_task=1,
-            val_interval=999,  # No validation during test
-            debug_mode=False   # No debug logging
+            val_interval=999,
+            debug_mode=False,
+            # Memory optimizations
+            batch_size=min(4096, num_envs * 64),  # Scale batch size
+            vae_batch_size=min(512, num_envs * 8),
         )
         
+        runner = None
         try:
-            # Setup (same as main)
             runner = ExperimentRunner("test_results")
             runner.setup_data_environment(config)
             
-            # Quick training test
             start_time = time.time()
             result = runner.run_single_seed(config)
             end_time = time.time()
@@ -1086,14 +1106,26 @@ def quick_performance_test():
             if torch.cuda.is_available():
                 memory_used = torch.cuda.max_memory_allocated() / 1024**3
                 print(f"  Peak GPU memory: {memory_used:.2f} GB")
-                torch.cuda.reset_peak_memory_stats()
         
         except Exception as e:
             print(f"  FAILED: {e}")
         
-        # Cleanup
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        finally:
+            # CRITICAL: Cleanup everything
+            if runner is not None:
+                del runner
+            if 'config' in locals():
+                del config
+            if 'result' in locals():
+                del result
+            
+            # Force garbage collection
+            gc.collect()
+            
+            # Clear GPU memory
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
 
 # Alternative: Profile the existing code
 def profile_current_performance():
