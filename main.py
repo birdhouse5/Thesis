@@ -1045,6 +1045,91 @@ def run_unified_backtest(results: List[RunResult], config: ValidationConfig) -> 
    
    return combined_results
 
+def quick_performance_test():
+    """Test different num_envs values to find optimal setting"""
+    import time
+    
+    # Test configurations
+    test_configs = [1, 4, 16, 50, 100, 200]
+    
+    for num_envs in test_configs:
+        print(f"\n=== Testing num_envs = {num_envs} ===")
+        
+        # Create test config
+        config = ValidationConfig(
+            seed=42,
+            num_envs=num_envs,
+            max_episodes=20,  # Short test
+            episodes_per_task=1,
+            val_interval=999,  # No validation during test
+            debug_mode=False   # No debug logging
+        )
+        
+        try:
+            # Setup (same as main)
+            runner = ExperimentRunner("test_results")
+            runner.setup_data_environment(config)
+            
+            # Quick training test
+            start_time = time.time()
+            result = runner.run_single_seed(config)
+            end_time = time.time()
+            
+            duration = end_time - start_time
+            episodes_per_second = config.max_episodes / duration
+            
+            print(f"  Duration: {duration:.2f}s")
+            print(f"  Episodes/sec: {episodes_per_second:.2f}")
+            print(f"  Episodes trained: {result.episodes_trained}")
+            
+            # Memory usage
+            if torch.cuda.is_available():
+                memory_used = torch.cuda.max_memory_allocated() / 1024**3
+                print(f"  Peak GPU memory: {memory_used:.2f} GB")
+                torch.cuda.reset_peak_memory_stats()
+        
+        except Exception as e:
+            print(f"  FAILED: {e}")
+        
+        # Cleanup
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+# Alternative: Profile the existing code
+def profile_current_performance():
+    """Profile current implementation to find bottlenecks"""
+    import cProfile
+    import pstats
+    import io
+    
+    # Create a small test run
+    config = ValidationConfig(
+        seed=42,
+        num_envs=200,  # Current setting
+        max_episodes=10,  # Very short for profiling
+        episodes_per_task=1,
+        val_interval=999,
+        debug_mode=False
+    )
+    
+    pr = cProfile.Profile()
+    pr.enable()
+    
+    try:
+        runner = ExperimentRunner("profile_results")
+        result = runner.run_single_seed(config)
+    except Exception as e:
+        print(f"Profiling failed: {e}")
+    
+    pr.disable()
+    
+    # Print top time consumers
+    s = io.StringIO()
+    ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
+    ps.print_stats(20)  # Top 20 functions
+    
+    print("=== PROFILING RESULTS ===")
+    print(s.getvalue())
 
 def main():
    """Complete validation pipeline with backtesting"""
@@ -1110,12 +1195,18 @@ def main():
 
 
 if __name__ == "__main__":
-    # Set GPU optimizations
-    if torch.cuda.is_available():
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
-        torch.set_float32_matmul_precision('high')
-    
-    # Run validation
-    stats, results, combined_backtest = main()
+    import sys
+    if "--performance-test" in sys.argv:
+        quick_performance_test()
+    elif "--profile" in sys.argv:
+        profile_current_performance() 
+    else:
+        # Set GPU optimizations
+        if torch.cuda.is_available():
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            torch.set_float32_matmul_precision('high')
+        
+        # Run validation
+        stats, results, combined_backtest = main()
 

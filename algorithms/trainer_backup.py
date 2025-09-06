@@ -15,44 +15,6 @@ from environments.env import MetaEnv
 logger = logging.getLogger(__name__)
 
 
-
-import time
-import torch.profiler
-
-class PerformanceDiagnostic:
-    def __init__(self):
-        self.timings = {}
-    
-    def time_section(self, name):
-        return TimingContext(self, name)
-    
-    def add_timing(self, name, duration):
-        if name not in self.timings:
-            self.timings[name] = []
-        self.timings[name].append(duration)
-    
-    def report(self):
-        print("\n=== PERFORMANCE BREAKDOWN ===")
-        for name, times in self.timings.items():
-            avg_time = sum(times) / len(times)
-            total_time = sum(times)
-            print(f"{name:30s}: {avg_time:.4f}s avg, {total_time:.2f}s total ({len(times)} calls)")
-
-class TimingContext:
-    def __init__(self, diagnostic, name):
-        self.diagnostic = diagnostic
-        self.name = name
-        self.start_time = None
-    
-    def __enter__(self):
-        self.start_time = time.time()
-        return self
-    
-    def __exit__(self, *args):
-        duration = time.time() - self.start_time
-        self.diagnostic.add_timing(self.name, duration)
-
-
 class PPOTrainer:
     """
     PPO Trainer for VariBAD Portfolio Optimization.
@@ -101,24 +63,23 @@ class PPOTrainer:
     # Public training entry point
     # ---------------------------------------------------------------------
     def train_episode(self) -> Dict[str, float]:
-        """Modified train_episode with performance diagnostics"""
-        diag = PerformanceDiagnostic()
-        
+        """
+        Train for one (or many) episode(s).
+        If num_envs > 1, this collects *num_envs* trajectories in parallel and
+        pushes each into PPO/vae buffers.
+        """
         if self.num_envs > 1:
-            with diag.time_section("collect_trajectories_batched"):
-                trajectories = self.collect_trajectories_batched(self.num_envs)
-            
-            with diag.time_section("add_to_buffers"):
-                for tr in trajectories:
-                    self.vae_buffer.append(tr)
-                    self.experience_buffer.add_trajectory(tr)
-            
-            episode_reward_mean = float(np.mean([float(sum(tr["rewards"])) for tr in trajectories]))
-        else:
-            with diag.time_section("collect_single_trajectory"):
-                tr = self.collect_trajectory()
+            trajectories = self.collect_trajectories_batched(self.num_envs)
+            # Add to buffers
+            for tr in trajectories:
                 self.vae_buffer.append(tr)
                 self.experience_buffer.add_trajectory(tr)
+            # Produce a compact summary (mean across the batch)
+            episode_reward_mean = float(np.mean([float(sum(tr["rewards"])) for tr in trajectories]))
+        else:
+            tr = self.collect_trajectory()
+            self.vae_buffer.append(tr)
+            self.experience_buffer.add_trajectory(tr)
             episode_reward_mean = float(sum(tr["rewards"]))
 
         # Updates
@@ -126,21 +87,24 @@ class PPOTrainer:
         vae_loss = 0.0
 
         if self.experience_buffer.is_ready():
-            with diag.time_section("update_policy"):
-                policy_loss = float(self.update_policy())
+            policy_loss = float(self.update_policy())
             self.experience_buffer.clear()
 
-        if (not getattr(self.config, "disable_vae", False) and 
-            self.episode_count % self.config.vae_update_freq == 0 and
-            len(self.vae_buffer) >= self.config.vae_batch_size):
-            with diag.time_section("update_vae"):
-                vae_loss = float(self.update_vae())
+        if (
+            not getattr(self.config, "disable_vae", False)
+            and self.episode_count % self.config.vae_update_freq == 0
+            and len(self.vae_buffer) >= self.config.vae_batch_size
+        ):
+            vae_loss = float(self.update_vae())
 
-        # Report timing every 50 episodes
-        if self.episode_count % 50 == 0:
-            diag.report()
+        self.episode_rewards.append(float(episode_reward_mean))
+        if policy_loss > 0:
+            self.policy_losses.append(float(policy_loss))
+        if vae_loss > 0:
+            self.vae_losses.append(float(vae_loss))
 
         self.episode_count += 1
+
         return {
             "episode_reward": float(episode_reward_mean),
             "policy_loss": float(policy_loss),
@@ -152,85 +116,53 @@ class PPOTrainer:
     # Trajectory collection (single)
     # ---------------------------------------------------------------------
     def collect_trajectory(self):
-        """Optimized version with proper VAE batching"""
-        B = max(1, int(B))
-        envs = [self._clone_env() for _ in range(B)]
-        for e in envs:
-            e.set_task(e.sample_task())
-        
-        obs_np = [e.reset() for e in envs]
-        obs = torch.as_tensor(np.stack(obs_np, axis=0), dtype=torch.float32, device=self.device)
-        
-        done = np.zeros(B, dtype=bool)
+        traj = {"observations": [], "actions": [], "rewards": [], "values": [], "log_probs": [], "latents": [], "dones": []}
+
+        obs = self.env.reset()
+        obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=self.device, non_blocking=True).unsqueeze(0)
+
+        context = {"observations": [], "actions": [], "rewards": []}
+        done = False
         step = 0
-        
-        # Collect ALL context data first, then batch process VAE
-        all_contexts = [[] for _ in range(B)]  # Store raw context data
-        trajs = [{"observations": [], "actions": [], "rewards": [], "values": [], 
-                "log_probs": [], "latents": [], "dones": []} for _ in range(B)]
-        
-        while not np.all(done) and step < self.config.max_horizon:
-            # Build latents - BATCHED VAE processing
-            if step == 0 or getattr(self.config, "disable_vae", False):
-                # First step or VAE disabled
-                latent = torch.zeros(B, self.config.latent_dim, device=self.device)
-            else:
-                # Batch process VAE for all environments that have context
-                latent = self._batch_process_vae_contexts(all_contexts, done)
-            
-            # Policy step (already batched - this is good)
+
+        while not done and step < self.config.max_horizon:
+            latent = self._get_latent_for_step(obs_tensor, context)
+
             with torch.no_grad():
-                action, _ = self.policy.act(obs, latent, deterministic=False)
-                values, log_probs, _ = self.policy.evaluate_actions(obs, latent, action)
-            
-            # Environment steps and data collection
-            action_np = action.detach().cpu().numpy()
-            next_obs_list = []
-            
-            for i, e in enumerate(envs):
-                if done[i]:
-                    next_obs_list.append(obs_np[i])
-                    continue
-                
-                o2, r, d, _ = e.step(action_np[i])
-                
-                # Store trajectory data
-                trajs[i]["observations"].append(obs[i].detach().cpu())
-                trajs[i]["actions"].append(action[i].detach().cpu())
-                trajs[i]["latents"].append(latent[i].detach().cpu())
-                trajs[i]["rewards"].append(float(r))
-                trajs[i]["values"].append(values[i].detach().cpu())
-                trajs[i]["log_probs"].append(log_probs[i].detach().cpu())
-                trajs[i]["dones"].append(bool(d))
-                
-                # Store context for next VAE batch processing
-                if not getattr(self.config, "disable_vae", False):
-                    all_contexts[i].append({
-                        'obs': obs[i].detach(),
-                        'act': action[i].detach(), 
-                        'rew': torch.tensor(r, device=self.device)
-                    })
-                
-                done[i] = d
-                next_obs_list.append(o2)
-            
-            obs_np = next_obs_list
-            obs = torch.as_tensor(np.stack(obs_np, axis=0), dtype=torch.float32, device=self.device)
+                action, _ = self.policy.act(obs_tensor, latent, deterministic=False)
+                values, log_prob, _ = self.policy.evaluate_actions(obs_tensor, latent, action)
+
+            action_cpu = action.squeeze(0).detach().cpu().numpy()
+            next_obs, reward, done, _ = self.env.step(action_cpu)
+
+            # Store (CPU)
+            traj["observations"].append(obs_tensor.squeeze(0).detach().cpu())
+            traj["actions"].append(action.squeeze(0).detach().cpu())
+            traj["latents"].append(latent.squeeze(0).detach().cpu())
+            traj["rewards"].append(float(reward))
+            traj["values"].append(values.squeeze().cpu())
+            traj["log_probs"].append(log_prob.squeeze().cpu())
+            traj["dones"].append(bool(done))
+
+            # Update context (GPU)
+            context["observations"].append(obs_tensor.squeeze(0).detach())
+            context["actions"].append(action.squeeze(0).detach())
+            context["rewards"].append(torch.tensor(reward, device=self.device))
+
+            if not done:
+                obs_tensor = torch.as_tensor(next_obs, dtype=torch.float32, device=self.device, non_blocking=True).unsqueeze(0)
+
             step += 1
-            self.total_steps += int(np.sum(~done))
-        
-        # Final processing
-        for i in range(B):
-            if len(trajs[i]["rewards"]) == 0:
-                # Handle empty trajectories
-                trajs[i] = self._create_empty_trajectory()
-            else:
-                # Stack tensors
-                for k in ["observations", "actions", "values", "log_probs", "latents"]:
-                    trajs[i][k] = torch.stack(trajs[i][k]).to(self.device)
-                trajs[i]["rewards"] = torch.tensor(trajs[i]["rewards"], dtype=torch.float32, device=self.device)
-        
-        return trajs
+            self.total_steps += 1
+
+        # Stack to device
+        traj["observations"] = torch.stack(traj["observations"]).to(self.device)
+        traj["actions"] = torch.stack(traj["actions"]).to(self.device)
+        traj["values"] = torch.stack(traj["values"]).to(self.device)
+        traj["log_probs"] = torch.stack(traj["log_probs"]).to(self.device)
+        traj["latents"] = torch.stack(traj["latents"]).to(self.device)
+        traj["rewards"] = torch.tensor(traj["rewards"], dtype=torch.float32, device=self.device)
+        return traj
 
     # ---------------------------------------------------------------------
     # Trajectory collection (batched)
@@ -442,69 +374,6 @@ class PPOTrainer:
         torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
         self.vae_optimizer.step()
         return total_loss_value / loss_count
-
-    def _batch_process_vae_contexts(self, all_contexts, done):
-        """Process VAE encoding in batches instead of individually"""
-        latents = []
-        
-        # Group environments by context length for efficient batching
-        context_groups = {}
-        for i, contexts in enumerate(all_contexts):
-            if done[i] or len(contexts) == 0:
-                latents.append(torch.zeros(1, self.config.latent_dim, device=self.device))
-            else:
-                ctx_len = len(contexts)
-                if ctx_len not in context_groups:
-                    context_groups[ctx_len] = []
-                context_groups[ctx_len].append((i, contexts))
-        
-        # Process each group with same context length together
-        latent_results = {}
-        for ctx_len, env_contexts in context_groups.items():
-            if len(env_contexts) == 1:
-                # Single environment - process normally
-                i, contexts = env_contexts[0]
-                obs_seq = torch.stack([c['obs'] for c in contexts]).unsqueeze(0)
-                act_seq = torch.stack([c['act'] for c in contexts]).unsqueeze(0) 
-                rew_seq = torch.stack([c['rew'] for c in contexts]).unsqueeze(0).unsqueeze(-1)
-                mu, logvar, _ = self.vae.encode(obs_seq, act_seq, rew_seq)
-                latent_results[i] = self.vae.reparameterize(mu, logvar)
-            else:
-                # Multiple environments with same context length - batch them!
-                all_obs = []
-                all_acts = []
-                all_rews = []
-                env_indices = []
-                
-                for i, contexts in env_contexts:
-                    env_indices.append(i)
-                    all_obs.append(torch.stack([c['obs'] for c in contexts]))
-                    all_acts.append(torch.stack([c['act'] for c in contexts]))
-                    all_rews.append(torch.stack([c['rew'] for c in contexts]))
-                
-                # Batch encode
-                batch_obs = torch.stack(all_obs)  # [batch, seq_len, ...]
-                batch_acts = torch.stack(all_acts)
-                batch_rews = torch.stack(all_rews).unsqueeze(-1)
-                
-                mu, logvar, _ = self.vae.encode(batch_obs, batch_acts, batch_rews)
-                batch_latents = self.vae.reparameterize(mu, logvar)
-                
-                # Distribute results
-                for j, env_i in enumerate(env_indices):
-                    latent_results[env_i] = batch_latents[j:j+1]
-        
-        # Reconstruct latent tensor in environment order
-        final_latents = []
-        for i in range(len(all_contexts)):
-            if i in latent_results:
-                final_latents.append(latent_results[i])
-            else:
-                final_latents.append(torch.zeros(1, self.config.latent_dim, device=self.device))
-        
-        return torch.cat(final_latents, dim=0)
-
-
 
     # ---------------------------------------------------------------------
     # Checkpoint helpers (unchanged)
