@@ -1,4 +1,4 @@
-# trainer.py - Optimized with proper VAE batching
+# trainer.py - Optimized with fixed-length trajectory batching
 import logging
 from collections import deque
 from datetime import datetime
@@ -54,7 +54,7 @@ class TimingContext:
 class PPOTrainer:
     """
     PPO Trainer for VariBAD Portfolio Optimization.
-    OPTIMIZED: Proper batched VAE processing for massive speedup.
+    OPTIMIZED: Fixed-length trajectory batching for maximum speedup.
     """
 
     def __init__(self, env, policy, vae, config):
@@ -69,6 +69,14 @@ class PPOTrainer:
 
         # Vectorization knob
         self.num_envs = max(1, int(getattr(config, "num_envs", 1)))
+
+        # Check if we can use fixed-length optimization
+        self.use_fixed_length = (config.min_horizon == config.max_horizon)
+        if self.use_fixed_length and self.num_envs > 1:
+            logger.info(f"Fixed-length optimization enabled: length={config.min_horizon}")
+        elif self.num_envs > 1:
+            logger.warning(f"Variable-length trajectories detected: min={config.min_horizon}, max={config.max_horizon}")
+            logger.warning("Consider setting min_horizon = max_horizon for better performance")
 
         # Optimizers
         self.policy_optimizer = Adam(policy.parameters(), lr=config.policy_lr)
@@ -101,14 +109,17 @@ class PPOTrainer:
     def train_episode(self) -> Dict[str, float]:
         """
         Train for one (or many) episode(s) with performance diagnostics.
-        If num_envs > 1, this collects *num_envs* trajectories in parallel and
-        pushes each into PPO/vae buffers.
+        Uses fixed-length optimization when min_horizon == max_horizon.
         """
         diag = PerformanceDiagnostic()
         
         if self.num_envs > 1:
-            with diag.time_section("collect_trajectories_batched"):
-                trajectories = self.collect_trajectories_batched(self.num_envs)
+            if self.use_fixed_length:
+                with diag.time_section("collect_fixed_length_batched"):
+                    trajectories = self.collect_trajectories_batched_fixed_length(self.num_envs)
+            else:
+                with diag.time_section("collect_trajectories_batched"):
+                    trajectories = self.collect_trajectories_batched(self.num_envs)
             
             with diag.time_section("add_to_buffers"):
                 for tr in trajectories:
@@ -212,7 +223,7 @@ class PPOTrainer:
         return traj
 
     # ---------------------------------------------------------------------
-    # Trajectory collection (OPTIMIZED BATCHED)
+    # Environment cloning
     # ---------------------------------------------------------------------
     def _clone_env(self) -> MetaEnv:
         # Rebuild MetaEnv with same dataset + parameters
@@ -225,8 +236,112 @@ class PPOTrainer:
             max_horizon=src.max_horizon,
         )
 
+    # ---------------------------------------------------------------------
+    # OPTIMIZED: Fixed-length trajectory collection
+    # ---------------------------------------------------------------------
+    def collect_trajectories_batched_fixed_length(self, B: int) -> List[Dict]:
+        """
+        OPTIMIZED: Fixed-length trajectories where all environments finish simultaneously.
+        This eliminates synchronization bottlenecks and enables true VAE batching.
+        """
+        B = max(1, int(B))
+        envs = [self._clone_env() for _ in range(B)]
+        for e in envs:
+            e.set_task(e.sample_task())
+        obs_np = [e.reset() for e in envs]
+        obs = torch.as_tensor(np.stack(obs_np, axis=0), dtype=torch.float32, device=self.device)
+
+        # For fixed lengths, we know exactly when all environments will finish
+        fixed_length = self.config.min_horizon  # Since min_horizon == max_horizon
+        
+        # Pre-allocate for exact trajectory length - this is key for performance
+        ctx_obs_tensor = torch.zeros(B, fixed_length, *obs.shape[1:], device=self.device)
+        ctx_act_tensor = torch.zeros(B, fixed_length, self.config.num_assets, device=self.device)
+        ctx_rew_tensor = torch.zeros(B, fixed_length, 1, device=self.device)
+        
+        # Pre-allocate trajectory storage
+        all_observations = torch.zeros(B, fixed_length, *obs.shape[1:], device=self.device)
+        all_actions = torch.zeros(B, fixed_length, self.config.num_assets, device=self.device)
+        all_latents = torch.zeros(B, fixed_length, self.config.latent_dim, device=self.device)
+        all_rewards = torch.zeros(B, fixed_length, device=self.device)
+        all_values = torch.zeros(B, fixed_length, device=self.device)
+        all_log_probs = torch.zeros(B, fixed_length, device=self.device)
+
+        for step in range(fixed_length):
+            # VAE processing - efficient because we know the step count
+            if getattr(self.config, "disable_vae", False) or step == 0:
+                latent = torch.zeros(B, self.config.latent_dim, device=self.device)
+            else:
+                # Use data from previous steps (all environments have same history length)
+                ctx_len = step
+                batch_obs = ctx_obs_tensor[:, :ctx_len]
+                batch_acts = ctx_act_tensor[:, :ctx_len]  
+                batch_rews = ctx_rew_tensor[:, :ctx_len]
+                
+                # TRUE BATCHED VAE CALL - no masking needed since all have same length!
+                try:
+                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
+                        mu, logvar, _ = self.vae.encode(batch_obs, batch_acts, batch_rews)
+                        latent = self.vae.reparameterize(mu, logvar)
+                except Exception as e:
+                    print(f"VAE batch encode failed: {e}")
+                    latent = torch.zeros(B, self.config.latent_dim, device=self.device)
+
+            # Policy step (already batched)
+            with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
+                action, _ = self.policy.act(obs, latent, deterministic=False)
+                values, log_probs, _ = self.policy.evaluate_actions(obs, latent, action)
+
+            # Store everything in pre-allocated tensors
+            all_observations[:, step] = obs
+            all_actions[:, step] = action
+            all_latents[:, step] = latent
+            all_values[:, step] = values.squeeze(-1)
+            all_log_probs[:, step] = log_probs.squeeze(-1)
+            
+            # Environment steps
+            action_np = action.detach().cpu().numpy()
+            next_obs_list = []
+            rewards = []
+            
+            for i, e in enumerate(envs):
+                o2, r, d, _ = e.step(action_np[i])
+                next_obs_list.append(o2)
+                rewards.append(r)
+                
+                # Store context for next VAE call
+                if not getattr(self.config, "disable_vae", False):
+                    ctx_obs_tensor[i, step] = obs[i]
+                    ctx_act_tensor[i, step] = action[i]
+                    ctx_rew_tensor[i, step, 0] = r
+
+            all_rewards[:, step] = torch.tensor(rewards, device=self.device)
+            
+            # Update observations for next step (except on final step)
+            if step < fixed_length - 1:
+                obs = torch.as_tensor(np.stack(next_obs_list), dtype=torch.float32, device=self.device)
+
+        # Convert to list of trajectories (expected format for PPO)
+        trajs = []
+        for i in range(B):
+            trajs.append({
+                "observations": all_observations[i],      # [fixed_length, ...]
+                "actions": all_actions[i],               # [fixed_length, num_assets]
+                "latents": all_latents[i],               # [fixed_length, latent_dim]
+                "rewards": all_rewards[i],               # [fixed_length]
+                "values": all_values[i],                 # [fixed_length]
+                "log_probs": all_log_probs[i],           # [fixed_length]
+                "dones": [False] * (fixed_length - 1) + [True]  # Only last step is done
+            })
+
+        self.total_steps += B * fixed_length
+        return trajs
+
+    # ---------------------------------------------------------------------
+    # FALLBACK: Variable-length trajectory collection (original approach)
+    # ---------------------------------------------------------------------
     def collect_trajectories_batched(self, B: int) -> List[Dict]:
-        """OPTIMIZED: True batched VAE processing for massive speedup"""
+        """Fallback method for variable-length trajectories"""
         B = max(1, int(B))
         envs = [self._clone_env() for _ in range(B)]
         for e in envs:
@@ -237,23 +352,19 @@ class PPOTrainer:
         done = np.zeros(B, dtype=bool)
         step = 0
 
-        # KEY OPTIMIZATION: Store contexts in tensors, not lists
-        max_context_len = 100  # Limit context to prevent memory explosion
-        
-        # Pre-allocate context tensors [B, max_seq, ...]
+        # Context storage for variable lengths
+        max_context_len = 100
         ctx_obs_tensor = torch.zeros(B, max_context_len, *obs.shape[1:], device=self.device)
         ctx_act_tensor = torch.zeros(B, max_context_len, self.config.num_assets, device=self.device)
         ctx_rew_tensor = torch.zeros(B, max_context_len, 1, device=self.device)
-        ctx_lengths = torch.zeros(B, dtype=torch.long)  # Track actual length per env
+        ctx_lengths = torch.zeros(B, dtype=torch.long)
 
-        # Per-env trajectories
         trajs = [
             {"observations": [], "actions": [], "rewards": [], "values": [], "log_probs": [], "latents": [], "dones": []}
             for _ in range(B)
         ]
 
         while not np.all(done) and step < self.config.max_horizon:
-            # OPTIMIZED: Batch VAE processing
             if getattr(self.config, "disable_vae", False):
                 latent = torch.zeros(B, self.config.latent_dim, device=self.device)
             elif step == 0:
@@ -261,14 +372,13 @@ class PPOTrainer:
             else:
                 latent = self._batch_vae_encode(ctx_obs_tensor, ctx_act_tensor, ctx_rew_tensor, ctx_lengths, done)
 
-            # Policy step (already batched - this is good)
             with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
                 action, _ = self.policy.act(obs, latent, deterministic=False)
                 values, log_probs, _ = self.policy.evaluate_actions(obs, latent, action)
 
             action_np = action.detach().cpu().numpy()
-
             next_obs_list = []
+            
             for i, e in enumerate(envs):
                 if done[i]:
                     next_obs_list.append(obs_np[i])
@@ -276,7 +386,6 @@ class PPOTrainer:
 
                 o2, r, d, _ = e.step(action_np[i])
                 
-                # Store transition for env i
                 trajs[i]["observations"].append(obs[i].detach().cpu())
                 trajs[i]["actions"].append(action[i].detach().cpu())
                 trajs[i]["latents"].append(latent[i].detach().cpu())
@@ -285,7 +394,6 @@ class PPOTrainer:
                 trajs[i]["log_probs"].append(log_probs[i].detach().cpu())
                 trajs[i]["dones"].append(bool(d))
 
-                # OPTIMIZED: Store context in pre-allocated tensors
                 if not getattr(self.config, "disable_vae", False) and ctx_lengths[i] < max_context_len:
                     idx = ctx_lengths[i]
                     ctx_obs_tensor[i, idx] = obs[i]
@@ -298,7 +406,6 @@ class PPOTrainer:
 
             obs_np = next_obs_list
             obs = torch.as_tensor(np.stack(obs_np, axis=0), dtype=torch.float32, device=self.device)
-
             step += 1
             self.total_steps += int(np.sum(~done))
 
@@ -315,49 +422,38 @@ class PPOTrainer:
         return trajs
 
     def _batch_vae_encode(self, ctx_obs_tensor, ctx_act_tensor, ctx_rew_tensor, ctx_lengths, done):
-        """OPTIMIZED: Single batched VAE call instead of 200 individual calls"""
+        """VAE encoding for variable-length sequences"""
         B = ctx_obs_tensor.shape[0]
-        
-        # Find environments that need VAE encoding
         active_mask = (ctx_lengths > 0) & (~torch.from_numpy(done).to(ctx_lengths.device))
         
         if not active_mask.any():
             return torch.zeros(B, self.config.latent_dim, device=self.device)
         
-        # Get maximum context length among active environments
         max_len = ctx_lengths[active_mask].max().item()
-        
         if max_len == 0:
             return torch.zeros(B, self.config.latent_dim, device=self.device)
         
-        # Create batched sequences for VAE - only up to max_len
-        batch_obs = ctx_obs_tensor[:, :max_len]  # [B, max_len, ...]
-        batch_acts = ctx_act_tensor[:, :max_len]  # [B, max_len, num_assets]
-        batch_rews = ctx_rew_tensor[:, :max_len]  # [B, max_len, 1]
+        batch_obs = ctx_obs_tensor[:, :max_len]
+        batch_acts = ctx_act_tensor[:, :max_len]
+        batch_rews = ctx_rew_tensor[:, :max_len]
         
-        # CRITICAL: Mask out inactive environments to avoid processing garbage
         for i in range(B):
             if not active_mask[i] or ctx_lengths[i] < max_len:
-                # Zero out unused parts
                 actual_len = ctx_lengths[i] if active_mask[i] else 0
                 if actual_len < max_len:
                     batch_obs[i, actual_len:] = 0
                     batch_acts[i, actual_len:] = 0
                     batch_rews[i, actual_len:] = 0
         
-        # SINGLE BATCHED VAE CALL - This is where the speedup comes from!
         try:
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
                 mu, logvar, _ = self.vae.encode(batch_obs, batch_acts, batch_rews)
-                latents = self.vae.reparameterize(mu, logvar)  # [B, latent_dim]
+                latents = self.vae.reparameterize(mu, logvar)
         except Exception as e:
-            # Fallback to zeros if VAE fails
             print(f"VAE batch encode failed: {e}")
             latents = torch.zeros(B, self.config.latent_dim, device=self.device)
         
-        # Zero out latents for inactive environments
         latents[~active_mask] = 0
-        
         return latents
 
     def _create_empty_trajectory(self):
@@ -529,7 +625,3 @@ class ExperienceBuffer:
 
     def get_all(self):
         return self.trajectories
-
-    def clear(self):
-        self.trajectories = []
-        self.total_steps = 0
