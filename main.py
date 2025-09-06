@@ -44,7 +44,7 @@ class ValidationConfig:
     vae_batch_size: int = 1024
     ppo_epochs: int = 8
     entropy_coef: float = 0.0013141391952945
-    num_envs: int = 200
+    num_envs: int = 1
 
     # Training schedule
     max_episodes: int = 6000
@@ -60,8 +60,8 @@ class ValidationConfig:
     val_end: str = "2020-12-31"
     num_assets: int = 30
     device: str = "cuda"
-    max_horizon: int = 100
-    min_horizon: int = 100
+    max_horizon: int = 200
+    min_horizon: int = 200
     
     # Fixed PPO params
     ppo_clip_ratio: float = 0.2
