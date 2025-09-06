@@ -625,3 +625,7 @@ class ExperienceBuffer:
 
     def get_all(self):
         return self.trajectories
+
+    def clear(self):
+        self.trajectories = []
+        self.total_steps = 0
