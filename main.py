@@ -60,8 +60,8 @@ class ValidationConfig:
     val_end: str = "2020-12-31"
     num_assets: int = 30
     device: str = "cuda"
-    max_horizon: int = 160
-    min_horizon: int = 145
+    max_horizon: int = 200
+    min_horizon: int = 200
     
     # Fixed PPO params
     ppo_clip_ratio: float = 0.2
