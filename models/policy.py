@@ -83,12 +83,8 @@ class PortfolioPolicy(nn.Module):
         portfolio_logits = self.actor_head(shared_features)  # (batch, num_assets)
         value = self.critic_head(shared_features)            # (batch, 1)
         
-        # Softmax normalization for valid portfolio weights
-        portfolio_weights = F.softmax(portfolio_logits, dim=-1)  # (batch, num_assets)
-        
         return {
-            'portfolio_weights': portfolio_weights,  # Sum = 1, each weight ∈ [0,1]
-            'portfolio_logits': portfolio_logits,    # Raw logits for PPO
+            'raw_actions': portfolio_logits,  # raw outputs, unconstrained
             'value': value
         }
     
@@ -109,16 +105,14 @@ class PortfolioPolicy(nn.Module):
             output = self.forward(obs, latent)
             
             if deterministic:
-                # Use softmax probabilities directly
-                portfolio_weights = output['portfolio_weights']
+                actions = output['raw_actions']
             else:
-                # Add small amount of exploration noise
-                logits = output['portfolio_logits'] 
-                # Temperature sampling for exploration
-                temp = 1.0
-                portfolio_weights = F.softmax(logits / temp, dim=-1)
-            
-            return portfolio_weights, output['value']
+
+                # add small noise for stochastic exploration
+                noise = torch.randn_like(output['raw_actions']) * 0.01
+                actions = output['raw_actions'] + noise
+            return actions, output['value']
+
     
     def evaluate_actions(self, obs, latent, actions):
         """
@@ -160,75 +154,3 @@ class PortfolioPolicy(nn.Module):
         with torch.no_grad():
             output = self.forward(obs, latent)
             return output['value']
-        
-
-
-
-# Alternative: More principled Dirichlet distribution approach
-class DirichletPortfolioPolicy(PortfolioPolicy):
-    """
-    Portfolio policy using Dirichlet distribution for portfolio weights.
-    More principled than categorical approximation but computationally heavier.
-    """
-    
-    def __init__(self, obs_shape, latent_dim, num_assets, hidden_dim=256):
-        super().__init__(obs_shape, latent_dim, num_assets, hidden_dim)
-        
-        # Additional layer to output concentration parameters
-        self.concentration_head = nn.Sequential(
-            nn.Linear(hidden_dim // 2, num_assets),
-            nn.Softplus()  # Ensure positive concentrations
-        )
-    
-    def forward(self, obs, latent):
-        """Forward pass using Dirichlet distribution."""
-        batch_size = obs.shape[0]
-        
-        # Encode inputs (same as base class)
-        obs_flat = obs.view(batch_size, -1)
-        obs_features = self.obs_encoder(obs_flat)
-        latent_features = self.latent_encoder(latent)
-        combined = torch.cat([obs_features, latent_features], dim=-1)
-        shared_features = self.shared_layers(combined)
-        
-        # Generate concentration parameters for Dirichlet
-        concentrations = self.concentration_head(shared_features) + 1.0  # Ensure > 1
-        
-        # Value function
-        value = self.critic_head(shared_features)
-        
-        return {
-            'concentrations': concentrations,
-            'value': value
-        }
-    
-    def act(self, obs, latent, deterministic=False):
-        """Sample from Dirichlet distribution."""
-        output = self.forward(obs, latent)
-        concentrations = output['concentrations']
-        
-        if deterministic:
-            # Use expected value of Dirichlet (normalized concentrations)
-            portfolio_weights = concentrations / concentrations.sum(dim=-1, keepdim=True)
-        else:
-            # Sample from Dirichlet distribution
-            dist = torch.distributions.Dirichlet(concentrations)
-            portfolio_weights = dist.sample()
-        
-        return portfolio_weights, output['value']
-    
-    def evaluate_actions(self, obs, latent, actions):
-        """Evaluate using proper Dirichlet log probability."""
-        output = self.forward(obs, latent)
-        concentrations = output['concentrations']
-        
-        # Create Dirichlet distribution
-        dist = torch.distributions.Dirichlet(concentrations)
-        
-        # Compute log probability and entropy
-        log_probs = dist.log_prob(actions).unsqueeze(-1)  # (batch, 1)
-        entropy = dist.entropy().unsqueeze(-1)           # (batch, 1)
-        
-        values = output['value']
-        
-        return values, log_probs, entropy

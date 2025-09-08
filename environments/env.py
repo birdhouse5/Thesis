@@ -1,11 +1,25 @@
 import torch
 import numpy as np
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
+
+
+def normalize_with_budget_constraint(raw_actions: np.ndarray, eps: float = 1e-8):
+    """
+    Normalize raw action vector into portfolio weights with budget constraint:
+    sum(|w_i|) + w_cash = 1, w_cash >= 0
+    """
+    denom = np.sum(np.abs(raw_actions)) + 1.0 + eps
+    weights = raw_actions / denom
+    w_cash = 1.0 / denom
+    return weights, w_cash
+
+
 class MetaEnv:
-    def __init__(self, dataset: dict, feature_columns: list, seq_len: int = 60, min_horizon: int = 45, max_horizon: int = 60, rf_rate=0.02):
+    def __init__(self, dataset: dict, feature_columns: list, seq_len: int = 60, min_horizon: int = 45, max_horizon: int = 60, rf_rate=0.02, steps_per_year: int = 252, eta: float = 0.05, eps: float = 1e-12):
         """
         Args:
             dataset: Dict with 'features' and 'raw_prices' tensors
@@ -19,7 +33,15 @@ class MetaEnv:
         self.seq_len = seq_len
         self.min_horizon = min_horizon
         self.max_horizon = max_horizon
+        # Risk-free handling & DSR hyperparams
+        # rf_rate is assumed annual; convert to per-step LOG rf:
+        #   rf_step_log = log(1 + rf_rate) / steps_per_year
+        # If your rf_rate is already per-step, set steps_per_year=1.
         self.rf_rate = rf_rate
+        self.steps_per_year = steps_per_year
+        self.rf_step_log = math.log(1.0 + rf_rate) / max(1, steps_per_year)
+        self.eta = eta
+        self.eps = eps
         
         # Current episode state
         self.current_step = 0
@@ -28,7 +50,12 @@ class MetaEnv:
         self.terminal_step = None
         self.done = True
 
-        self.returns = []
+        # Tracking (we keep both for interpretability & eval)
+        self.log_returns = []         # total portfolio log-returns (incl. cash at rf)
+        self.excess_log_returns = []  # excess log-returns over rf (agent's "risk-adjusted" atom)
+        # DSR state (EWMA first & second moments of EXCESS returns)
+        self.alpha = 0.0
+        self.beta = 0.0
         self.capital_history = []
 
         # Episode tracking
@@ -74,7 +101,11 @@ class MetaEnv:
         # Reset capital tracking for new episode
         self.current_capital = self.initial_capital
         self.capital_history = [self.initial_capital]
-        self.returns = []  # Reset returns for fresh Sharpe calculation
+        # Reset return series & DSR state
+        self.log_returns = []
+        self.excess_log_returns = []
+        self.alpha = 0.0
+        self.beta = 0.0
         
         self.episode_count += 1
         
@@ -100,8 +131,8 @@ class MetaEnv:
         # Current state (normalized features)
         current_state = self.current_task['features'][self.current_step].numpy()  # [N, F]
         
-        # Compute Sharpe ratio reward (updates capital tracking)
-        reward = self.compute_reward_with_capital(action)
+        # Compute reward and normalized allocations
+        reward, weights, w_cash = self.compute_reward_with_capital(action)
         
         # Store transition
         self.episode_trajectory.append({
@@ -119,67 +150,90 @@ class MetaEnv:
         next_state = (np.zeros_like(current_state) if self.done 
                      else self.current_task['features'][self.current_step].numpy())
         
-        # Performance metrics
-        investment_pct = action.sum()
-        cash_pct = 1.0 - investment_pct
+        # Performance metrics (based on normalized allocations)
+        investment_pct = np.sum(np.abs(weights))
+        cash_pct = w_cash
         cumulative_return = (self.current_capital - self.initial_capital) / self.initial_capital
-        pure_return = self.returns[-1] if self.returns else 0.0
-        
+        pure_return = self.log_returns[-1] if self.log_returns else 0.0
+
         info = {
             'capital': self.current_capital,
             'investment_pct': investment_pct,
-            'cash_pct': cash_pct, 
+            'cash_pct': cash_pct,
             'cumulative_return': cumulative_return,
-            'pure_return': pure_return,
-            'sharpe_reward': reward,
+            'pure_return': pure_return,   # kept for backward-compat
+            'sharpe_reward': reward,      # name kept for downstream compatibility; now DSR
+            'log_return': self.log_returns[-1] if self.log_returns else 0.0,
+            'excess_log_return': self.excess_log_returns[-1] if self.excess_log_returns else 0.0,
+            'weights': weights.copy(),
+            'w_cash': w_cash,
             'step': self.current_step,
             'episode_id': self.episode_count
         }
+
         
         return next_state, reward, self.done, info
     
     def compute_reward_with_capital(self, portfolio_weights):
         """
-        Compute Sharpe ratio reward while tracking capital performance
-        
-        Args:
-            portfolio_weights: np.array[N] - portfolio allocation weights
-            
-        Returns:
-            reward: float - Sharpe ratio for RL optimization
+        Differential Sharpe Ratio (DSR) reward using portfolio EXCESS LOG-returns.
+        - Uses EWMA of first/second moments (alpha, beta) with decay eta.
+        - Provides dense, stepwise signal aligned with risk-adjusted performance.
         """
         if self.current_step >= len(self.current_task['raw_prices']) - 1:
             return 0.0  # No next prices available
-        
-        # Get current and next raw prices (convert to numpy)
-        current_prices = self.current_task['raw_prices'][self.current_step].numpy()     # [N]
-        next_prices = self.current_task['raw_prices'][self.current_step + 1].numpy()   # [N]
-        
-        # Calculate individual asset returns
-        asset_returns = (next_prices - current_prices) / (current_prices + 1e-8)  # [N]
-        
-        # Calculate portfolio return: weighted sum of asset returns
-        portfolio_return = np.sum(portfolio_weights * asset_returns)
-        
-        # Update capital tracking
-        old_capital = self.current_capital
-        self.current_capital = old_capital * (1.0 + portfolio_return)
+
+        # --- 1) Compute asset LOG-returns for the step t -> t+1
+        current_prices = self.current_task['raw_prices'][self.current_step].numpy()   # [N]
+        next_prices    = self.current_task['raw_prices'][self.current_step + 1].numpy()
+        # Guard against zeros/negatives (shouldn't be present but keep robust)
+        current_prices = np.clip(current_prices, self.eps, None)
+        next_prices    = np.clip(next_prices,    self.eps, None)
+        asset_log_returns = np.log(next_prices) - np.log(current_prices)             # [N]
+
+        # --- 2) Portfolio total LOG-return decomposition:
+        # total_log_ret = rf + sum_i w_i * (asset_log_i - rf)
+        # DSR is defined on EXCESS returns:
+        assets_excess = asset_log_returns - self.rf_step_log                         # [N]
+        weights, w_cash = normalize_with_budget_constraint(portfolio_weights, self.eps)
+
+        # We do NOT force sum(weights)=1; cash earns rf implicitly via decomposition
+        excess_log_return = float(np.dot(weights, assets_excess))                    # scalar
+        total_log_return  = self.rf_step_log + excess_log_return                     # scalar
+
+        # --- 3) Update capital using TOTAL log-return (for interpretability)
+        self.current_capital *= math.exp(total_log_return)
         self.capital_history.append(self.current_capital)
-        
-        # Store return for Sharpe calculation
-        self.returns.append(portfolio_return)
-        
-        # Calculate Sharpe ratio as RL reward
-        if len(self.returns) >= 2:
-            returns_array = np.array(self.returns)
-            mean_return = returns_array.mean()
-            std_return = returns_array.std()
-            #sharpe = (mean_return - self.rf_rate) / (std_return + 1e-8)
-            sharpe = mean_return / (std_return + 1e-8)
-        else:
-            sharpe = 0.0
-        
-        return float(sharpe)
+        self.log_returns.append(total_log_return)
+        self.excess_log_returns.append(excess_log_return)
+
+        # --- 4) Differential Sharpe Ratio (DSR) update
+        # EWMA state BEFORE update
+        alpha_prev = self.alpha
+        beta_prev  = self.beta
+
+        # EWMA updates for EXCESS returns
+        delta_alpha = self.eta * (excess_log_return - alpha_prev)
+        delta_beta  = self.eta * (excess_log_return**2 - beta_prev)
+        alpha_new   = alpha_prev + delta_alpha
+        beta_new    = beta_prev + delta_beta
+
+        # Variance proxy (ensure positivity)
+        var_prev = max(beta_prev - alpha_prev**2, self.eps)
+        denom = (var_prev ** 1.5) + self.eps
+        # DSR_t using PRE-UPDATE moments (standard form)
+        dsr = (beta_prev * delta_alpha - 0.5 * alpha_prev * delta_beta) / denom
+
+        # Commit new EWMA state
+        self.alpha = alpha_new
+        self.beta  = beta_new
+
+        # Optionally gate very-early steps to avoid noisy spikes
+        if self.current_step < 2:
+            dsr = 0.0
+
+        # Return both reward and the normalized allocations for logging
+        return float(dsr), weights, w_cash
 
     def rollout_episode(self, policy, encoder):
         """
@@ -224,17 +278,15 @@ class MetaEnv:
             # Store full transition info for training
             trajectory.append({
                 'state': state.copy(),           # [N, F]
-                'action': action.copy(),         # [N] 
+                'action': info['weights'].copy(),   # normalized portfolio weights
                 'reward': reward,                # scalar
                 'latent': latent.copy() if hasattr(latent, 'copy') else latent,  # [latent_dim]
                 'next_state': next_state.copy() if not done else None
             })
-            
-            # Update trajectory context for next iteration
-            # This follows paper's τ:t notation: (s0,a0,r1,s1,a1,r2,...,st)
+
             trajectory_context.append({
                 'state': state.copy(),
-                'action': action.copy(),
+                'action': info['weights'].copy(),   # normalized portfolio weights
                 'reward': reward
             })
             
