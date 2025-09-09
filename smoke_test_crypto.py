@@ -4,11 +4,11 @@ import logging
 from pathlib import Path
 
 # Import your existing modules
-from dataset import create_split_datasets
-from env import MetaEnv
-from vae import VAE
-from policy import PortfolioPolicy
-from trainer import PPOTrainer
+from environments.dataset import create_split_datasets
+from environments.env import MetaEnv
+from models.vae import VAE
+from models.policy import PortfolioPolicy
+from algorithms.trainer import PPOTrainer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
