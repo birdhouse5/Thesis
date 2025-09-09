@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 
 # Import your existing modules
+from environments import data_preparation as dp
 from environments.dataset import create_split_datasets
 from environments.env import MetaEnv
 from models.vae import VAE
@@ -13,11 +14,35 @@ from algorithms.trainer import PPOTrainer
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def prepare_data_if_needed(data_path: Path, days: int = 10):
+    """
+    Create the crypto parquet if it does not exist.
+    """
+    if data_path.exists():
+        logger.info(f"✅ Dataset already exists: {data_path}")
+        return
+
+    logger.info("🚀 Downloading crypto OHLCV data...")
+    df = dp.sample_crypto(dp.CRYPTO_TICKERS, days=days, interval="15m")
+
+    logger.info("✨ Adding technical indicators...")
+    df = dp.add_technical_indicators(df)
+
+    logger.info("🔄 Normalizing features...")
+    df = dp.normalize_features(df)
+
+    data_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(data_path, index=False)
+    logger.info(f"💾 Saved cleaned dataset: {data_path} (shape={df.shape})")
+
+
 def run_smoke_test(data_path="environments/data/crypto_dataset.parquet"):
     """
     Minimal smoke test for the full VariBAD PPO pipeline.
     Uses tiny dimensions and very few episodes.
     """
+    data_path = Path(data_path)
+    prepare_data_if_needed(data_path)
 
     # --- Minimal config ---
     class Config:
@@ -49,25 +74,21 @@ def run_smoke_test(data_path="environments/data/crypto_dataset.parquet"):
 
         # Training schedule
         num_envs = 1
-        max_episodes = 2  # just 2 episodes
+        max_episodes = 2
         episodes_per_task = 1
 
     cfg = Config()
 
     # --- Load dataset (crypto) ---
-    if not Path(data_path).exists():
-        raise FileNotFoundError(f"{data_path} not found. Please generate parquet first.")
-
     datasets = create_split_datasets(
-        data_path=data_path,
-        proportional=True,   # proportional split is better for crypto
+        data_path=str(data_path),
+        proportional=True,   # proportional split for crypto
     )
     train_ds = datasets["train"]
 
-    # --- Slice down to num_assets subset ---
+    # Restrict to first num_assets
     tickers = train_ds.tickers[:cfg.num_assets]
-    train_data = train_ds.data[train_ds.data["ticker"].isin(tickers)].copy()
-    train_ds.data = train_data
+    train_ds.data = train_ds.data[train_ds.data["ticker"].isin(tickers)].copy()
     train_ds.tickers = tickers
     train_ds.num_assets = len(tickers)
 
@@ -110,6 +131,7 @@ def run_smoke_test(data_path="environments/data/crypto_dataset.parquet"):
         logger.info(f"Episode {ep}: {result}")
 
     logger.info("✅ Smoke test completed successfully.")
+
 
 if __name__ == "__main__":
     run_smoke_test()
