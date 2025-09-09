@@ -345,7 +345,7 @@ class ExperimentManager:
         logger.info(f"Final report saved to {self.checkpoint_dir}")
         
         # Print final summary
-        self.print_final_summary(summary) indent=2)
+        self.print_final_summary(summary)
         
         # Save detailed results
         results_file = self.checkpoint_dir / "detailed_results.json"
