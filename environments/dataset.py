@@ -79,7 +79,7 @@ class Dataset:
         print(f"Dataset {self.split_name}:")
         print(f"  Dates: {self.data['date'].min().date()} to {self.data['date'].max().date()}")
         print(f"  Shape: {self.data.shape}")
-        print(f"  Days: {self.num_days}, Assets: {self.num_assets}, Features: {self.num_features}")
+        print(f"  Time Steps: {self.num_days}, Assets: {self.num_assets}, Features: {self.num_features}")
 
     def _select_training_features(self):
         """Use only normalized features for consistent scaling"""
