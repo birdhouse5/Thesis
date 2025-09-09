@@ -5,6 +5,7 @@ from pathlib import Path
 
 from environments.dataset import create_split_datasets
 from environments.env import MetaEnv
+from environments import data_preparation as dp
 from models.vae import VAE
 from models.policy import PortfolioPolicy
 from algorithms.trainer import PPOTrainer
@@ -12,14 +13,26 @@ from algorithms.trainer import PPOTrainer
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def prepare_sp500_if_needed(data_path: Path):
+    """
+    Ensure the S&P500 parquet exists, otherwise build it.
+    """
+    if data_path.exists():
+        logger.info(f"✅ Dataset already exists: {data_path}")
+        return
+
+    logger.info("📈 Preparing S&P500 dataset...")
+    # Use your repo's function to build the cleaned parquet
+    dp.create_dataset(str(data_path))
+    logger.info(f"✅ Created S&P500 dataset: {data_path}")
+
 def run_smoke_test(data_path="environments/data/sp500_rl_ready_cleaned.parquet"):
     """
     Minimal smoke test for the full VariBAD PPO pipeline on S&P500 dataset.
     Uses tiny dimensions and very few episodes.
     """
     data_path = Path(data_path)
-    if not data_path.exists():
-        raise FileNotFoundError(f"{data_path} not found. Please run your S&P500 preprocessing first.")
+    prepare_sp500_if_needed(data_path)
 
     # --- Minimal config ---
     class Config:
@@ -91,14 +104,18 @@ def run_smoke_test(data_path="environments/data/sp500_rl_ready_cleaned.parquet")
 
     # --- Build models ---
     obs_shape = all_features.shape[1:]
-    vae = VAE(obs_dim=obs_shape,
-              num_assets=cfg.num_assets,
-              latent_dim=cfg.latent_dim,
-              hidden_dim=cfg.hidden_dim).to(cfg.device)
-    policy = PortfolioPolicy(obs_shape=obs_shape,
-                             latent_dim=cfg.latent_dim,
-                             num_assets=cfg.num_assets,
-                             hidden_dim=cfg.hidden_dim).to(cfg.device)
+    vae = VAE(
+        obs_dim=obs_shape,
+        num_assets=cfg.num_assets,
+        latent_dim=cfg.latent_dim,
+        hidden_dim=cfg.hidden_dim,
+    ).to(cfg.device)
+    policy = PortfolioPolicy(
+        obs_shape=obs_shape,
+        latent_dim=cfg.latent_dim,
+        num_assets=cfg.num_assets,
+        hidden_dim=cfg.hidden_dim,
+    ).to(cfg.device)
 
     trainer = PPOTrainer(env=env, policy=policy, vae=vae, config=cfg)
 
