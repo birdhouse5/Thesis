@@ -31,13 +31,6 @@ from algorithms.trainer import PPOTrainer
 from evaluation_backtest import evaluate, run_backtest
 
 # Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-
 def setup_debug_logging():
     """Configure logging based on DEBUG environment variable."""
     
@@ -59,7 +52,8 @@ def setup_debug_logging():
         handlers=[
             logging.StreamHandler(),  # Console output
             logging.FileHandler('experiment_debug.log', mode='w')  # File output
-        ]
+        ],
+        force=True  # Override existing configuration
     )
     
     # Set specific logger levels for debug mode
@@ -82,6 +76,14 @@ def setup_debug_logging():
             logger.info("TEST MODE ENABLED - running limited experiments")
     
     return debug_mode, test_mode
+
+# Initialize logging and get modes
+debug_mode, test_mode = setup_debug_logging()
+logger = logging.getLogger(__name__)
+
+# Import additional modules
+from experiment_manager import ExperimentManager
+from resource_manager import ResourceLimits
 
 def seed_everything(seed: int):
     """Set random seeds for reproducibility."""
