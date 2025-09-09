@@ -302,6 +302,7 @@ class CryptoSmokeTest:
         
         try:
             device = torch.device(self.config.device)
+            logger.info(f"Using device: {device}")
             
             # Get observation shape from environment
             task = env.sample_task()
@@ -309,20 +310,47 @@ class CryptoSmokeTest:
             obs = env.reset()
             obs_shape = obs.shape
             
-            # Initialize models
-            vae = VAE(
-                obs_dim=obs_shape,
-                num_assets=self.config.num_assets,
-                latent_dim=self.config.latent_dim,
-                hidden_dim=self.config.hidden_dim
-            ).to(device)
-            
-            policy = PortfolioPolicy(
-                obs_shape=obs_shape,
-                latent_dim=self.config.latent_dim,
-                num_assets=self.config.num_assets,
-                hidden_dim=self.config.hidden_dim
-            ).to(device)
+            # Initialize models with error handling
+            try:
+                vae = VAE(
+                    obs_dim=obs_shape,
+                    num_assets=self.config.num_assets,
+                    latent_dim=self.config.latent_dim,
+                    hidden_dim=self.config.hidden_dim
+                ).to(device)
+                
+                policy = PortfolioPolicy(
+                    obs_shape=obs_shape,
+                    latent_dim=self.config.latent_dim,
+                    num_assets=self.config.num_assets,
+                    hidden_dim=self.config.hidden_dim
+                ).to(device)
+                
+            except Exception as cuda_error:
+                if "CUDA" in str(cuda_error) and device.type == "cuda":
+                    logger.warning(f"CUDA model initialization failed: {cuda_error}")
+                    logger.info("Falling back to CPU...")
+                    device = torch.device("cpu")
+                    self.config.device = "cpu"
+                    
+                    # Retry with CPU
+                    vae = VAE(
+                        obs_dim=obs_shape,
+                        num_assets=self.config.num_assets,
+                        latent_dim=self.config.latent_dim,
+                        hidden_dim=self.config.hidden_dim
+                    ).to(device)
+                    
+                    policy = PortfolioPolicy(
+                        obs_shape=obs_shape,
+                        latent_dim=self.config.latent_dim,
+                        num_assets=self.config.num_assets,
+                        hidden_dim=self.config.hidden_dim
+                    ).to(device)
+                    
+                    logger.info("✅ Successfully initialized models on CPU")
+                else:
+                    raise  # Re-raise if not a CUDA issue
             
             # Test model forward passes
             obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
