@@ -1,114 +1,149 @@
-# smoke_test_sp500.py
 import torch
-import logging
-from pathlib import Path
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.distributions import Normal
 
-from environments.dataset import create_split_datasets
-from environments.env import MetaEnv
-from models.vae import VAE
-from models.policy import PortfolioPolicy
-from algorithms.trainer import PPOTrainer
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-def run_smoke_test(data_path="environments/data/sp500_rl_ready_cleaned.parquet"):
+class PortfolioPolicy(nn.Module):
     """
-    Minimal smoke test for the full VariBAD PPO pipeline on S&P500 dataset.
-    Uses tiny dimensions and very few episodes.
+    Portfolio policy that outputs allocation weights over assets.
+    Actions are portfolio weights ∈ [0,1]^N where sum ≤ 1 (remainder is cash).
     """
-    data_path = Path(data_path)
-    if not data_path.exists():
-        raise FileNotFoundError(f"{data_path} not found. Please run your S&P500 preprocessing first.")
+    def __init__(self, obs_shape, latent_dim, num_assets, hidden_dim=256):
+        super(PortfolioPolicy, self).__init__()
+        
+        self.obs_shape = obs_shape      # (N, F) - assets × features
+        self.latent_dim = latent_dim    
+        self.num_assets = num_assets
+        self.hidden_dim = hidden_dim
+        
+        # Input dimensions
+        obs_flat_dim = obs_shape[0] * obs_shape[1]  # N × F flattened
+        
+        # Observation encoder
+        self.obs_encoder = nn.Sequential(
+            nn.Linear(obs_flat_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU()
+        )
+        
+        # Latent encoder
+        self.latent_encoder = nn.Sequential(
+            nn.Linear(latent_dim, hidden_dim // 4),
+            nn.ReLU()
+        )
+        
+        # Combined layers
+        combined_dim = hidden_dim // 2 + hidden_dim // 4
+        self.shared_layers = nn.Sequential(
+            nn.Linear(combined_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU()
+        )
+        
+        # Output heads
+        self.actor_head = nn.Linear(hidden_dim // 2, num_assets)    # Portfolio logits
+        self.critic_head = nn.Linear(hidden_dim // 2, 1)            # Value function
+        
+    def forward(self, obs, latent):
+        """
+        Forward pass through policy network.
+        
+        Args:
+            obs: (batch, N, F)
+            latent: (batch, latent_dim)
+        """
+        assert obs.dim() == 3, f"Expected obs (B,N,F), got {tuple(obs.shape)}"
+        assert latent.dim() == 2, f"Expected latent (B,L), got {tuple(latent.shape)}"
 
-    # --- Minimal config ---
-    class Config:
-        latent_dim = 8
-        hidden_dim = 16
-        policy_lr = 1e-3
-        vae_lr = 1e-3
-        vae_beta = 0.1
-        vae_update_freq = 1
-        vae_batch_size = 4
-        batch_size = 8
+        batch_size = obs.shape[0]
+        
+        # Encode observations
+        obs_flat = obs.reshape(batch_size, -1)
+        obs_features = self.obs_encoder(obs_flat)
+        
+        # Encode latent
+        latent_features = self.latent_encoder(latent)
+        
+        # Combine
+        combined = torch.cat([obs_features, latent_features], dim=-1)
+        shared_features = self.shared_layers(combined)
+        
+        # Outputs
+        portfolio_logits = self.actor_head(shared_features)  # (B, N)
+        value = self.critic_head(shared_features)            # (B, 1)
+        
+        return {
+            'raw_actions': portfolio_logits,
+            'value': value
+        }
+    
+    def act(self, obs, latent, deterministic=False):
+        """
+        Sample action from policy.
+        """
+        with torch.no_grad():
+            output = self.forward(obs, latent)
+            if deterministic:
+                actions = output['raw_actions']
+            else:
+                noise = torch.randn_like(output['raw_actions']) * 0.01
+                actions = output['raw_actions'] + noise
+            return actions, output['value']
+    
+    def evaluate_actions(self, obs, latent, actions):
+        """
+        Evaluate actions for PPO training.
+        
+        Returns:
+            values: (batch, 1)
+            log_probs: (batch, 1)
+            entropy: (batch, 1)
+        """
+        output = self.forward(obs, latent)
 
-        seq_len = 20
-        min_horizon = 5
-        max_horizon = 5
-        num_assets = 5   # keep only 5 tickers for speed
-        device = "cpu"
+        # Convert logits → probabilities
+        portfolio_logits = output['raw_actions']
+        portfolio_probs = torch.softmax(portfolio_logits, dim=-1)
 
-        ppo_epochs = 1
-        discount_factor = 0.99
-        gae_lambda = 0.95
-        ppo_clip_ratio = 0.2
-        entropy_coef = 0.01
-        value_loss_coef = 0.5
-        max_grad_norm = 0.5
+        # Log probability of chosen action
+        log_probs = torch.sum(actions * torch.log(portfolio_probs + 1e-8), dim=-1, keepdim=True)
 
-        num_envs = 1
-        max_episodes = 2
-        episodes_per_task = 1
+        # Entropy of distribution
+        entropy = -torch.sum(portfolio_probs * torch.log(portfolio_probs + 1e-8), dim=-1, keepdim=True)
 
-    cfg = Config()
+        values = output['value']
+        return values, log_probs, entropy
 
-    # --- Load dataset ---
-    datasets = create_split_datasets(
-        data_path=str(data_path),
-        proportional=False,   # date-based split for S&P500
-    )
-    train_ds = datasets["train"]
 
-    # Restrict to subset of assets
-    tickers = train_ds.tickers[:cfg.num_assets]
-    train_ds.data = train_ds.data[train_ds.data["ticker"].isin(tickers)].copy()
-    train_ds.tickers = tickers
-    train_ds.num_assets = len(tickers)
+    
+def evaluate_actions(self, obs, latent, actions):
+    """
+    Evaluate actions for PPO training.
+    """
+    output = self.forward(obs, latent)
 
-    # --- Build environment tensors ---
-    all_features = torch.tensor(
-        train_ds.data[train_ds.feature_cols].values.reshape(
-            train_ds.num_days, train_ds.num_assets, train_ds.num_features
-        ),
-        dtype=torch.float32,
-    )
-    all_prices = torch.tensor(
-        train_ds.data["close"].values.reshape(
-            train_ds.num_days, train_ds.num_assets
-        ),
-        dtype=torch.float32,
-    )
+    # Convert logits to probabilities
+    portfolio_logits = output['raw_actions']
+    portfolio_probs = torch.softmax(portfolio_logits, dim=-1)
 
-    dataset_tensors = {"features": all_features, "raw_prices": all_prices}
+    # Log probability of chosen actions (approx categorical)
+    log_probs = torch.sum(actions * torch.log(portfolio_probs + 1e-8), dim=-1, keepdim=True)
 
-    env = MetaEnv(
-        dataset=dataset_tensors,
-        feature_columns=train_ds.feature_cols,
-        seq_len=cfg.seq_len,
-        min_horizon=cfg.min_horizon,
-        max_horizon=cfg.max_horizon,
-    )
+    # Entropy of the distribution
+    entropy = -torch.sum(portfolio_probs * torch.log(portfolio_probs + 1e-8), dim=-1, keepdim=True)
 
-    # --- Build models ---
-    obs_shape = all_features.shape[1:]
-    vae = VAE(obs_dim=obs_shape,
-              num_assets=cfg.num_assets,
-              latent_dim=cfg.latent_dim,
-              hidden_dim=cfg.hidden_dim).to(cfg.device)
-    policy = PortfolioPolicy(obs_shape=obs_shape,
-                             latent_dim=cfg.latent_dim,
-                             num_assets=cfg.num_assets,
-                             hidden_dim=cfg.hidden_dim).to(cfg.device)
+    values = output['value']
+    return values, log_probs, entropy
 
-    trainer = PPOTrainer(env=env, policy=policy, vae=vae, config=cfg)
-
-    # --- Run a couple episodes ---
-    for ep in range(cfg.max_episodes):
-        env.set_task(env.sample_task())
-        result = trainer.train_episode()
-        logger.info(f"Episode {ep}: {result}")
-
-    logger.info("✅ S&P500 smoke test completed successfully.")
-
-if __name__ == "__main__":
-    run_smoke_test()
+    
+    def get_value(self, obs, latent):
+        """Get state value without sampling action."""
+        with torch.no_grad():
+            output = self.forward(obs, latent)
+            return output['value']
