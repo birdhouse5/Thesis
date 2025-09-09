@@ -109,40 +109,25 @@ class PortfolioPolicy(nn.Module):
             return actions, output['value']
 
     
-    def evaluate_actions(self, obs, latent, actions):
-        """
-        Evaluate actions for PPO training.
-        
-        Args:
-            obs: (batch, N, F) - market observations
-            latent: (batch, latent_dim) - task embeddings  
-            actions: (batch, num_assets) - portfolio weights to evaluate
-            
-        Returns:
-            values: (batch, 1) - state values
-            log_probs: (batch, 1) - log probabilities of actions
-            entropy: (batch, 1) - policy entropy
-        """
-        output = self.forward(obs, latent)
-        
-        # Use Dirichlet distribution for portfolio weights
-        # Convert softmax outputs to Dirichlet concentration parameters
-        alpha = output['portfolio_weights'] * 10.0 + 1e-8  # Concentration parameters
-        
-        # For simplicity, approximate with categorical distribution over assets
-        # and compute log probability of the taken allocation
-        portfolio_probs = output['portfolio_weights']  # (batch, num_assets)
-        
-        # Compute log probability: treat as weighted categorical
-        # This is an approximation - ideally we'd use Dirichlet distribution
-        log_probs = torch.sum(actions * torch.log(portfolio_probs + 1e-8), dim=-1, keepdim=True)
-        
-        # Entropy of categorical distribution
-        entropy = -torch.sum(portfolio_probs * torch.log(portfolio_probs + 1e-8), dim=-1, keepdim=True)
-        
-        values = output['value']
-        
-        return values, log_probs, entropy
+def evaluate_actions(self, obs, latent, actions):
+    """
+    Evaluate actions for PPO training.
+    """
+    output = self.forward(obs, latent)
+
+    # Convert logits to probabilities
+    portfolio_logits = output['raw_actions']
+    portfolio_probs = torch.softmax(portfolio_logits, dim=-1)
+
+    # Log probability of chosen actions (approx categorical)
+    log_probs = torch.sum(actions * torch.log(portfolio_probs + 1e-8), dim=-1, keepdim=True)
+
+    # Entropy of the distribution
+    entropy = -torch.sum(portfolio_probs * torch.log(portfolio_probs + 1e-8), dim=-1, keepdim=True)
+
+    values = output['value']
+    return values, log_probs, entropy
+
     
     def get_value(self, obs, latent):
         """Get state value without sampling action."""
