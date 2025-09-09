@@ -14,15 +14,12 @@ from tqdm import tqdm
 
 # Your existing imports
 from environments.dataset import create_split_datasets
-from environments.env import normalize_with_budget_constraint
 from environments.env import MetaEnv
 from models.vae import VAE
 from models.policy import PortfolioPolicy
 from algorithms.trainer import PPOTrainer
-from run_logger import seed_everything
 
-
-logger = logging.getLogger(__name__)
+from logger import MLflowLogger
 
 
 
@@ -837,8 +834,9 @@ class BacktestEngine:
                 
                 # Get portfolio weights
                 action, _ = policy.act(obs_t, latent, deterministic=True)
-                raw_actions = action.squeeze(0).detach().cpu().numpy()
-                weights, w_cash = normalize_with_budget_constraint(raw_actions)
+                weights = action.squeeze(0).detach().cpu().numpy()
+                weights = np.clip(weights, 0, 1)
+                weights = weights / weights.sum() if weights.sum() > 0 else weights
                 
                 # Calculate returns
                 p_t = prices[t].cpu().numpy()
@@ -856,8 +854,7 @@ class BacktestEngine:
                     'returns': portfolio_return,
                     'model_name': model_name,
                     'strategy_type': 'varibad',
-                    'kind': 'model',
-                    'cash_weight': w_cash
+                    'kind': 'model'
                 })
                 
                 # Update trajectory context

@@ -1,5 +1,6 @@
 # trainer.py - Optimized with fixed-length trajectory batching
-import logging
+from logger import MLflowLogger
+
 from collections import deque
 from datetime import datetime
 from typing import Dict, List
@@ -12,8 +13,6 @@ from torch.optim import Adam
 
 # Needed to clone environments for batched rollouts
 from environments.env import MetaEnv
-
-logger = logging.getLogger(__name__)
 
 
 class PerformanceDiagnostic:
@@ -72,11 +71,6 @@ class PPOTrainer:
 
         # Check if we can use fixed-length optimization
         self.use_fixed_length = (config.min_horizon == config.max_horizon)
-        if self.use_fixed_length and self.num_envs > 1:
-            logger.info(f"Fixed-length optimization enabled: length={config.min_horizon}")
-        elif self.num_envs > 1:
-            logger.warning(f"Variable-length trajectories detected: min={config.min_horizon}, max={config.max_horizon}")
-            logger.warning("Consider setting min_horizon = max_horizon for better performance")
 
         # Optimizers
         self.policy_optimizer = Adam(policy.parameters(), lr=config.policy_lr)
@@ -85,6 +79,27 @@ class PPOTrainer:
         # Experience buffers
         self.experience_buffer = ExperienceBuffer(config.batch_size)  # for PPO
         self.vae_buffer = deque(maxlen=1000)  # recent trajectories for VAE
+
+        self.logger = MLflowLogger(
+            experiment_name=getattr(config, "experiment_name", "RL_Study"),
+            run_name=f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        )
+
+        # Log hyperparameters once at start
+        self.logger.log_params({
+            "policy_lr": config.policy_lr,
+            "vae_lr": config.vae_lr,
+            "batch_size": config.batch_size,
+            "min_horizon": config.min_horizon,
+            "max_horizon": config.max_horizon,
+            "discount_factor": config.discount_factor,
+            "gae_lambda": config.gae_lambda,
+            "ppo_epochs": config.ppo_epochs,
+            "ppo_clip_ratio": config.ppo_clip_ratio,
+            "value_loss_coef": config.value_loss_coef,
+            "entropy_coef": config.entropy_coef,
+        })
+
 
         # Rolling stats (store Python floats to avoid CUDA logging issues)
         self.policy_losses = deque(maxlen=100)
@@ -97,11 +112,6 @@ class PPOTrainer:
         self.episode_start_time = None
         self.portfolio_metrics_history = []
 
-        logger.info("PPO Trainer initialized")
-        logger.info(f"Policy LR: {config.policy_lr}, VAE LR: {config.vae_lr}")
-        logger.info(f"PPO epochs: {config.ppo_epochs}, clip ratio: {config.ppo_clip_ratio}")
-        if self.num_envs > 1:
-            logger.info(f"Trainer batched rollouts enabled: num_envs={self.num_envs}")
 
     # ---------------------------------------------------------------------
     # Public training entry point
@@ -163,12 +173,17 @@ class PPOTrainer:
 
         self.episode_count += 1
 
-        return {
+        results = {
             "episode_reward": float(episode_reward_mean),
             "policy_loss": float(policy_loss),
             "vae_loss": float(vae_loss),
             "total_steps": int(self.total_steps),
         }
+
+        # Log to MLflow
+        self.logger.log_metrics(results, step=self.episode_count)
+
+        return results
 
     # ---------------------------------------------------------------------
     # Trajectory collection (single)

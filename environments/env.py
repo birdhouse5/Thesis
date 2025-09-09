@@ -19,7 +19,7 @@ def normalize_with_budget_constraint(raw_actions: np.ndarray, eps: float = 1e-8)
 
 
 class MetaEnv:
-    def __init__(self, dataset: dict, feature_columns: list, seq_len: int = 60, min_horizon: int = 45, max_horizon: int = 60, rf_rate=0.02, steps_per_year: int = 252, eta: float = 0.05, eps: float = 1e-12):
+    def __init__(self, dataset: dict, feature_columns: list, seq_len: int = 60, min_horizon: int = 45, max_horizon: int = 60, rf_rate=0.02, steps_per_year: int = 252, eta: float = 0.05, eps: float = 1e-12, transaction_cost_rate: float = 0.001):
         """
         Args:
             dataset: Dict with 'features' and 'raw_prices' tensors
@@ -42,6 +42,9 @@ class MetaEnv:
         self.rf_step_log = math.log(1.0 + rf_rate) / max(1, steps_per_year)
         self.eta = eta
         self.eps = eps
+        self.transaction_cost_rate = transaction_cost_rate
+        self.prev_weights = None
+
         
         # Current episode state
         self.current_step = 0
@@ -106,7 +109,8 @@ class MetaEnv:
         self.excess_log_returns = []
         self.alpha = 0.0
         self.beta = 0.0
-        
+        self.prev_weights = np.zeros(self.current_task['raw_prices'].shape[1], dtype=np.float32)
+
         self.episode_count += 1
         
         # Return initial state: features only [N, F]
@@ -197,9 +201,17 @@ class MetaEnv:
         assets_excess = asset_log_returns - self.rf_step_log                         # [N]
         weights, w_cash = normalize_with_budget_constraint(portfolio_weights, self.eps)
 
+        # Transaction costs (proportional to turnover)
+        if self.prev_weights is None:
+            turnover = np.sum(np.abs(weights))  # first step baseline
+        else:
+            turnover = np.sum(np.abs(weights - self.prev_weights))
+        cost = self.transaction_cost_rate * turnover
+
         # We do NOT force sum(weights)=1; cash earns rf implicitly via decomposition
-        excess_log_return = float(np.dot(weights, assets_excess))                    # scalar
+        excess_log_return = float(np.dot(weights, assets_excess)) - cost             # scalar
         total_log_return  = self.rf_step_log + excess_log_return                     # scalar
+        self.prev_weights = weights
 
         # --- 3) Update capital using TOTAL log-return (for interpretability)
         self.current_capital *= math.exp(total_log_return)

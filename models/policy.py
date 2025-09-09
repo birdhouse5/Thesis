@@ -2,9 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
-import logging
-
-logger = logging.getLogger(__name__)
 
 class PortfolioPolicy(nn.Module):
     """
@@ -48,8 +45,6 @@ class PortfolioPolicy(nn.Module):
         # Output heads
         self.actor_head = nn.Linear(hidden_dim // 2, num_assets)    # Portfolio logits
         self.critic_head = nn.Linear(hidden_dim // 2, 1)           # Value function
-        
-        logger.info(f"Policy initialized: {num_assets} assets, obs_shape={obs_shape}, latent_dim={latent_dim}")
         
     def forward(self, obs, latent):
         """
