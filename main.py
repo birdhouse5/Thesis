@@ -83,7 +83,6 @@ logger = logging.getLogger(__name__)
 
 # Import additional modules
 from experiment_manager import ExperimentManager
-from resource_manager import ResourceLimits
 
 def seed_everything(seed: int):
     """Set random seeds for reproducibility."""
@@ -346,22 +345,12 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         cleanup_gpu_memory()
 
 def run_experiment_batch(experiments, experiment_name: str = "portfolio_optimization_study"):
-    """Run batch of experiments using ExperimentManager with resource management."""
+    """Run batch of experiments using ExperimentManager (simplified without resource management)."""
     
-    # Set up resource limits for single GPU
-    limits = ResourceLimits(
-        max_memory_mb=16000,  # 16GB RAM limit
-        max_gpu_memory_mb=8000,  # 8GB GPU limit (adjust based on your GPU)
-        max_runtime_minutes=180,  # 3 hour timeout per experiment
-        memory_warning_threshold=0.85,
-        cleanup_frequency=3  # Deep cleanup every 3 experiments
-    )
-    
-    # Create experiment manager with resource management
+    # Create experiment manager without resource limits (since the current ExperimentManager doesn't support it)
     manager = ExperimentManager(
         experiments, 
-        max_retries=0,
-        resource_limits=limits
+        max_retries=0
     )
     
     # Run all experiments
@@ -392,7 +381,7 @@ def main():
         logger.debug("Debug mode configuration:")
         logger.debug(f"- Logging level: DEBUG")
         logger.debug(f"- Log file: experiment_debug.log")
-        logger.debug(f"- Resource monitoring: enabled")
+        logger.debug(f"- Resource monitoring: disabled (not implemented in current ExperimentManager)")
         logger.debug(f"- Checkpoint directory: experiment_checkpoints/")
     
     # Run all experiments
