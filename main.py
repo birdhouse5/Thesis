@@ -75,7 +75,10 @@ def run_training(cfg: TrainingConfig):
     train_env, val_env = environments['train'], environments['val']
 
     # === 3. Build models ===
+    task = train_env.sample_task()
+    train_env.set_task(task)
     obs_shape = train_env.reset().shape
+
     device = torch.device(cfg.device)
 
     vae = None
