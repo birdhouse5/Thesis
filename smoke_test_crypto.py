@@ -577,15 +577,20 @@ class CryptoSmokeTest:
             
             train_dataset = datasets['train']
             
-            # Handle small datasets
-            if len(train_dataset) < ablation_config.seq_len + 1:
-                adjusted_seq_len = max(5, len(train_dataset) - 1)
+            # Handle small datasets and avoid the high <= 0 error
+            if len(train_dataset) < ablation_config.seq_len + 10:
+                adjusted_seq_len = max(5, len(train_dataset) - 10)
                 ablation_config.seq_len = adjusted_seq_len
-                ablation_config.min_horizon = min(ablation_config.min_horizon, adjusted_seq_len // 2)
+                ablation_config.min_horizon = min(ablation_config.min_horizon, adjusted_seq_len // 3)
                 ablation_config.max_horizon = min(ablation_config.max_horizon, adjusted_seq_len // 2)
+                
+                # Ensure min_horizon <= max_horizon and both are positive
+                ablation_config.min_horizon = max(1, ablation_config.min_horizon)
+                ablation_config.max_horizon = max(ablation_config.min_horizon, ablation_config.max_horizon)
             
-            max_window_size = min(ablation_config.seq_len, len(train_dataset))
-            window_data = train_dataset.get_window(0, max_window_size)
+            # Use a larger window to avoid sampling issues
+            window_size = min(len(train_dataset), max(ablation_config.seq_len * 2, 100))
+            window_data = train_dataset.get_window(0, window_size)
             
             env = MetaEnv(
                 dataset={
@@ -609,6 +614,20 @@ class CryptoSmokeTest:
                      latent_dim=ablation_config.latent_dim, hidden_dim=ablation_config.hidden_dim).to(device)
             policy = PortfolioPolicy(obs_shape=obs_shape, latent_dim=ablation_config.latent_dim,
                                    num_assets=ablation_config.num_assets, hidden_dim=ablation_config.hidden_dim).to(device)
+            
+            # Apply the same policy fix
+            def patched_evaluate_actions(self, obs, latent, actions):
+                import torch.nn.functional as F
+                output = self.forward(obs, latent)
+                raw_actions = output['raw_actions']
+                portfolio_probs = F.softmax(raw_actions, dim=-1)
+                log_probs = torch.sum(actions * torch.log(portfolio_probs + 1e-8), dim=-1, keepdim=True)
+                entropy = -torch.sum(portfolio_probs * torch.log(portfolio_probs + 1e-8), dim=-1, keepdim=True)
+                values = output['value']
+                return values, log_probs, entropy
+            
+            import types
+            policy.evaluate_actions = types.MethodType(patched_evaluate_actions, policy)
             
             # Train with VAE disabled
             trainer = PPOTrainer(env=env, policy=policy, vae=vae, config=ablation_config)
