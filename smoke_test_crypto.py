@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import sys
 import traceback
+import random
 
 # Import your modules
 from environments.data_preparation import create_crypto_dataset, CRYPTO_TICKERS
