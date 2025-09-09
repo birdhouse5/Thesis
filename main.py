@@ -37,6 +37,52 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+def setup_debug_logging():
+    """Configure logging based on DEBUG environment variable."""
+    
+    debug_mode = os.getenv("DEBUG", "false").lower() == "true"
+    test_mode = os.getenv("TEST_MODE", "false").lower() == "true"
+    
+    # Set log level
+    if debug_mode:
+        log_level = logging.DEBUG
+        log_format = '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
+    else:
+        log_level = logging.INFO
+        log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    
+    # Configure root logger
+    logging.basicConfig(
+        level=log_level,
+        format=log_format,
+        handlers=[
+            logging.StreamHandler(),  # Console output
+            logging.FileHandler('experiment_debug.log', mode='w')  # File output
+        ]
+    )
+    
+    # Set specific logger levels for debug mode
+    if debug_mode:
+        # Enable debug for your modules
+        logging.getLogger('experiment_manager').setLevel(logging.DEBUG)
+        logging.getLogger('resource_manager').setLevel(logging.DEBUG)
+        logging.getLogger('mlflow_logger').setLevel(logging.DEBUG)
+        
+        # Reduce noise from external libraries
+        logging.getLogger('urllib3').setLevel(logging.WARNING)
+        logging.getLogger('requests').setLevel(logging.WARNING)
+        logging.getLogger('mlflow').setLevel(logging.INFO)
+        
+        logger = logging.getLogger(__name__)
+        logger.info("DEBUG MODE ENABLED")
+        logger.debug(f"Debug logging configured - output to console and experiment_debug.log")
+        
+        if test_mode:
+            logger.info("TEST MODE ENABLED - running limited experiments")
+    
+    return debug_mode, test_mode
+
 def seed_everything(seed: int):
     """Set random seeds for reproducibility."""
     import random
@@ -336,12 +382,24 @@ def main():
     logger.info(f"- Total: {len(experiments)} experiments")
     
     # Run subset for testing first (optional)
-    if os.getenv("TEST_MODE", "false").lower() == "true":
+    if test_mode:
         logger.info("TEST MODE: Running only first 2 experiments")
         experiments = experiments[:2]
     
+    if debug_mode:
+        logger.debug("Debug mode configuration:")
+        logger.debug(f"- Logging level: DEBUG")
+        logger.debug(f"- Log file: experiment_debug.log")
+        logger.debug(f"- Resource monitoring: enabled")
+        logger.debug(f"- Checkpoint directory: experiment_checkpoints/")
+    
     # Run all experiments
     summary = run_experiment_batch(experiments, experiment_name="portfolio_optimization_comprehensive_study")
+    
+    if debug_mode:
+        logger.debug("Final summary keys:")
+        for key in summary.keys():
+            logger.debug(f"  {key}: {type(summary[key])}")
     
     return summary
 
