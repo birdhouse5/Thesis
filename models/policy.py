@@ -3,6 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
 class PortfolioPolicy(nn.Module):
     """
     Portfolio policy that outputs allocation weights over assets.
@@ -19,7 +23,7 @@ class PortfolioPolicy(nn.Module):
         # Input dimensions
         obs_flat_dim = obs_shape[0] * obs_shape[1]  # N × F flattened
         
-        # Observation encoder: flatten market state and encode
+        # Observation encoder
         self.obs_encoder = nn.Sequential(
             nn.Linear(obs_flat_dim, hidden_dim),
             nn.ReLU(),
@@ -27,13 +31,13 @@ class PortfolioPolicy(nn.Module):
             nn.ReLU()
         )
         
-        # Latent encoder: encode task embedding
+        # Latent encoder
         self.latent_encoder = nn.Sequential(
             nn.Linear(latent_dim, hidden_dim // 4),
             nn.ReLU()
         )
         
-        # Combined feature processing
+        # Combined layers
         combined_dim = hidden_dim // 2 + hidden_dim // 4
         self.shared_layers = nn.Sequential(
             nn.Linear(combined_dim, hidden_dim),
@@ -44,69 +48,78 @@ class PortfolioPolicy(nn.Module):
         
         # Output heads
         self.actor_head = nn.Linear(hidden_dim // 2, num_assets)    # Portfolio logits
-        self.critic_head = nn.Linear(hidden_dim // 2, 1)           # Value function
+        self.critic_head = nn.Linear(hidden_dim // 2, 1)            # Value function
         
     def forward(self, obs, latent):
         """
         Forward pass through policy network.
         
         Args:
-            obs: (batch, N, F) - market observations
-            latent: (batch, latent_dim) - task embedding from VAE
-            
-        Returns:
-            dict with 'portfolio_weights' and 'value'
+            obs: (batch, N, F)
+            latent: (batch, latent_dim)
         """
-
         assert obs.dim() == 3, f"Expected obs (B,N,F), got {tuple(obs.shape)}"
         assert latent.dim() == 2, f"Expected latent (B,L), got {tuple(latent.shape)}"
 
         batch_size = obs.shape[0]
         
-        # Encode observations: flatten and process
-        obs_flat = obs.reshape(batch_size, -1)  # (batch, N×F)
-        obs_features = self.obs_encoder(obs_flat)  # (batch, hidden_dim//2)
+        # Encode observations
+        obs_flat = obs.reshape(batch_size, -1)
+        obs_features = self.obs_encoder(obs_flat)
         
-        # Encode latent task embedding
-        latent_features = self.latent_encoder(latent)  # (batch, hidden_dim//4)
+        # Encode latent
+        latent_features = self.latent_encoder(latent)
         
-        # Combine features
-        combined = torch.cat([obs_features, latent_features], dim=-1)  # (batch, combined_dim)
-        shared_features = self.shared_layers(combined)  # (batch, hidden_dim//2)
+        # Combine
+        combined = torch.cat([obs_features, latent_features], dim=-1)
+        shared_features = self.shared_layers(combined)
         
-        # Generate outputs
-        portfolio_logits = self.actor_head(shared_features)  # (batch, num_assets)
-        value = self.critic_head(shared_features)            # (batch, 1)
+        # Outputs
+        portfolio_logits = self.actor_head(shared_features)  # (B, N)
+        value = self.critic_head(shared_features)            # (B, 1)
         
         return {
-            'raw_actions': portfolio_logits,  # raw outputs, unconstrained
+            'raw_actions': portfolio_logits,
             'value': value
         }
     
     def act(self, obs, latent, deterministic=False):
         """
         Sample action from policy.
-        
-        Args:
-            obs: (batch, N, F) - market observations  
-            latent: (batch, latent_dim) - task embedding
-            deterministic: If True, return mean action
-            
-        Returns:
-            portfolio_weights: (batch, num_assets) - allocation weights
-            value: (batch, 1) - state value estimate
         """
         with torch.no_grad():
             output = self.forward(obs, latent)
-            
             if deterministic:
                 actions = output['raw_actions']
             else:
-
-                # add small noise for stochastic exploration
                 noise = torch.randn_like(output['raw_actions']) * 0.01
                 actions = output['raw_actions'] + noise
             return actions, output['value']
+    
+    def evaluate_actions(self, obs, latent, actions):
+        """
+        Evaluate actions for PPO training.
+        
+        Returns:
+            values: (batch, 1)
+            log_probs: (batch, 1)
+            entropy: (batch, 1)
+        """
+        output = self.forward(obs, latent)
+
+        # Convert logits → probabilities
+        portfolio_logits = output['raw_actions']
+        portfolio_probs = torch.softmax(portfolio_logits, dim=-1)
+
+        # Log probability of chosen action
+        log_probs = torch.sum(actions * torch.log(portfolio_probs + 1e-8), dim=-1, keepdim=True)
+
+        # Entropy of distribution
+        entropy = -torch.sum(portfolio_probs * torch.log(portfolio_probs + 1e-8), dim=-1, keepdim=True)
+
+        values = output['value']
+        return values, log_probs, entropy
+
 
     
 def evaluate_actions(self, obs, latent, actions):
