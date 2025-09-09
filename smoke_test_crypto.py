@@ -1,4 +1,4 @@
-# smoke_test.py
+# smoke_test_crypto.py
 import torch
 import logging
 from pathlib import Path
@@ -92,7 +92,7 @@ def run_smoke_test(data_path="environments/data/crypto_dataset.parquet"):
     train_ds.tickers = tickers
     train_ds.num_assets = len(tickers)
 
-    # --- Build environment tensors ---
+    # --- Build environment tensors from full dataset ---
     all_features = torch.tensor(
         train_ds.data[train_ds.feature_cols].values.reshape(
             train_ds.num_days, train_ds.num_assets, train_ds.num_features
@@ -116,9 +116,8 @@ def run_smoke_test(data_path="environments/data/crypto_dataset.parquet"):
         max_horizon=cfg.max_horizon,
     )
 
-
     # --- Build models ---
-    obs_shape = features.shape[1:]  # (N, F)
+    obs_shape = all_features.shape[1:]  # (N, F)
     vae = VAE(
         obs_dim=obs_shape,
         num_assets=cfg.num_assets,
