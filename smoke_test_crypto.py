@@ -740,6 +740,13 @@ def main():
     print("🔬 Crypto Pipeline Smoke Test")
     print("=" * 50)
     
+    # Clean up any existing MLflow runs at startup
+    import mlflow
+    try:
+        mlflow.end_run()
+    except:
+        pass
+    
     # Create test configuration
     config = SmokeTestConfig()
     
@@ -756,6 +763,12 @@ def main():
     # Run tests
     test_runner = CryptoSmokeTest(config)
     success = test_runner.run_all_tests()
+    
+    # Final MLflow cleanup
+    try:
+        mlflow.end_run()
+    except:
+        pass
     
     # Exit with appropriate code
     sys.exit(0 if success else 1)
