@@ -183,9 +183,15 @@ class MetaEnv:
         Differential Sharpe Ratio (DSR) reward using portfolio EXCESS LOG-returns.
         - Uses EWMA of first/second moments (alpha, beta) with decay eta.
         - Provides dense, stepwise signal aligned with risk-adjusted performance.
+        
+        Returns:
+            tuple: (reward, weights, w_cash) - DSR reward and normalized portfolio weights
         """
         if self.current_step >= len(self.current_task['raw_prices']) - 1:
-            return 0.0  # No next prices available
+            # No next prices available - return zero reward and zero weights
+            weights = np.zeros_like(portfolio_weights, dtype=np.float32)
+            w_cash = 1.0  # All cash
+            return 0.0, weights, w_cash
 
         # --- 1) Compute asset LOG-returns for the step t -> t+1
         current_prices = self.current_task['raw_prices'][self.current_step].numpy()   # [N]
@@ -244,7 +250,7 @@ class MetaEnv:
         if self.current_step < 2:
             dsr = 0.0
 
-        # Return both reward and the normalized allocations for logging
+        # Return reward and the normalized allocations for logging
         return float(dsr), weights, w_cash
 
     def rollout_episode(self, policy, encoder):
