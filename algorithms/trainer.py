@@ -1,5 +1,5 @@
 # trainer.py - Optimized with fixed-length trajectory batching
-from logger import MLflowLogger
+#from logger import MLflowLogger
 
 from collections import deque
 from datetime import datetime
@@ -80,10 +80,10 @@ class PPOTrainer:
         self.experience_buffer = ExperienceBuffer(config.batch_size)  # for PPO
         self.vae_buffer = deque(maxlen=1000)  # recent trajectories for VAE
 
-        self.logger = MLflowLogger(
-            experiment_name=getattr(config, "experiment_name", "RL_Study"),
-            run_name=f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        )
+        # self.logger = MLflowLogger(
+        #     experiment_name=getattr(config, "experiment_name", "RL_Study"),
+        #     run_name=f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        # )
 
         # Log hyperparameters once at start
         self.logger.log_params({
@@ -181,7 +181,7 @@ class PPOTrainer:
         }
 
         # Log to MLflow
-        self.logger.log_metrics(results, step=self.episode_count)
+        #self.logger.log_metrics(results, step=self.episode_count)
 
         return results
 
