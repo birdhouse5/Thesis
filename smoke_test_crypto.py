@@ -13,7 +13,7 @@ from algorithms.trainer import PPOTrainer
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def run_smoke_test(data_path="crypto_dataset.parquet"):
+def run_smoke_test(data_path="environments/data/crypto_dataset.parquet"):
     """
     Minimal smoke test for the full VariBAD PPO pipeline.
     Uses tiny dimensions and very few episodes.
@@ -35,7 +35,7 @@ def run_smoke_test(data_path="crypto_dataset.parquet"):
         seq_len = 20
         min_horizon = 5
         max_horizon = 5
-        num_assets = 5     # subset of assets
+        num_assets = 5     # only use 5 assets for speed
         device = "cpu"
 
         # PPO
@@ -56,30 +56,50 @@ def run_smoke_test(data_path="crypto_dataset.parquet"):
 
     # --- Load dataset (crypto) ---
     if not Path(data_path).exists():
-        raise FileNotFoundError(f"{data_path} not found. Generate crypto parquet first.")
+        raise FileNotFoundError(f"{data_path} not found. Please generate parquet first.")
 
     datasets = create_split_datasets(
         data_path=data_path,
         proportional=True,   # proportional split is better for crypto
     )
-
     train_ds = datasets["train"]
-    window = train_ds.get_window(0, cfg.seq_len)
 
-    # --- Build environment ---
-    dataset_tensors = {
-        "features": torch.tensor(window["features"], dtype=torch.float32),
-        "raw_prices": torch.tensor(window["raw_prices"], dtype=torch.float32),
-    }
-    env = MetaEnv(dataset=dataset_tensors, feature_columns=train_ds.feature_cols,
-                  seq_len=cfg.seq_len, min_horizon=cfg.min_horizon, max_horizon=cfg.max_horizon)
+    # --- Slice down to num_assets subset ---
+    tickers = train_ds.tickers[:cfg.num_assets]
+    train_data = train_ds.data[train_ds.data["ticker"].isin(tickers)].copy()
+    train_ds.data = train_data
+    train_ds.tickers = tickers
+    train_ds.num_assets = len(tickers)
+
+    # --- Build environment tensors ---
+    window = train_ds.get_window(0, cfg.seq_len)
+    features = torch.tensor(window["features"], dtype=torch.float32)
+    prices = torch.tensor(window["raw_prices"], dtype=torch.float32)
+
+    dataset_tensors = {"features": features, "raw_prices": prices}
+
+    env = MetaEnv(
+        dataset=dataset_tensors,
+        feature_columns=train_ds.feature_cols,
+        seq_len=cfg.seq_len,
+        min_horizon=cfg.min_horizon,
+        max_horizon=cfg.max_horizon,
+    )
 
     # --- Build models ---
-    obs_shape = dataset_tensors["features"].shape[1:]  # (N, F)
-    vae = VAE(obs_dim=obs_shape, num_assets=cfg.num_assets,
-              latent_dim=cfg.latent_dim, hidden_dim=cfg.hidden_dim).to(cfg.device)
-    policy = PortfolioPolicy(obs_shape=obs_shape, latent_dim=cfg.latent_dim,
-                             num_assets=cfg.num_assets, hidden_dim=cfg.hidden_dim).to(cfg.device)
+    obs_shape = features.shape[1:]  # (N, F)
+    vae = VAE(
+        obs_dim=obs_shape,
+        num_assets=cfg.num_assets,
+        latent_dim=cfg.latent_dim,
+        hidden_dim=cfg.hidden_dim,
+    ).to(cfg.device)
+    policy = PortfolioPolicy(
+        obs_shape=obs_shape,
+        latent_dim=cfg.latent_dim,
+        num_assets=cfg.num_assets,
+        hidden_dim=cfg.hidden_dim,
+    ).to(cfg.device)
 
     trainer = PPOTrainer(env=env, policy=policy, vae=vae, config=cfg)
 
