@@ -197,19 +197,49 @@ class CryptoSmokeTest:
         try:
             train_dataset = datasets['train']
             
-            # Ensure we have enough data for the sequence length
-            if len(train_dataset) < self.config.seq_len + 1:
-                logger.warning(f"Dataset too small ({len(train_dataset)} days) for seq_len {self.config.seq_len}")
+            logger.info(f"Original dataset size: {len(train_dataset)} days")
+            logger.info(f"Original seq_len: {self.config.seq_len}")
+            
+            # For smoke test, use a substantial portion of the dataset for environment
+            # We need enough data for the seq_len to work properly in sample_task()
+            
+            # Calculate how much data we need: seq_len + some buffer for task sampling
+            min_needed_timesteps = self.config.seq_len + 10  # Buffer for sampling
+            
+            if len(train_dataset) < min_needed_timesteps:
                 # Reduce seq_len to fit available data
-                adjusted_seq_len = max(5, len(train_dataset) - 1)  # At least 5, but fit the data
+                adjusted_seq_len = max(5, len(train_dataset) - 5)  # Leave some buffer
+                logger.warning(f"Dataset too small ({len(train_dataset)} days) for seq_len {self.config.seq_len}")
                 logger.info(f"Adjusting seq_len from {self.config.seq_len} to {adjusted_seq_len}")
                 self.config.seq_len = adjusted_seq_len
-                self.config.min_horizon = min(self.config.min_horizon, adjusted_seq_len // 2)
+                self.config.min_horizon = min(self.config.min_horizon, adjusted_seq_len // 3)
                 self.config.max_horizon = min(self.config.max_horizon, adjusted_seq_len // 2)
+                min_needed_timesteps = adjusted_seq_len + 5
             
-            # Create environment - use all available data if small
-            max_window_size = min(self.config.seq_len, len(train_dataset))
-            window_data = train_dataset.get_window(0, max_window_size)
+            # Use a large portion of the dataset (not just seq_len) so sample_task() works
+            # sample_task() needs T > seq_len where T is the total timesteps in the dataset
+            window_size = min(len(train_dataset), max(min_needed_timesteps * 2, 200))  # Use more data
+            logger.info(f"Using window_size: {window_size} (larger than seq_len for task sampling)")
+            
+            window_data = train_dataset.get_window(0, window_size)
+            
+            # Debug: Check the shapes we're passing to MetaEnv
+            logger.info(f"Window data shapes:")
+            logger.info(f"   features: {window_data['features'].shape}")
+            logger.info(f"   raw_prices: {window_data['raw_prices'].shape}")
+            logger.info(f"   Timesteps available (T): {window_data['features'].shape[0]}")
+            logger.info(f"   seq_len: {self.config.seq_len}")
+            logger.info(f"   T - seq_len: {window_data['features'].shape[0] - self.config.seq_len}")
+            
+            # Ensure we have T > seq_len for sample_task()
+            actual_timesteps = window_data['features'].shape[0]
+            if actual_timesteps <= self.config.seq_len:
+                # Final adjustment: reduce seq_len further
+                final_seq_len = max(3, actual_timesteps - 1)
+                logger.warning(f"Final adjustment: seq_len {self.config.seq_len} -> {final_seq_len}")
+                self.config.seq_len = final_seq_len
+                self.config.min_horizon = min(self.config.min_horizon, final_seq_len // 3)
+                self.config.max_horizon = min(self.config.max_horizon, final_seq_len // 2)
             
             env = MetaEnv(
                 dataset={
@@ -222,15 +252,20 @@ class CryptoSmokeTest:
                 max_horizon=self.config.max_horizon
             )
             
+            logger.info(f"MetaEnv created with:")
+            logger.info(f"   Total timesteps (T): {env.dataset['features'].shape[0]}")
+            logger.info(f"   seq_len: {env.seq_len}")
+            logger.info(f"   Sampling range: 0 to {env.dataset['features'].shape[0] - env.seq_len}")
+            
             # Test environment functionality
             task = env.sample_task()
             env.set_task(task)
             obs = env.reset()
             
             logger.info(f"✅ Environment setup successful:")
-            logger.info(f"   Dataset size: {len(train_dataset)} days")
-            logger.info(f"   Sequence length: {self.config.seq_len}")
-            logger.info(f"   Window size used: {max_window_size}")
+            logger.info(f"   Original dataset size: {len(train_dataset)} days")
+            logger.info(f"   Window size used: {window_size}")
+            logger.info(f"   Final sequence length: {self.config.seq_len}")
             logger.info(f"   Observation shape: {obs.shape}")
             logger.info(f"   Feature columns: {len(train_dataset.feature_cols)}")
             
@@ -250,7 +285,8 @@ class CryptoSmokeTest:
                 'status': 'PASSED',
                 'obs_shape': obs.shape,
                 'features': len(train_dataset.feature_cols),
-                'adjusted_seq_len': self.config.seq_len
+                'adjusted_seq_len': self.config.seq_len,
+                'window_size': window_size
             }
             
             return env, train_dataset, datasets['val']
