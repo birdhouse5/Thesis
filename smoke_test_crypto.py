@@ -604,7 +604,8 @@ class CryptoSmokeTest:
             )
             
             # Initialize models
-            device = torch.device(ablation_config.device)
+            device = torch.device("cpu")  # Force CPU for compatibility
+            ablation_config.device = "cpu"
             task = env.sample_task()
             env.set_task(task)
             obs = env.reset()
