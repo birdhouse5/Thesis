@@ -59,8 +59,10 @@ class Dataset:
         self.split = split
         self.tickers = sorted(self.data['ticker'].unique())
         self.num_assets = len(self.tickers)
-        self.dates = sorted(self.data['date'].unique())
-        self.num_days = len(self.dates)
+        self.timestamps = sorted(self.data['date'].unique())
+        self.num_intervals = len(self.timestamps)
+        self.num_days = self.num_intervals  # backward compat
+        self.dates = self.timestamps  # alias for backward compatibility
         
         # Select features for training
         self.feature_cols = self._select_training_features()
@@ -138,32 +140,71 @@ class Dataset:
         return self.num_days
 
 
-def create_split_datasets(data_path, train_end='2015-12-31', val_end='2020-12-31'):
+def create_split_datasets(data_path,
+                        train_end='2015-12-31',
+                        val_end='2020-12-31',
+                        proportional: bool = False,
+                        proportions: Tuple[float, float, float] = (0.7, 0.2, 0.1)):
     """
-    Create train, validation, and test datasets with temporal split.
-    
+    Create train, validation, and test datasets.
+
+    Modes:
+    - Date-based (default): use explicit `train_end` and `val_end` dates.
+    - Proportional: split dataset by row proportions (useful for crypto).
+
     Args:
-        data_path: Path to the full dataset
-        train_end: End date for training (inclusive)
-        val_end: End date for validation (inclusive)
-    
+        data_path: Path to the full dataset parquet
+        train_end: End date for training (inclusive) [date-based mode]
+        val_end: End date for validation (inclusive) [date-based mode]
+        proportional: If True, use proportional splitting
+        proportions: (train, val, test) fractions that sum to 1
+
     Returns:
         Dictionary with train, val, test Dataset objects
     """
     datasets = {}
-    
     try:
-        datasets['train'] = Dataset(data_path, 'train', train_end, val_end)
-        datasets['val'] = Dataset(data_path, 'val', train_end, val_end)
-        datasets['test'] = Dataset(data_path, 'test', train_end, val_end)
-        
-        print(f"\n Successfully created all splits:")
+        if proportional:
+            full_data = pd.read_parquet(data_path)
+            full_data['date'] = pd.to_datetime(full_data['date'])
+            unique_dates = sorted(full_data['date'].unique())
+            num_days = len(unique_dates)
+
+            if abs(sum(proportions) - 1.0) > 1e-6:
+                raise ValueError(f"Proportions must sum to 1. Got {proportions}")
+
+            train_days = int(proportions[0] * num_days)
+            val_days = int(proportions[1] * num_days)
+
+            train_end_date = unique_dates[train_days - 1]
+            val_end_date = unique_dates[train_days + val_days - 1]
+
+            datasets['train'] = Dataset(data_path, 'train',
+                                        train_end=train_end_date.strftime("%Y-%m-%d"),
+                                        val_end=val_end_date.strftime("%Y-%m-%d"))
+            datasets['val'] = Dataset(data_path, 'val',
+                                    train_end=train_end_date.strftime("%Y-%m-%d"),
+                                    val_end=val_end_date.strftime("%Y-%m-%d"))
+            datasets['test'] = Dataset(data_path, 'test',
+                                    train_end=train_end_date.strftime("%Y-%m-%d"),
+                                    val_end=val_end_date.strftime("%Y-%m-%d"))
+
+            mode_info = f"Proportional splits (train={proportions[0]:.0%}, val={proportions[1]:.0%}, test={proportions[2]:.0%})"
+
+        else:
+            datasets['train'] = Dataset(data_path, 'train', train_end, val_end)
+            datasets['val'] = Dataset(data_path, 'val', train_end, val_end)
+            datasets['test'] = Dataset(data_path, 'test', train_end, val_end)
+
+            mode_info = f"Date-based splits (train_end={train_end}, val_end={val_end})"
+
+        print(f"\nSuccessfully created all splits using {mode_info}:")
         for split_name, dataset in datasets.items():
             info = dataset.get_split_info()
             print(f"  {split_name}: {info['num_days']} days, {info['date_range'][0]} to {info['date_range'][1]}")
-        
+
         return datasets
-        
+
     except Exception as e:
-        print(f" Error creating splits: {e}")
+        print(f"Error creating splits: {e}")
         raise

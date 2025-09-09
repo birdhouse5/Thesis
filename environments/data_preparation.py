@@ -9,7 +9,9 @@ import yfinance as yf
 import logging
 from pathlib import Path
 from typing import List, Optional, Dict
-from datetime import datetime
+from datetime import datetime, timedelta
+import random
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,84 @@ SP500_TICKERS = [
     'SO', 'D',                                    # Utilities
     'DD'                                          # Materials
 ]
+
+CRYPTO_TICKERS = [
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "NEOUSDT", "LTCUSDT",
+    "QTUMUSDT", "ADAUSDT", "XRPUSDT", "IOTAUSDT", "TUSDUSDT",
+    "XLMUSDT", "ONTUSDT", "TRXUSDT", "ETCUSDT", "ICXUSDT",
+    "VETUSDT", "USDCUSDT", "LINKUSDT", "ONGUSDT", "HOTUSDT",
+    "ZILUSDT", "FETUSDT", "ZRXUSDT", "BATUSDT", "ZECUSDT",
+    "IOSTUSDT", "CELRUSDT", "DASHUSDT", "THETAUSDT", "ENJUSDT"
+]
+
+BASE_URL = "https://api.binance.com/api/v3/klines"
+
+def fetch_klines(symbol, interval, start, end):
+    url = BASE_URL
+    params = {
+        "symbol": symbol,
+        "interval": interval,
+        "startTime": int(start.timestamp() * 1000),
+        "endTime": int(end.timestamp() * 1000),
+        "limit": 1000
+    }
+    all_data = []
+    while True:
+        resp = requests.get(url, params=params)
+        data = resp.json()
+        if not isinstance(data, list):
+            return None
+        all_data.extend(data)
+        if len(data) < 1000:
+            break
+        params["startTime"] = data[-1][6]
+    if not all_data:
+        return None
+    df = pd.DataFrame(all_data, columns=[
+        "openTime","open","high","low","close","volume",
+        "closeTime","qav","trades","tbbav","tbqav","ignore"
+    ])
+    df["date"] = pd.to_datetime(df["openTime"], unit="ms")
+    df = df[["date","open","high","low","close","volume"]]
+    df = df.astype({"open":float,"high":float,"low":float,"close":float,"volume":float})
+    return df
+
+def sample_crypto(symbols, attempts=3, days=92, interval="15m", target_rows=263520):
+    """
+    Sample crypto OHLCV data for given symbols, defaults to ~92 days of 15m candles.
+    """
+    for attempt in range(attempts):
+        print(f"\n=== Sampling attempt {attempt+1} ({interval}) ===")
+        end = datetime.utcnow()
+        start_bound = datetime(2024, 4, 2)
+        max_start = end - timedelta(days=days)
+        if start_bound >= max_start:
+            start = start_bound
+        else:
+            start = start_bound + (max_start - start_bound) * random.random()
+        end = start + timedelta(days=days)
+
+        all_dfs, failed, illiquid = [], [], []
+        for sym in symbols:
+            df = fetch_klines(sym, interval, start, end)
+            expected_rows = days * (1440 // 15)  # 96 per day
+            if df is None or len(df) < expected_rows:
+                print(f"  ⚠️ {sym} incomplete: {len(df) if df is not None else 'None'} rows")
+                failed.append(sym)
+                continue
+            if df["volume"].sum() <= 0:
+                print(f"  ⚠️ {sym} appears illiquid (zero volume)")
+                illiquid.append(sym)
+                continue
+            df["ticker"] = sym
+            all_dfs.append(df)
+        if not failed and not illiquid:
+            full = pd.concat(all_dfs, ignore_index=True)
+            print(f"✅ Success: {full.shape}")
+            return full.iloc[:target_rows]
+        else:
+            print(f"Retrying due to failed/illiquid tickers: {failed+illiquid}")
+    raise RuntimeError(f"Failed after {attempts} attempts, problematic tickers: {failed+illiquid}")
 
 
 def download_stock_data(tickers: List[str] = None, 
@@ -500,6 +580,64 @@ def create_dataset(output_path: str = "data/sp500_rl_ready_cleaned.parquet",
     except Exception as e:
         logger.error(f" Dataset creation failed: {e}")
         raise
+
+
+def create_crypto_dataset(output_path: str = "data/crypto_rl_ready_cleaned.parquet",
+                          tickers: List[str] = None,
+                          target_rows: int = 263520,
+                          days: int = 92,
+                          interval: str = "15m",
+                          force_recreate: bool = False) -> str:
+    """
+    Create complete RL-ready crypto dataset from Binance REST API.
+
+    Args:
+        output_path: Path to save final dataset
+        tickers: List of tickers (default = CRYPTO_TICKERS constant)
+        target_rows: Total rows to trim to (default = stock dataset size)
+        days: Days to sample (default 92 days for 15m candles)
+        interval: Kline interval (default "15m")
+        force_recreate: If True, recreate even if file exists
+
+    Returns:
+        Path to created dataset
+    """
+    from pathlib import Path
+
+    if tickers is None:
+        tickers = CRYPTO_TICKERS   # <-- use the fixed list
+
+    output_path = Path(output_path)
+    if output_path.exists() and not force_recreate:
+        logger.info(f"Dataset already exists: {output_path}")
+        return str(output_path)
+
+    logger.info("📥 Creating RL-ready crypto dataset from Binance API...")
+
+    # Step 1: Sample raw crypto data
+    raw_data = sample_crypto(tickers, days=days, interval=interval, target_rows=target_rows)
+
+    # Step 2: Add technical indicators
+    with_indicators = add_technical_indicators(raw_data)
+
+    # Step 3: Normalize
+    normalized = normalize_features(with_indicators)
+
+    # Step 4: Clean rectangular structure
+    cleaned = clean_data(normalized)
+
+    # Step 5: Save
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    cleaned.to_parquet(output_path)
+
+    logger.info(f"✅ Crypto dataset created at {output_path}")
+    logger.info(f"   Shape: {cleaned.shape}")
+    logger.info(f"   Date range: {cleaned['date'].min().date()} → {cleaned['date'].max().date()}")
+    logger.info(f"   Tickers: {cleaned['ticker'].nunique()}")
+    logger.info(f"   Features: {len(cleaned.columns)}")
+
+    return str(output_path)
+
 
 
 def load_dataset(data_path: str = "data/sp500_rl_ready_cleaned.parquet") -> pd.DataFrame:

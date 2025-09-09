@@ -1,9 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import logging
 
-logger = logging.getLogger(__name__)
 
 class VAE(nn.Module):
     """
@@ -23,9 +21,6 @@ class VAE(nn.Module):
         self.encoder = RNNEncoder(self.obs_dim, self.action_dim, self.reward_dim, self.latent_dim, self.hidden_dim)
         self.obs_decoder = ObservationDecoder(self.latent_dim, self.obs_dim, self.action_dim, self.hidden_dim)
         self.reward_decoder = RewardDecoder(self.latent_dim, self.obs_dim, self.action_dim, self.hidden_dim//2)
-        
-        logger.info(f"VAE initialized: action_dim={self.action_dim} (portfolio weights), "
-                   f"latent_dim={latent_dim}, obs_dim={obs_dim}")
         
         self.training_step = 0
     
