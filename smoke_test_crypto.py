@@ -93,11 +93,20 @@ def run_smoke_test(data_path="environments/data/crypto_dataset.parquet"):
     train_ds.num_assets = len(tickers)
 
     # --- Build environment tensors ---
-    window = train_ds.get_window(0, cfg.seq_len)
-    features = torch.tensor(window["features"], dtype=torch.float32)
-    prices = torch.tensor(window["raw_prices"], dtype=torch.float32)
+    all_features = torch.tensor(
+        train_ds.data[train_ds.feature_cols].values.reshape(
+            train_ds.num_days, train_ds.num_assets, train_ds.num_features
+        ),
+        dtype=torch.float32,
+    )
+    all_prices = torch.tensor(
+        train_ds.data["close"].values.reshape(
+            train_ds.num_days, train_ds.num_assets
+        ),
+        dtype=torch.float32,
+    )
 
-    dataset_tensors = {"features": features, "raw_prices": prices}
+    dataset_tensors = {"features": all_features, "raw_prices": all_prices}
 
     env = MetaEnv(
         dataset=dataset_tensors,
@@ -106,6 +115,7 @@ def run_smoke_test(data_path="environments/data/crypto_dataset.parquet"):
         min_horizon=cfg.min_horizon,
         max_horizon=cfg.max_horizon,
     )
+
 
     # --- Build models ---
     obs_shape = features.shape[1:]  # (N, F)
