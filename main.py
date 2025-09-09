@@ -19,7 +19,6 @@ from models.vae import VAE
 from models.policy import PortfolioPolicy
 from algorithms.trainer import PPOTrainer
 
-from logger import MLflowLogger
 
 
 

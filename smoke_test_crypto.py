@@ -24,7 +24,22 @@ from environments.env import MetaEnv
 from models.vae import VAE
 from models.policy import PortfolioPolicy
 from algorithms.trainer import PPOTrainer
-from run_logger import RunLogger, seed_everything
+
+
+# Optional: seeding for reproducibility (Python, NumPy, PyTorch if available)
+def seed_everything(seed: int = 42) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    try:
+        import torch  # type: ignore
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        # Make cuDNN deterministic (slower but reproducible)
+        torch.backends.cudnn.deterministic = True  # type: ignore[attr-defined]
+        torch.backends.cudnn.benchmark = False     # type: ignore[attr-defined]
+    except Exception:
+        # PyTorch not installed or not available — ignore silently
+        pass
 
 # Configure logging
 logging.basicConfig(
@@ -740,13 +755,6 @@ def main():
     print("🔬 Crypto Pipeline Smoke Test")
     print("=" * 50)
     
-    # Clean up any existing MLflow runs at startup
-    import mlflow
-    try:
-        mlflow.end_run()
-    except:
-        pass
-    
     # Create test configuration
     config = SmokeTestConfig()
     
@@ -763,12 +771,6 @@ def main():
     # Run tests
     test_runner = CryptoSmokeTest(config)
     success = test_runner.run_all_tests()
-    
-    # Final MLflow cleanup
-    try:
-        mlflow.end_run()
-    except:
-        pass
     
     # Exit with appropriate code
     sys.exit(0 if success else 1)
