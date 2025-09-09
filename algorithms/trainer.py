@@ -1,5 +1,4 @@
 # trainer.py - Optimized with fixed-length trajectory batching
-from logger import MLflowLogger
 
 from collections import deque
 from datetime import datetime
@@ -80,26 +79,6 @@ class PPOTrainer:
         self.experience_buffer = ExperienceBuffer(config.batch_size)  # for PPO
         self.vae_buffer = deque(maxlen=1000)  # recent trajectories for VAE
 
-        self.logger = MLflowLogger(
-            experiment_name=getattr(config, "experiment_name", "RL_Study"),
-            run_name=f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        )
-
-        # Log hyperparameters once at start
-        self.logger.log_params({
-            "policy_lr": config.policy_lr,
-            "vae_lr": config.vae_lr,
-            "batch_size": config.batch_size,
-            "min_horizon": config.min_horizon,
-            "max_horizon": config.max_horizon,
-            "discount_factor": config.discount_factor,
-            "gae_lambda": config.gae_lambda,
-            "ppo_epochs": config.ppo_epochs,
-            "ppo_clip_ratio": config.ppo_clip_ratio,
-            "value_loss_coef": config.value_loss_coef,
-            "entropy_coef": config.entropy_coef,
-        })
-
 
         # Rolling stats (store Python floats to avoid CUDA logging issues)
         self.policy_losses = deque(maxlen=100)
@@ -179,9 +158,6 @@ class PPOTrainer:
             "vae_loss": float(vae_loss),
             "total_steps": int(self.total_steps),
         }
-
-        # Log to MLflow
-        self.logger.log_metrics(results, step=self.episode_count)
 
         return results
 
