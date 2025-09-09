@@ -1,7 +1,15 @@
 import mlflow
+import mlflow.pytorch
 from pathlib import Path
 from datetime import datetime
 import torch
+import logging
+import traceback
+import numpy as np
+from typing import Dict, Any, Optional
+import os
+import json
+import time
 
 # --- import your config system ---
 from config import (
@@ -11,53 +19,102 @@ from config import (
 )
 
 # --- import your env + models + trainer ---
-from environments.data_preparation import create_dataset
+from environments.data_preparation import create_dataset, create_crypto_dataset
+from environments.dataset import create_split_datasets
 from environments.env import MetaEnv
 from models.policy import PortfolioPolicy
 from models.vae import VAE
+from models.hmm_encoder import HMMEncoder  # New stub
 from algorithms.trainer import PPOTrainer
 
-# --- experiment runner ---
-def run_training(cfg: TrainingConfig):
-    """Run one training job end-to-end (no MLflow logging yet)."""
+# Import evaluation functions
+from evaluation_backtest import evaluate, run_backtest
 
-    # === 1. Ensure dataset exists ===
-    if not Path(cfg.data_path).exists():
-        print(f"Dataset not found at {cfg.data_path}, creating...")
-        cfg.data_path = create_dataset(cfg.data_path)
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-    # === 2. Setup environment ===
-    from environments.dataset import create_split_datasets
+def seed_everything(seed: int):
+    """Set random seeds for reproducibility."""
+    import random
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
-    datasets = create_split_datasets(
-        data_path=cfg.data_path,
-        train_end=cfg.train_end,
-        val_end=cfg.val_end
-    )
+def cleanup_gpu_memory():
+    """Clean up GPU memory and cache."""
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
 
-    # Convert datasets → tensors (like in old ExperimentRunner)
+def ensure_dataset_exists(cfg: TrainingConfig) -> str:
+    """Ensure the required dataset exists, creating it if necessary."""
+    data_path = Path(cfg.data_path)
+    
+    if data_path.exists():
+        logger.info(f"Dataset exists: {data_path}")
+        return str(data_path)
+    
+    logger.info(f"Creating {cfg.asset_class} dataset...")
+    
+    if cfg.asset_class == "sp500":
+        return create_dataset(str(data_path))
+    elif cfg.asset_class == "crypto":
+        return create_crypto_dataset(str(data_path))
+    else:
+        raise ValueError(f"Unknown asset class: {cfg.asset_class}")
+
+def prepare_environments(cfg: TrainingConfig):
+    """Prepare train/val/test environments from dataset."""
+    
+    # Create datasets with appropriate splitting strategy
+    if cfg.asset_class == "crypto":
+        datasets = create_split_datasets(
+            data_path=cfg.data_path,
+            proportional=True,
+            proportions=(0.7, 0.2, 0.1)
+        )
+    else:
+        datasets = create_split_datasets(
+            data_path=cfg.data_path,
+            train_end=cfg.train_end,
+            val_end=cfg.val_end,
+            proportional=False
+        )
+    
+    # Update num_assets from actual data
+    cfg.num_assets = datasets['train'].num_assets
+    
+    # Convert datasets to tensor format for MetaEnv
     split_tensors = {}
     for split_name, dataset in datasets.items():
         features_list, prices_list = [], []
         num_windows = max(1, (len(dataset) - cfg.seq_len) // cfg.seq_len)
-
+        
         for i in range(num_windows):
             start, end = i * cfg.seq_len, (i+1) * cfg.seq_len
             if end <= len(dataset):
                 window = dataset.get_window(start, end)
                 features_list.append(torch.tensor(window['features'], dtype=torch.float32))
                 prices_list.append(torch.tensor(window['raw_prices'], dtype=torch.float32))
-
+        
+        if len(features_list) == 0:
+            raise ValueError(f"No complete windows available for {split_name} split")
+        
         all_features = torch.stack(features_list)
         all_prices = torch.stack(prices_list)
-
+        
         split_tensors[split_name] = {
             'features': all_features.view(-1, cfg.num_assets, dataset.num_features),
             'raw_prices': all_prices.view(-1, cfg.num_assets),
             'feature_columns': dataset.feature_cols,
             'num_windows': len(features_list)
         }
-
+    
     # Create environments
     environments = {}
     for split_name, tensor_data in split_tensors.items():
@@ -71,62 +128,222 @@ def run_training(cfg: TrainingConfig):
             min_horizon=cfg.min_horizon,
             max_horizon=cfg.max_horizon
         )
+    
+    return environments, split_tensors
 
-    train_env, val_env = environments['train'], environments['val']
-
-    # === 3. Build models ===
-    task = train_env.sample_task()
-    train_env.set_task(task)
-    obs_shape = train_env.reset().shape
-
+def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
+    """Create encoder and policy models based on configuration."""
     device = torch.device(cfg.device)
-
-    vae = None
+    
+    # Create encoder based on type
+    encoder = None
     if cfg.encoder == "vae":
-        vae = VAE(
+        encoder = VAE(
             obs_dim=obs_shape,
             num_assets=cfg.num_assets,
             latent_dim=cfg.latent_dim,
             hidden_dim=cfg.hidden_dim
         ).to(device)
-
+    elif cfg.encoder == "hmm":
+        encoder = HMMEncoder(
+            obs_dim=obs_shape,
+            num_assets=cfg.num_assets,
+            latent_dim=cfg.latent_dim,  # Should be 4 for HMM
+            hidden_dim=cfg.hidden_dim
+        ).to(device)
+    # encoder == "none" -> encoder remains None
+    
+    # Create policy
     policy = PortfolioPolicy(
         obs_shape=obs_shape,
         latent_dim=cfg.latent_dim,
         num_assets=cfg.num_assets,
         hidden_dim=cfg.hidden_dim
     ).to(device)
+    
+    return encoder, policy
 
-    # === 4. Trainer ===
-    trainer = PPOTrainer(env=train_env, policy=policy, vae=vae, config=cfg)
+def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
+    """Run complete training pipeline with comprehensive logging."""
+    
+    try:
+        # Setup
+        seed_everything(cfg.seed)
+        
+        # Ensure dataset exists
+        cfg.data_path = ensure_dataset_exists(cfg)
+        
+        # Prepare environments
+        environments, split_tensors = prepare_environments(cfg)
+        train_env = environments['train']
+        val_env = environments['val'] 
+        test_env = environments['test']
+        
+        # Get observation shape
+        task = train_env.sample_task()
+        train_env.set_task(task)
+        obs_shape = train_env.reset().shape
+        
+        # Create models
+        encoder, policy = create_models(cfg, obs_shape)
+        
+        # Create trainer
+        trainer = PPOTrainer(env=train_env, policy=policy, vae=encoder, config=cfg)
+        
+        # Training tracking
+        best_val_reward = float('-inf')
+        episodes_trained = 0
+        
+        logger.info(f"Starting training: {cfg.exp_name}")
+        logger.info(f"Asset class: {cfg.asset_class}, Encoder: {cfg.encoder}, Seed: {cfg.seed}")
+        
+        # Training loop
+        while episodes_trained < cfg.max_episodes:
+            # Sample new task
+            task = train_env.sample_task()
+            train_env.set_task(task)
+            
+            # Train episodes on this task
+            for _ in range(cfg.episodes_per_task):
+                if episodes_trained >= cfg.max_episodes:
+                    break
+                    
+                # Training step
+                result = trainer.train_episode()
+                episodes_trained += 1
+                
+                # Log training metrics
+                mlflow.log_metric("episode_reward", result.get('episode_reward', 0), step=episodes_trained)
+                mlflow.log_metric("policy_loss", result.get('policy_loss', 0), step=episodes_trained)
+                mlflow.log_metric("vae_loss", result.get('vae_loss', 0), step=episodes_trained)
+                mlflow.log_metric("total_steps", result.get('total_steps', 0), step=episodes_trained)
+                
+                # Validation
+                if episodes_trained % cfg.val_interval == 0:
+                    val_results = evaluate(val_env, policy, encoder, cfg, cfg.val_episodes)
+                    
+                    # Log validation metrics
+                    for key, value in val_results.items():
+                        mlflow.log_metric(f"val_{key}", value, step=episodes_trained)
+                    
+                    current_val_reward = val_results['avg_reward']
+                    
+                    # Track best model
+                    if current_val_reward > best_val_reward:
+                        best_val_reward = current_val_reward
+                        
+                        # Log best metrics
+                        mlflow.log_metric("best_val_reward", best_val_reward, step=episodes_trained)
+                    
+                    logger.info(f"Episode {episodes_trained}: val_reward={current_val_reward:.4f}, best={best_val_reward:.4f}")
+        
+        # Final test evaluation and backtest
+        logger.info("Running final evaluation and backtest...")
+        test_results = evaluate(test_env, policy, encoder, cfg, cfg.test_episodes)
+        backtest_results = run_backtest(test_env, policy, encoder, cfg, save_details=False)
+        
+        # Log test and backtest results
+        for key, value in test_results.items():
+            if isinstance(value, (int, float)):
+                mlflow.log_metric(f"test_{key}", value)
+        
+        for key, value in backtest_results.items():
+            if isinstance(value, (int, float)):
+                mlflow.log_metric(f"backtest_{key}", value)
+        
+        # Save models
+        model_dir = Path("models") / cfg.exp_name
+        model_dir.mkdir(parents=True, exist_ok=True)
+        
+        if encoder is not None:
+            torch.save(encoder.state_dict(), model_dir / "encoder.pt")
+            mlflow.pytorch.log_model(encoder, "encoder_model")
+        
+        torch.save(policy.state_dict(), model_dir / "policy.pt")
+        mlflow.pytorch.log_model(policy, "policy_model")
+        
+        # Final results
+        final_results = {
+            "episodes_trained": episodes_trained,
+            "best_val_reward": best_val_reward,
+            "final_test_reward": test_results['avg_reward'],
+            "backtest_sharpe": backtest_results['sharpe_ratio'],
+            "backtest_return": backtest_results['total_return'],
+            "backtest_max_drawdown": backtest_results['max_drawdown'],
+            "training_completed": True
+        }
+        
+        logger.info(f"Training completed: {cfg.exp_name}")
+        logger.info(f"Final test reward: {test_results['avg_reward']:.4f}")
+        logger.info(f"Backtest Sharpe: {backtest_results['sharpe_ratio']:.4f}")
+        
+        return final_results
+        
+    except Exception as e:
+        logger.error(f"Training failed for {cfg.exp_name}: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        # Log failure
+        mlflow.log_metric("training_completed", 0)
+        mlflow.log_param("error_message", str(e))
+        
+        return {
+            "training_completed": False,
+            "error": str(e),
+            "episodes_trained": episodes_trained if 'episodes_trained' in locals() else 0
+        }
+    
+    finally:
+        # Cleanup
+        cleanup_gpu_memory()
 
-    # === 5. Training loop ===
-    episodes_trained = 0
-    while episodes_trained < cfg.max_episodes:
-        result = trainer.train_episode()   # your trainer already supports this
-        episodes_trained += 1
-
-        if episodes_trained % cfg.val_interval == 0:
-            val_result = evaluate(val_env, policy, vae, cfg)
-            print(f"Episode {episodes_trained} | Val Sharpe: {val_result['avg_reward']:.4f}")
-
-    print(f"Training complete: {episodes_trained} episodes")
-    return {"episodes_trained": episodes_trained}
-
+def run_experiment_batch(experiments, experiment_name: str = "portfolio_optimization_study"):
+    """Run batch of experiments using ExperimentManager with resource management."""
+    
+    # Set up resource limits for single GPU
+    limits = ResourceLimits(
+        max_memory_mb=16000,  # 16GB RAM limit
+        max_gpu_memory_mb=8000,  # 8GB GPU limit (adjust based on your GPU)
+        max_runtime_minutes=180,  # 3 hour timeout per experiment
+        memory_warning_threshold=0.85,
+        cleanup_frequency=3  # Deep cleanup every 3 experiments
+    )
+    
+    # Create experiment manager with resource management
+    manager = ExperimentManager(
+        experiments, 
+        max_retries=0,
+        resource_limits=limits
+    )
+    
+    # Run all experiments
+    summary = manager.run_all_experiments(experiment_name)
+    
+    return summary
 
 
 def main():
-    # === setup MLflow tracking ===
-    mlflow.set_experiment("full_study_and_ablation")
-
-    # === generate configs ===
-    exps = generate_experiment_configs(num_seeds=10)
-
-    # === run all experiments ===
-    for exp in exps:
-        cfg = experiment_to_training_config(exp)
-        print(f"[{datetime.now()}] Starting run {cfg.exp_name}")
-        run_training(cfg)
+    """Main experiment runner."""
+    
+    # Generate all experiment configurations
+    experiments = generate_experiment_configs(num_seeds=10)
+    
+    logger.info(f"Generated {len(experiments)} experiment configurations")
+    logger.info("Experiment matrix:")
+    logger.info("- Asset classes: SP500, Crypto")
+    logger.info("- Encoders: VAE, None, HMM")
+    logger.info("- Seeds: 0-9 (10 seeds per combination)")
+    logger.info(f"- Total: {len(experiments)} experiments")
+    
+    # Run subset for testing first (optional)
+    if os.getenv("TEST_MODE", "false").lower() == "true":
+        logger.info("TEST MODE: Running only first 2 experiments")
+        experiments = experiments[:2]
+    
+    # Run all experiments
+    summary = run_experiment_batch(experiments, experiment_name="portfolio_optimization_comprehensive_study")
+    
+    return summary
 
 
 if __name__ == "__main__":
