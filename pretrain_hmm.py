@@ -21,6 +21,10 @@ def pretrain_hmm(asset_class: str, seed: int = 0):
 
     # Setup MLflow
     setup_mlflow()
+
+    # Ensure an active experiment exists
+    mlflow.set_experiment("hmm_pretraining")
+    
     run_name = f"{asset_class}_hmm_pretraining"
 
     with mlflow.start_run(run_name=run_name):
