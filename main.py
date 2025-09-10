@@ -434,20 +434,8 @@ def run_experiment_batch(experiments, experiment_name: str = "portfolio_optimiza
 
 def ensure_mlflow_setup():
     """Ensure MLflow is properly configured."""
-    try:
-        from smlflow_setup import setup_mlflow
-        if setup_mlflow():
-            return "remote"
-        else:
-            # Fallback to local
-            import mlflow
-            mlflow.set_tracking_uri("file:./mlruns")
-            return "local"
-    except ImportError:
-        # Fallback to local
-        import mlflow
-        mlflow.set_tracking_uri("file:./mlruns")
-        return "local"
+    from mlflow_integration import setup_mlflow
+    return setup_mlflow()
 
 def log_essential_artifacts(model_dict, config_dict, experiment_name):
     """Log essential artifacts - placeholder for now."""
