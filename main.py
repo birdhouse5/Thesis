@@ -249,12 +249,20 @@ def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
             hidden_dim=cfg.hidden_dim
         ).to(device)
     elif cfg.encoder == "hmm":
-        encoder = HMMEncoder(
-            obs_dim=obs_shape,
-            num_assets=cfg.num_assets,
-            latent_dim=cfg.latent_dim,  # Should be 4 for HMM
-            hidden_dim=cfg.hidden_dim
-        ).to(device)
+        import mlflow.pytorch
+        model_name = f"{cfg.asset_class}_hmm_encoder"
+        try:
+            encoder = mlflow.pytorch.load_model(f"models:/{model_name}/latest").to(device)
+            logger.info(f"✅ Loaded pretrained HMM encoder from MinIO: {model_name}")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not load pretrained encoder {model_name}, falling back to fresh init. Error: {e}")
+            encoder = HMMEncoder(
+                obs_dim=obs_shape,
+                num_assets=cfg.num_assets,
+                latent_dim=cfg.latent_dim,
+                hidden_dim=cfg.hidden_dim
+            ).to(device)
+
     # encoder == "none" -> encoder remains None
     
     # Create policy
