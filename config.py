@@ -1,187 +1,133 @@
-from dataclasses import dataclass
-from typing import List, Dict
+from dataclasses import dataclass, field
+from typing import List
+from pathlib import Path
 
-# --- 1. High-level experiment spec (only varying factors) ---
-@dataclass
-class ExperimentConfig:
-    seed: int
-    asset_class: str       # "sp500" | "crypto"
-    encoder: str           # "vae" | "none" | "hmm"
-    min_horizon: int = 150
-    max_horizon: int = 200
-
-
-# --- 2. Generator for all 60 configs ---
-def generate_experiment_configs(num_seeds: int = 10) -> List[ExperimentConfig]:
-    assets = ["sp500"] # assets = ["sp500", "crypto"]
-    encoders = ["vae"] # encoders = ["vae", "none", "hmm"]
-    configs = []
-
-    for asset in assets:
-        for encoder in encoders:
-            for seed in range(num_seeds):
-                configs.append(
-                    ExperimentConfig(
-                        seed=seed,
-                        asset_class=asset,
-                        encoder=encoder
-                    )
-                )
-    return configs
-
-
-# --- 3. Translation into full training config ---
-@dataclass
-class TrainingConfig:
-    """Full config used by training loop"""
-    seed: int
+@dataclass(frozen=True, kw_only=True)
+class Config:
+    """Simplified configuration with only essential parameters."""
+    
+    # Experiment identification
     exp_name: str
-    asset_class: str
-    data_path: str
-    encoder: str
-    disable_vae: bool
-    latent_dim: int
-    hidden_dim: int
-    vae_lr: float
-    policy_lr: float
-    vae_beta: float
-    vae_update_freq: int
-    seq_len: int
-    episodes_per_task: int
-    batch_size: int
-    vae_batch_size: int
-    ppo_epochs: int
-    entropy_coef: float
-    max_episodes: int
-    early_stopping_patience: int
-    early_stopping_min_delta: float
-    val_interval: int
-    min_episodes_before_stopping: int
-    train_end: str
-    val_end: str
-    num_assets: int
-    device: str
-    val_episodes: int
-    test_episodes: int
-    ppo_clip_ratio: float
-    value_loss_coef: float
-    max_grad_norm: float
-    gae_lambda: float
-    discount_factor: float
-    min_horizon: int
-    max_horizon: int
-    # DSR parameters
-    eta: float
+    seed: int
+    
+    # Core experimental variables (the ones that actually vary)
+    asset_class: str  # "sp500" or "crypto"  
+    encoder: str      # "vae", "hmm", or "none"
+    
+    # Training parameters (reasonable defaults, rarely changed)
+    max_episodes: int = 6000
+    val_episodes: int = 50
+    test_episodes: int = 100
+    val_interval: int = 200
+    
+    # Model architecture (stable defaults)
+    latent_dim: int = 512
+    hidden_dim: int = 1024
+    
+    # Training hyperparameters (from HPO, stable)
+    policy_lr: float = 0.002
+    vae_lr: float = 0.001
+    vae_beta: float = 0.013
+    batch_size: int = 8192
+    ppo_epochs: int = 8
+    
+    # Environment parameters (computed from asset_class)
+    seq_len: int = field(init=False)
+    min_horizon: int = field(init=False) 
+    max_horizon: int = field(init=False)
+    eta: float = field(init=False)
     rf_rate: float = 0.02
     transaction_cost_rate: float = 0.001
-
-
-def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
-    # dataset paths
-    data_paths = {
-        "sp500": "environments/data/sp500_rl_ready_cleaned.parquet",
-        "crypto": "environments/data/crypto_rl_ready_cleaned.parquet"
-    }
-
-    # end dates (align with dataset availability)
-    if exp.asset_class == "sp500":
-        train_end, val_end = "2015-12-31", "2020-12-31"
-        eta = 0.01
-    else:  # crypto
-        train_end, val_end = "2020-12-31", "2023-12-31" # Note: will be overridden by intelligent splitting
-        eta = 0.1  
-
-    # encoder handling
-    if exp.encoder == "vae":
-        disable_vae = False
-        latent_dim = 512
-    elif exp.encoder == "hmm":
-        disable_vae = True
-        latent_dim = 4   # number of HMM states
-    else:  # none
-        disable_vae = True
-        latent_dim = 0   # policy sees obs only
-
-    return TrainingConfig(
-        seed=exp.seed,
-        exp_name=f"{exp.asset_class}_{exp.encoder}_seed{exp.seed}",
-        asset_class=exp.asset_class,
-        data_path=data_paths[exp.asset_class],
-        encoder=exp.encoder,
-        disable_vae=disable_vae,
-        latent_dim=latent_dim,
-        hidden_dim=1024,
-        vae_lr=0.0010748206602172,
-        policy_lr=0.0020289998766945,
-        vae_beta=0.0125762666385515,
-        vae_update_freq=5,
-        seq_len=200,
-        episodes_per_task=3,
-        batch_size=8192,
-        vae_batch_size=1024,
-        ppo_epochs=8,
-        entropy_coef=0.0013141391952945,
-        max_episodes=6000,
-        early_stopping_patience=10,
-        early_stopping_min_delta=0.02,
-        val_interval=200,
-        min_episodes_before_stopping=1500,
-        train_end=train_end,
-        val_end=val_end,
-        num_assets=30,
-        device="cuda",
-        val_episodes=50,
-        test_episodes=100,
-        ppo_clip_ratio=0.2,
-        value_loss_coef=0.5,
-        max_grad_norm=0.5,
-        gae_lambda=0.95,
-        discount_factor=0.99,
-        min_horizon=exp.min_horizon,
-        max_horizon=exp.max_horizon,
-        # DSR parameters (defaults, will be overridden by HPO)
-        eta=eta,
-        rf_rate=0.02,
-        transaction_cost_rate=0.001
-    )
-
-
-def create_hpo_config(asset_class: str, encoder: str = "vae", seed: int = 42, 
-                     eta: float = 0.05, rf_rate: float = 0.02, 
-                     transaction_cost_rate: float = 0.001) -> TrainingConfig:
-    """
-    Create a shortened training config for HPO trials.
     
-    Args:
-        asset_class: "sp500" or "crypto"
-        encoder: encoder type
-        seed: random seed
-        eta: EWMA decay parameter for DSR
-        rf_rate: risk-free rate
-        transaction_cost_rate: transaction cost rate
-    """
-    # Create base experiment config
-    exp_config = ExperimentConfig(
-        seed=seed,
-        asset_class=asset_class,
-        encoder=encoder
-    )
+    # Paths (computed from asset_class)
+    data_path: str = field(init=False)
+    train_end: str = field(init=False)
+    val_end: str = field(init=False)
     
-    # Convert to training config
-    cfg = experiment_to_training_config(exp_config)
+    # Technical settings (rarely changed)
+    device: str = "cuda"
+    num_assets: int = 30  # Will be updated from actual data
     
-    # Override for HPO (shorter training)
-    cfg.max_episodes = 1000
-    cfg.val_episodes = 20
-    cfg.test_episodes = 30
-    cfg.val_interval = 100
-    cfg.min_episodes_before_stopping = 300
-    cfg.early_stopping_patience = 5
-    cfg.exp_name = f"hpo_{asset_class}_{encoder}_eta{eta:.3f}_rf{rf_rate:.3f}_tx{transaction_cost_rate:.4f}"
+    def __post_init__(self):
+        """Set computed fields based on asset_class."""
+        
+        # Data paths and splits
+        if self.asset_class == "sp500":
+            object.__setattr__(self, 'data_path', "environments/data/sp500_rl_ready_cleaned.parquet")
+            object.__setattr__(self, 'train_end', "2015-12-31")
+            object.__setattr__(self, 'val_end', "2020-12-31")
+            object.__setattr__(self, 'eta', 0.01)
+        elif self.asset_class == "crypto":
+            object.__setattr__(self, 'data_path', "environments/data/crypto_rl_ready_cleaned.parquet")
+            # Crypto dates will be computed from data in prepare_environments()
+            object.__setattr__(self, 'train_end', "")  # Will be set later
+            object.__setattr__(self, 'val_end', "")    # Will be set later
+            object.__setattr__(self, 'eta', 0.1)
+        else:
+            raise ValueError(f"Unknown asset_class: {self.asset_class}")
+            
+        # Sequence parameters
+        object.__setattr__(self, 'seq_len', 200)
+        object.__setattr__(self, 'min_horizon', 150)
+        object.__setattr__(self, 'max_horizon', 200)
     
-    # Set DSR parameters
-    cfg.eta = eta
-    cfg.rf_rate = rf_rate
-    cfg.transaction_cost_rate = transaction_cost_rate
+    @property
+    def disable_vae(self) -> bool:
+        """Whether to disable VAE based on encoder type."""
+        return self.encoder in ["hmm", "none"]
     
-    return cfg
+    @property  
+    def vae_update_freq(self) -> int:
+        """How often to update VAE."""
+        return 5
+    
+    @property
+    def discount_factor(self) -> float:
+        """PPO discount factor."""
+        return 0.99
+        
+    @property
+    def gae_lambda(self) -> float:
+        """GAE lambda parameter."""
+        return 0.95
+        
+    @property
+    def ppo_clip_ratio(self) -> float:
+        """PPO clipping ratio."""
+        return 0.2
+        
+    @property
+    def value_loss_coef(self) -> float:
+        """Value loss coefficient."""
+        return 0.5
+        
+    @property
+    def entropy_coef(self) -> float:
+        """Entropy coefficient."""
+        return 0.001
+        
+    @property
+    def max_grad_norm(self) -> float:
+        """Gradient clipping norm."""
+        return 0.5
+
+
+def create_experiment_configs(num_seeds: int = 10) -> List[Config]:
+    """Create all experiment configurations."""
+    configs = []
+    
+    asset_classes = ["sp500", "crypto"] 
+    encoders = ["vae", "none", "hmm"]
+    
+    for asset_class in asset_classes:
+        for encoder in encoders:
+            for seed in range(num_seeds):
+                config = Config(
+                    exp_name=f"{asset_class}_{encoder}_seed{seed}",
+                    seed=seed,
+                    asset_class=asset_class,
+                    encoder=encoder
+                )
+                configs.append(config)
+    
+    return configs
