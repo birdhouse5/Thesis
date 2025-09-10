@@ -59,9 +59,9 @@ class DSROptimizer:
             Validation reward (higher is better)
         """
         # Suggest DSR parameters
-        eta = trial.suggest_float('eta', 0.01, 0.2, log=True)
-        rf_rate = trial.suggest_float('rf_rate', 0.0, 0.05)
-        transaction_cost_rate = trial.suggest_float('transaction_cost_rate', 0.0001, 0.005, log=True)
+        eta = trial.suggest_float('eta', 0.001, 0.3, log=True)
+        rf_rate = 0.02
+        transaction_cost_rate = 0.0001
         
         # Create HPO config with suggested parameters
         try:

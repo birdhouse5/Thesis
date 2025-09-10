@@ -74,7 +74,8 @@ class MetaEnv:
         logger.info(f"MetaEnv initialized with DSR params:")
         logger.info(f"  eta (EWMA decay): {self.eta}")
         logger.info(f"  rf_rate (annual): {self.rf_rate}")
-        logger.info(f"  rf_step_log: {self.rf_step_log:.6f}")
+        logger.info(f"  steps_per_year: {self.steps_per_year}")
+        logger.info(f"  rf_step_log: {self.rf_step_log:.8f}")
         logger.info(f"  transaction_cost_rate: {self.transaction_cost_rate}")
 
     def sample_task(self):
