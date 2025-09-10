@@ -585,7 +585,8 @@ class SmokeTest:
         test_dataset = datasets['test']
         cfg.num_assets = test_dataset.num_assets
         
-        window = test_dataset.get_window(0, min(cfg.seq_len, len(test_dataset)))
+        seq_len_safe = min(cfg.seq_len, len(test_dataset) - 1)  # Ensure seq_len < dataset length
+        window = test_dataset.get_window(0, seq_len_safe)
         mock_dataset = {
             'features': torch.tensor(window['features'], dtype=torch.float32),
             'raw_prices': torch.tensor(window['raw_prices'], dtype=torch.float32)
@@ -594,9 +595,9 @@ class SmokeTest:
         env = MetaEnv(
             dataset=mock_dataset,
             feature_columns=test_dataset.feature_cols,
-            seq_len=cfg.seq_len,
-            min_horizon=cfg.min_horizon,
-            max_horizon=cfg.max_horizon
+            seq_len=seq_len_safe,  # Use safe sequence length
+            min_horizon=max(1, getattr(cfg, 'min_horizon', 5)),  # Safe defaults
+            max_horizon=max(2, getattr(cfg, 'max_horizon', 10))
         )
         
         # Create models (minimal)
