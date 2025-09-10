@@ -124,99 +124,127 @@ def evaluate(env, policy, encoder, config, num_episodes: int = 50) -> Dict[str, 
     return results
 
 
-def run_backtest(env, policy, encoder, config, save_details: bool = True) -> Dict[str, float]:
+def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> Dict[str, float]:
     """
-    Run comprehensive backtest on test environment.
+    Run comprehensive sequential backtest on entire validation/test dataset using rolling context window.
     
     Args:
-        env: Test environment
-        policy: Trained policy
-        encoder: Trained encoder
-        config: Configuration
-        save_details: Whether to return detailed results
+        datasets: Dictionary with 'train', 'val', 'test' Dataset objects  
+        policy: Trained policy network
+        encoder: Trained encoder (VAE/HMM/None)
+        config: Training configuration
+        split: Which dataset split to backtest on ('val' or 'test')
         
     Returns:
         Dictionary with backtest results
     """
-    device = torch.device(config.device)
+    from environments.env import MetaEnv, normalize_with_budget_constraint
     
-    # Track detailed performance
-    daily_returns = []
-    daily_weights = []
-    daily_capital = []
-    transaction_costs = []
+    device = torch.device(config.device)
+    dataset = datasets[split]
+    
+    print(f"Running sequential backtest on {split} split:")
+    print(f"  Dataset period: {dataset.get_split_info()['date_range']}")
+    print(f"  Total timesteps: {len(dataset)}")
+    print(f"  Context window: {config.seq_len}")
     
     policy.eval()
     if encoder is not None:
         encoder.eval()
     
+    # Create environment in sequential mode
+    # We need to create a mock dataset for MetaEnv - it expects tensor format
+    full_window = dataset.get_window(0, len(dataset))
+    mock_dataset = {
+        'features': torch.tensor(full_window['features'], dtype=torch.float32),
+        'raw_prices': torch.tensor(full_window['raw_prices'], dtype=torch.float32)
+    }
+    
+    env = MetaEnv(
+        dataset=mock_dataset,
+        feature_columns=dataset.feature_cols,
+        seq_len=config.seq_len,
+        min_horizon=config.min_horizon,
+        max_horizon=config.max_horizon,
+        eta=getattr(config, 'eta', 0.05),
+        rf_rate=getattr(config, 'rf_rate', 0.02),
+        transaction_cost_rate=getattr(config, 'transaction_cost_rate', 0.001),
+        steps_per_year=252 if config.asset_class == 'sp500' else 35040
+    )
+    
+    # Enable sequential mode
+    env.set_sequential_mode(True)
+    env.config = config  # Ensure config is available for _get_latent_for_step
+    env.vae = encoder  # Ensure VAE is available
+    
+    # Initialize tracking
+    daily_returns = []
+    daily_weights = []
+    daily_capital = []
+    portfolio_values = []
+    
+    # Initialize capital tracking
+    initial_capital = 100_000.0
+    env.current_capital = initial_capital
+    env.initial_capital = initial_capital
+    env.capital_history = [initial_capital]
+    env.log_returns = []
+    env.excess_log_returns = []
+    env.alpha = 0.0
+    env.beta = 0.0
+    env.prev_weights = np.zeros(dataset.num_assets, dtype=np.float32)
+    
     with torch.no_grad():
-        # Run single long episode for backtest
-        task = env.sample_task()
-        env.set_task(task)
-        
-        obs = env.reset()
-        obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-        
-        trajectory_context = {'observations': [], 'actions': [], 'rewards': []}
-        done = False
-        step = 0
-        
-        while not done:
-            # Get latent encoding
+        for t in range(len(dataset) - 1):  # -1 because we need t+1 for returns
+            
+            # Get current observation
+            current_obs = mock_dataset['features'][t].numpy()  # [N, F]
+            current_obs_tensor = torch.tensor(current_obs, dtype=torch.float32, device=device).unsqueeze(0)
+            
+            # Get latent encoding from rolling context (handles initialization automatically)
             if encoder is None or getattr(config, 'disable_vae', False):
                 latent = torch.zeros(1, config.latent_dim, device=device)
-            elif len(trajectory_context['observations']) == 0:
-                latent = torch.zeros(1, config.latent_dim, device=device)
             else:
-                obs_seq = torch.stack(trajectory_context['observations']).unsqueeze(0)
-                action_seq = torch.stack(trajectory_context['actions']).unsqueeze(0)
-                reward_seq = torch.stack(trajectory_context['rewards']).unsqueeze(0).unsqueeze(-1)
-                
-                if hasattr(encoder, 'encode'):
-                    if config.encoder == "hmm":
-                        latent = encoder.encode(obs_seq, action_seq, reward_seq)
-                    else:  # VAE
-                        mu, logvar, _ = encoder.encode(obs_seq, action_seq, reward_seq)
-                        latent = encoder.reparameterize(mu, logvar)
-                else:
-                    latent = torch.zeros(1, config.latent_dim, device=device)
+                # Use the environment's method which handles rolling context
+                latent = env._get_latent_for_step(current_obs_tensor, {})  # Empty trajectory_context since we use rolling
             
-            # Get action
-            action, _ = policy.act(obs_tensor, latent, deterministic=True)
+            # Get action from policy
+            action, _ = policy.act(current_obs_tensor, latent, deterministic=True)
             action_cpu = action.squeeze(0).detach().cpu().numpy()
             
-            # Take step
-            next_obs, reward, done, info = env.step(action_cpu)
+            # Simulate environment step to get reward and update context
+            # We manually compute the reward using the same logic as MetaEnv
+            env.current_step = t
+            reward, weights, w_cash = env.compute_reward_with_capital(action_cpu)
             
-            # Record data
-            daily_returns.append(info.get('excess_log_return', 0))
-            daily_weights.append(info['weights'].copy())
-            daily_capital.append(info['capital'])
+            # Store results
+            daily_returns.append(env.excess_log_returns[-1] if env.excess_log_returns else 0.0)
+            daily_weights.append(weights.copy())
+            daily_capital.append(env.current_capital)
+            portfolio_values.append(env.current_capital / initial_capital)
             
-            # Update trajectory context
-            trajectory_context['observations'].append(obs_tensor.squeeze(0).detach())
-            trajectory_context['actions'].append(action.squeeze(0).detach())
-            trajectory_context['rewards'].append(torch.tensor(reward, device=device))
-            
-            if not done:
-                obs_tensor = torch.tensor(next_obs, dtype=torch.float32, device=device).unsqueeze(0)
-            
-            step += 1
+            # Progress update
+            if t % 100 == 0:
+                context_size = env.get_rolling_context_size()
+                current_return = (env.current_capital - initial_capital) / initial_capital
+                print(f"  Step {t:4d}/{len(dataset)-1}: Return = {current_return:.3%}, Capital = ${env.current_capital:,.0f}, Context = {context_size}")
     
     # Calculate comprehensive metrics
     returns_array = np.array(daily_returns)
     capital_array = np.array(daily_capital)
     
-    # Basic performance metrics
-    total_return = (capital_array[-1] - capital_array[0]) / capital_array[0]
-    annual_return = np.mean(returns_array) * 252
-    annual_volatility = np.std(returns_array) * np.sqrt(252)
+    # Determine annualization factor
+    steps_per_year = 252 if config.asset_class == 'sp500' else 35040
+    
+    # Performance metrics
+    total_return = (capital_array[-1] - initial_capital) / initial_capital
+    annual_return = np.mean(returns_array) * steps_per_year
+    annual_volatility = np.std(returns_array) * np.sqrt(steps_per_year)
     sharpe_ratio = annual_return / annual_volatility if annual_volatility > 0 else 0
     
-    # Downside metrics
+    # Risk metrics
     negative_returns = returns_array[returns_array < 0]
-    downside_volatility = np.std(negative_returns) * np.sqrt(252) if len(negative_returns) > 0 else 0
+    downside_volatility = np.std(negative_returns) * np.sqrt(steps_per_year) if len(negative_returns) > 0 else 0
     sortino_ratio = annual_return / downside_volatility if downside_volatility > 0 else 0
     
     # Maximum drawdown
@@ -227,10 +255,8 @@ def run_backtest(env, policy, encoder, config, save_details: bool = True) -> Dic
     # Calmar ratio
     calmar_ratio = annual_return / abs(max_drawdown) if max_drawdown != 0 else 0
     
-    # Win rate
+    # Additional metrics
     win_rate = np.sum(returns_array > 0) / len(returns_array) if len(returns_array) > 0 else 0
-    
-    # Value at Risk (95% confidence)
     var_95 = np.percentile(returns_array, 5) if len(returns_array) > 0 else 0
     
     backtest_results = {
@@ -243,20 +269,26 @@ def run_backtest(env, policy, encoder, config, save_details: bool = True) -> Dic
         'max_drawdown': max_drawdown,
         'win_rate': win_rate,
         'var_95': var_95,
-        'num_steps': step,
+        'num_trades': len(returns_array),
         'final_capital': capital_array[-1],
-        'initial_capital': capital_array[0]
+        'initial_capital': initial_capital,
+        'avg_turnover': np.mean([np.sum(np.abs(w)) for w in daily_weights]),
+        # Detailed data for further analysis
+        'daily_returns': returns_array.tolist(),
+        'daily_capital': capital_array.tolist(),
+        'daily_weights': daily_weights,
+        'portfolio_values': portfolio_values
     }
     
-    # Add detailed data if requested
-    if save_details:
-        backtest_results.update({
-            'daily_returns': returns_array.tolist(),
-            'daily_capital': capital_array.tolist(),
-            'daily_weights': daily_weights
-        })
+    print(f"\nSequential Backtest Results ({split} split):")
+    print(f"  Total Return: {total_return:.2%}")
+    print(f"  Annual Return: {annual_return:.2%}")
+    print(f"  Annual Volatility: {annual_volatility:.2%}")
+    print(f"  Sharpe Ratio: {sharpe_ratio:.3f}")
+    print(f"  Max Drawdown: {max_drawdown:.2%}")
+    print(f"  Win Rate: {win_rate:.2%}")
     
-    # Reset models
+    # Reset models to training mode
     policy.train()
     if encoder is not None:
         encoder.train()

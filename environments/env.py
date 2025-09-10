@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import logging
 import math
+from collections import deque
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,9 @@ class MetaEnv:
         self.transaction_cost_rate = transaction_cost_rate
         self.prev_weights = None
 
+        # Sequential backtesting support
+        self.sequential_mode = False
+        self.rolling_context = deque(maxlen=self.seq_len)
         
         # Current episode state
         self.current_step = 0
@@ -153,11 +157,23 @@ class MetaEnv:
         reward, weights, w_cash = self.compute_reward_with_capital(action)
         
         # Store transition
-        self.episode_trajectory.append({
+        transition_data = {
             'state': current_state.copy(),
             'action': action.copy(),
             'reward': reward
-        })
+        }
+
+        # Store in appropriate context
+        if self.sequential_mode:
+            # For sequential backtesting - add to rolling context
+            self.rolling_context.append({
+                'observations': torch.tensor(current_state, dtype=torch.float32, device=self.device),
+                'actions': torch.tensor(weights, dtype=torch.float32, device=self.device),  # Use normalized weights
+                'rewards': torch.tensor(reward, dtype=torch.float32, device=self.device)
+            })
+        else:
+            # For episodic training - add to episode trajectory
+            self.episode_trajectory.append(transition_data)
         
         # Advance and check termination
         self.current_step += 1
@@ -344,3 +360,18 @@ class MetaEnv:
             'terminal_step': self.terminal_step,
             'done': self.done
         }
+
+    def get_rolling_context_size(self):
+            """Get current size of rolling context buffer."""
+            return len(self.rolling_context) if self.sequential_mode else 0
+
+
+    def set_sequential_mode(self, enabled: bool = True):
+        """
+        Enable/disable sequential mode for backtesting.
+        In sequential mode, context persists across steps for rolling window backtesting.
+        """
+        self.sequential_mode = enabled
+        if not enabled:
+            self.rolling_context.clear()
+        logger.info(f"Sequential mode {'enabled' if enabled else 'disabled'}")

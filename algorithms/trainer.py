@@ -585,15 +585,32 @@ class PPOTrainer:
             self.vae_optimizer.load_state_dict(state["vae_optimizer"])
 
     def _get_latent_for_step(self, obs_tensor, trajectory_context):
+        """Get latent encoding for current step, supporting both episodic and sequential modes."""
         if getattr(self.config, "disable_vae", False):
             return torch.zeros(1, self.config.latent_dim, device=self.device)
-        if len(trajectory_context["observations"]) == 0:
+        
+        # Choose context source based on mode
+        if self.sequential_mode and len(self.rolling_context) > 0:
+            # Sequential mode: use rolling context
+            context_list = list(self.rolling_context)
+            obs_seq = torch.stack([ctx['observations'] for ctx in context_list]).unsqueeze(0)
+            act_seq = torch.stack([ctx['actions'] for ctx in context_list]).unsqueeze(0)
+            rew_seq = torch.stack([ctx['rewards'] for ctx in context_list]).unsqueeze(0).unsqueeze(-1)
+        elif len(trajectory_context["observations"]) == 0:
+            # No context available
             return torch.zeros(1, self.config.latent_dim, device=self.device)
-        obs_seq = torch.stack(trajectory_context["observations"]).unsqueeze(0)
-        act_seq = torch.stack(trajectory_context["actions"]).unsqueeze(0)
-        rew_seq = torch.stack(trajectory_context["rewards"]).unsqueeze(0).unsqueeze(-1)
-        mu, logvar, _ = self.vae.encode(obs_seq, act_seq, rew_seq)
-        return self.vae.reparameterize(mu, logvar)
+        else:
+            # Episodic mode: use trajectory context
+            obs_seq = torch.stack(trajectory_context["observations"]).unsqueeze(0)
+            act_seq = torch.stack(trajectory_context["actions"]).unsqueeze(0)
+            rew_seq = torch.stack(trajectory_context["rewards"]).unsqueeze(0).unsqueeze(-1)
+        
+        try:
+            mu, logvar, _ = self.vae.encode(obs_seq, act_seq, rew_seq)
+            return self.vae.reparameterize(mu, logvar)
+        except Exception as e:
+            logger.warning(f"VAE encoding failed: {e}, using zero latent")
+            return torch.zeros(1, self.config.latent_dim, device=self.device)
 
 
 # ---------------------------------------------------------------------
