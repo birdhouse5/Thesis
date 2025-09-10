@@ -255,13 +255,8 @@ def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
             encoder = mlflow.pytorch.load_model(f"models:/{model_name}/latest").to(device)
             logger.info(f"✅ Loaded pretrained HMM encoder from MinIO: {model_name}")
         except Exception as e:
-            logger.warning(f"⚠️ Could not load pretrained encoder {model_name}, falling back to fresh init. Error: {e}")
-            encoder = HMMEncoder(
-                obs_dim=obs_shape,
-                num_assets=cfg.num_assets,
-                latent_dim=cfg.latent_dim,
-                hidden_dim=cfg.hidden_dim
-            ).to(device)
+            logger.error(f"Required pretrained HMM encoder not found: {e}")
+            raise RuntimeError(f"HMM encoder '{model_name}' must be pretrained first. Run pretrain_hmm.py")
 
     # encoder == "none" -> encoder remains None
     
@@ -350,6 +345,11 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                     
                     logger.info(f"Episode {episodes_trained}: val_reward={current_val_reward:.4f}, best={best_val_reward:.4f}")
         
+
+        # Final test evaluation and backtest
+        logger.info("Running final evaluation and backtest...")
+        test_results = evaluate(test_env, policy, encoder, cfg, cfg.test_episodes)
+
         # Running backtest
         logger.info("Running sequential backtest...")
         backtest_results = run_sequential_backtest(environments, policy, encoder, cfg, split='test')

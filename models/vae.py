@@ -211,24 +211,26 @@ class RNNEncoder(nn.Module):
 
         batch_size, seq_len = obs_seq.shape[:2]
         
-        # defensive reshape
-        reward_seq = reward_seq.unsqueeze(-1) if reward_seq.dim()==2 else reward_seq
-        reward_flat = reward_seq.reshape(batch_size * seq_len, self.reward_dim)
-
-
-        # Flatten observations for encoding
-        obs_flat = obs_seq.reshape(batch_size, seq_len, -1)  # (batch, seq_len, N×F)
+        # Ensure reward_seq is 2D [batch_size, seq_len]
+        if reward_seq.dim() == 1:
+            reward_seq = reward_seq.unsqueeze(0)  # [seq_len] → [1, seq_len]
+        elif reward_seq.dim() == 3:
+            reward_seq = reward_seq.squeeze(-1)   # [batch, seq_len, 1] → [batch, seq_len]
         
-        # Encode inputs - ensure correct shapes
-        obs_emb = F.relu(self.obs_encoder(obs_flat))        # (batch, seq_len, 128)
-        action_emb = F.relu(self.action_encoder(action_seq)) # (batch, seq_len, 64)
+        # Now we're guaranteed 2D [batch_size, seq_len]
+        assert reward_seq.shape == (batch_size, seq_len)
         
-        # Reward encoding - handle shape carefully
-        # reward_seq is (batch, seq_len, 1), we need to keep this shape for linear layer
-        reward_flat = reward_seq.reshape(batch_size * seq_len, self.reward_dim)  # (batch*seq_len, 1)
-        reward_emb_flat = F.relu(self.reward_encoder(reward_flat))  # (batch*seq_len, 32)
-        reward_emb = reward_emb_flat.view(batch_size, seq_len, 32)  # (batch, seq_len, 32)
+        # Encode inputs
+        obs_flat = obs_seq.reshape(batch_size, seq_len, -1)
+        obs_emb = F.relu(self.obs_encoder(obs_flat))
+        action_emb = F.relu(self.action_encoder(action_seq))
         
+        # Handle rewards properly for linear layer
+        # Linear layer expects [*, input_features], so reshape to [batch*seq, 1]
+        reward_flat = reward_seq.reshape(-1, 1)  # [batch*seq, 1]
+        reward_emb_flat = F.relu(self.reward_encoder(reward_flat))  # [batch*seq, 32]
+        reward_emb = reward_emb_flat.view(batch_size, seq_len, 32)  # [batch, seq, 32]
+            
         # Concatenate embeddings
         rnn_input = torch.cat([obs_emb, action_emb, reward_emb], dim=-1)  # (batch, seq_len, 224)
         
