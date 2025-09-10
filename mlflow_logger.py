@@ -1,25 +1,116 @@
+# mlflow_integration.py - Combined MLflow setup and comprehensive logging
+
+import os
 import mlflow
 import mlflow.pytorch
 import numpy as np
 import torch
-from typing import Dict, Any, List, Optional
 import json
-from datetime import datetime
+import tempfile
 import logging
+from typing import Dict, Any, List, Optional
+from datetime import datetime
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-class ComprehensiveMLflowLogger:
-    """Comprehensive logging for portfolio optimization experiments."""
+class MLflowIntegration:
+    """Combined MLflow setup and comprehensive logging for portfolio optimization experiments."""
     
-    def __init__(self, run_name: str, config: Dict[str, Any]):
+    def __init__(self, run_name: str = None, config: Dict[str, Any] = None):
         self.run_name = run_name
-        self.config = config
+        self.config = config or {}
         self.episode_count = 0
+        self.backend_type = None
         
-    def log_config(self):
+    def setup_mlflow(self):
+        """
+        Setup MLflow with MinIO/S3 backend, fallback to local if needed.
+        Returns: backend type ('remote' or 'local')
+        """
+        # Check required environment variables for remote setup
+        required_vars = [
+            'MLFLOW_TRACKING_URI',
+            'AWS_ACCESS_KEY_ID', 
+            'AWS_SECRET_ACCESS_KEY',
+            'MLFLOW_S3_ENDPOINT_URL'
+        ]
+        
+        missing_vars = [var for var in required_vars if not os.getenv(var)]
+        
+        if missing_vars:
+            logger.warning(f"Missing environment variables for MinIO setup: {missing_vars}")
+            logger.info("Falling back to local MLflow tracking")
+            return self._setup_local_mlflow()
+        
+        # Try remote setup
+        try:
+            return self._setup_remote_mlflow()
+        except Exception as e:
+            logger.error(f"Remote MLflow setup failed: {e}")
+            logger.info("Falling back to local MLflow tracking")
+            return self._setup_local_mlflow()
+    
+    def _setup_remote_mlflow(self):
+        """Setup remote MLflow with MinIO."""
+        tracking_uri = os.getenv('MLFLOW_TRACKING_URI')
+        mlflow.set_tracking_uri(tracking_uri)
+        
+        # Set TLS ignore for MinIO (assuming HTTP not HTTPS)
+        os.environ['MLFLOW_S3_IGNORE_TLS'] = 'true'
+        
+        logger.info(f"MLflow configured with remote backend:")
+        logger.info(f"  Tracking URI: {tracking_uri}")
+        logger.info(f"  S3 Endpoint: {os.getenv('MLFLOW_S3_ENDPOINT_URL')}")
+        
+        # Test connection
+        client = mlflow.tracking.MlflowClient()
+        experiments = client.search_experiments()
+        logger.info(f"✅ MLflow remote connected. Found {len(experiments)} experiments.")
+        
+        self.backend_type = 'remote'
+        return 'remote'
+    
+    def _setup_local_mlflow(self):
+        """Setup local MLflow fallback."""
+        mlflow.set_tracking_uri("file:./mlruns")
+        logger.info("✅ MLflow configured with local backend (./mlruns)")
+        self.backend_type = 'local'
+        return 'local'
+    
+    def test_connection(self):
+        """Test MLflow connection by creating a test run."""
+        if not self.backend_type:
+            logger.error("MLflow not setup. Call setup_mlflow() first.")
+            return False
+            
+        try:
+            with mlflow.start_run(run_name="connection_test"):
+                # Test logging a simple metric
+                mlflow.log_metric("test_metric", 42.0)
+                
+                # Test logging a simple artifact
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                    f.write("MLflow connection test artifact")
+                    test_file = f.name
+                
+                mlflow.log_artifact(test_file, "test_artifacts")
+                os.unlink(test_file)
+                
+                logger.info(f"✅ MLflow {self.backend_type} backend test successful!")
+                return True
+                
+        except Exception as e:
+            logger.error(f"❌ MLflow connection test failed: {e}")
+            return False
+    
+    # ===== COMPREHENSIVE LOGGING METHODS =====
+    
+    def log_config(self, config: Dict[str, Any] = None):
         """Log all configuration parameters."""
-        for key, value in self.config.items():
+        config_to_log = config or self.config
+        
+        for key, value in config_to_log.items():
             if isinstance(value, (str, int, float, bool)):
                 mlflow.log_param(key, value)
             else:
@@ -153,23 +244,58 @@ class ComprehensiveMLflowLogger:
                 json.dump(serializable_weights, f)
             mlflow.log_artifact(weights_file)
     
-    def log_model_artifacts(self, policy, encoder=None, model_dir: str = "models"):
-        """Log trained models as MLflow artifacts."""
+    def log_final_models(self, policy, encoder=None, experiment_name: str = None):
+        """
+        Log only final trained models to MinIO (not training checkpoints).
         
-        # Log policy model
+        Args:
+            policy: Trained policy network
+            encoder: Trained encoder network (optional)
+            experiment_name: Name for model registration
+        """
+        exp_name = experiment_name or self.run_name or "portfolio_model"
+        
+        # Log policy model to MinIO
         mlflow.pytorch.log_model(
             policy, 
             "policy_model",
-            registered_model_name=f"{self.run_name}_policy"
+            registered_model_name=f"{exp_name}_policy"
         )
+        logger.info(f"✅ Policy model logged to {self.backend_type} backend")
         
         # Log encoder model if exists
         if encoder is not None:
             mlflow.pytorch.log_model(
                 encoder,
                 "encoder_model", 
-                registered_model_name=f"{self.run_name}_encoder"
+                registered_model_name=f"{exp_name}_encoder"
             )
+            logger.info(f"✅ Encoder model logged to {self.backend_type} backend")
+    
+    def log_essential_artifacts(self, model_dict: Dict[str, torch.nn.Module], 
+                              config_dict: Dict[str, Any], experiment_name: str):
+        """
+        Log essential artifacts: final models + config.
+        
+        Args:
+            model_dict: Dict with 'policy' and optionally 'encoder' PyTorch models
+            config_dict: Experiment configuration dictionary  
+            experiment_name: Name of the experiment
+        """
+        # Log final models (only at end of training)
+        policy = model_dict.get('policy')
+        encoder = model_dict.get('encoder')
+        
+        self.log_final_models(policy, encoder, experiment_name)
+        
+        # Log config as JSON artifact
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(config_dict, f, indent=2, default=str)
+            config_file = f.name
+        
+        mlflow.log_artifact(config_file, "config")
+        os.unlink(config_file)  # Clean up temp file
+        logger.info(f"✅ Configuration logged to {self.backend_type} backend")
     
     def log_system_metrics(self, gpu_memory_mb: float, training_time_sec: float):
         """Log system performance metrics."""
@@ -188,7 +314,10 @@ class ComprehensiveMLflowLogger:
         """Log final experiment summary."""
         mlflow.log_metric("experiment_success", 1 if success else 0)
         mlflow.log_metric("episodes_completed", episodes_completed)
-        mlflow.log_metric("completion_rate", episodes_completed / self.config.get('max_episodes', 1))
+        
+        if self.config.get('max_episodes'):
+            completion_rate = episodes_completed / self.config['max_episodes']
+            mlflow.log_metric("completion_rate", completion_rate)
         
         if error_msg:
             mlflow.log_param("error_message", error_msg[:1000])  # Truncate long error messages
@@ -212,8 +341,44 @@ class ComprehensiveMLflowLogger:
             return 0.0
 
 
+# ===== CONVENIENCE FUNCTIONS =====
+
+def setup_mlflow() -> str:
+    """
+    Simple MLflow setup function for backward compatibility.
+    Returns: backend type ('remote' or 'local')
+    """
+    integrator = MLflowIntegration()
+    return integrator.setup_mlflow()
+
+def test_mlflow_connection() -> bool:
+    """Test MLflow connection."""
+    integrator = MLflowIntegration()
+    backend = integrator.setup_mlflow()
+    return integrator.test_connection()
+
+def log_essential_artifacts(model_dict: Dict[str, torch.nn.Module], 
+                          config_dict: Dict[str, Any], experiment_name: str):
+    """Convenience function for logging essential artifacts."""
+    integrator = MLflowIntegration()
+    integrator.log_essential_artifacts(model_dict, config_dict, experiment_name)
+
 def get_gpu_memory_usage():
     """Get current GPU memory usage in MB."""
     if torch.cuda.is_available():
         return torch.cuda.memory_allocated() / 1024 / 1024
     return 0.0
+
+
+# ===== TESTING =====
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    
+    print("Testing MLflow integration...")
+    success = test_mlflow_connection()
+    
+    if success:
+        print("🎉 MLflow integration working! Ready for experiments.")
+    else:
+        print("⚠️  Connection test failed. Check your environment variables.")
