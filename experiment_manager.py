@@ -298,6 +298,20 @@ class ExperimentManager:
         else:
             performance_stats = {}
         
+        # Resource usage summary (from completed experiments)
+        if completed > 0:
+            memory_values = [r.get('memory_peak_mb', 0) for r in self.results.values()]
+            time_values = [r.get('wall_time_seconds', 0) for r in self.results.values()]
+            
+            resource_stats = {
+                'avg_memory_mb': sum(memory_values) / len(memory_values) if memory_values else 0,
+                'max_memory_mb': max(memory_values) if memory_values else 0,
+                'avg_time_minutes': (sum(time_values) / len(time_values) / 60) if time_values else 0,
+                'total_time_hours': sum(time_values) / 3600 if time_values else 0
+            }
+        else:
+            resource_stats = {}
+        
         summary = {
             'batch_info': {
                 'total_experiments': total,
@@ -309,6 +323,7 @@ class ExperimentManager:
             },
             'error_analysis': error_types,
             'performance_stats': performance_stats,
+            'resource_usage': resource_stats,
             'start_time': self.start_time.isoformat(),
             'end_time': datetime.now().isoformat()
         }
@@ -319,33 +334,10 @@ class ExperimentManager:
         """Save comprehensive final report."""
         summary = self.get_summary()
         
-        # Add resource summary
-        resource_summary = self.resource_manager.get_resource_summary()
-        summary['resource_usage'] = resource_summary
-        
         # Save summary JSON
         summary_file = self.checkpoint_dir / "experiment_summary.json"
         with open(summary_file, 'w') as f:
             json.dump(summary, f, indent=2)
-        
-        # Save detailed results
-        results_file = self.checkpoint_dir / "detailed_results.json"
-        all_results = {
-            'successful_experiments': self.results,
-            'failed_experiments': self.failed_experiments,
-            'summary': summary
-        }
-        
-        with open(results_file, 'w') as f:
-            json.dump(all_results, f, indent=2)
-        
-        # Shutdown resource manager
-        self.resource_manager.shutdown()
-        
-        logger.info(f"Final report saved to {self.checkpoint_dir}")
-        
-        # Print final summary
-        self.print_final_summary(summary)
         
         # Save detailed results
         results_file = self.checkpoint_dir / "detailed_results.json"
@@ -389,19 +381,12 @@ class ExperimentManager:
             print(f"  Average Sharpe ratio: {perf.get('avg_sharpe', 0):.4f}")
             print(f"  Best Sharpe ratio: {perf.get('best_sharpe', 0):.4f}")
         
-        # Resource usage summary
-        if 'resource_usage' in summary:
+        if summary['resource_usage']:
             res = summary['resource_usage']
             print(f"\nResource usage summary:")
             print(f"  Average memory: {res.get('avg_memory_mb', 0):.1f}MB")
-            print(f"  Peak memory: {res.get('max_memory_mb', 0):.1f}MB") 
-            print(f"  Average GPU memory: {res.get('avg_gpu_memory_mb', 0):.1f}MB")
-            print(f"  Peak GPU memory: {res.get('max_gpu_memory_mb', 0):.1f}MB")
+            print(f"  Peak memory: {res.get('max_memory_mb', 0):.1f}MB")
+            print(f"  Average experiment time: {res.get('avg_time_minutes', 0):.1f} minutes")
             print(f"  Total compute time: {res.get('total_time_hours', 0):.1f} hours")
         
         print(f"{'='*80}")
-        
-    def __del__(self):
-        """Cleanup resource manager on deletion."""
-        if hasattr(self, 'resource_manager'):
-            self.resource_manager.shutdown()
