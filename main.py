@@ -209,6 +209,12 @@ def prepare_environments(cfg: TrainingConfig):
             'num_windows': len(features_list)
         }
     
+    # Determine steps_per_year based on asset class
+    if cfg.asset_class == "crypto":
+        steps_per_year = 35040  # 15-minute intervals: 365 * 24 * 4
+    else:
+        steps_per_year = 252    # Daily intervals for stocks
+    
     # Create environments with DSR parameters from config
     environments = {}
     for split_name, tensor_data in split_tensors.items():
@@ -223,7 +229,8 @@ def prepare_environments(cfg: TrainingConfig):
             max_horizon=cfg.max_horizon,
             eta=getattr(cfg, 'eta', 0.05),
             rf_rate=getattr(cfg, 'rf_rate', 0.02),
-            transaction_cost_rate=getattr(cfg, 'transaction_cost_rate', 0.001)
+            transaction_cost_rate=getattr(cfg, 'transaction_cost_rate', 0.001),
+            steps_per_year=steps_per_year
         )
     
     return environments, split_tensors
