@@ -57,6 +57,8 @@ def pretrain_hmm(asset_class: str, seed: int = 0):
         for epoch in range(10):
             total_loss = 0
             for obs, act, rew, target in train_loader:
+                obs, act, rew, target = obs.to(device), act.to(device), rew.to(device), target.to(device)
+
                 regime_probs = encoder.encode(obs.unsqueeze(1), act.unsqueeze(1), rew.unsqueeze(1))
                 loss = F.kl_div(regime_probs.log(), target, reduction="batchmean")
                 optimizer.zero_grad()
