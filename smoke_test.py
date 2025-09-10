@@ -290,7 +290,7 @@ class SmokeTest:
             seq_len=self.config["seq_len"],
             min_horizon=self.config["min_horizon"],
             max_horizon=self.config["max_horizon"],
-            eta=0.05,
+            eta=0.05,  # Fixed: use proper eta value, not max_horizon
             rf_rate=0.02,
             transaction_cost_rate=0.001
         )
