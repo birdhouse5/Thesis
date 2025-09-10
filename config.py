@@ -70,6 +70,10 @@ class TrainingConfig:
     discount_factor: float
     min_horizon: int
     max_horizon: int
+    # DSR parameters
+    eta: float = 0.05
+    rf_rate: float = 0.02
+    transaction_cost_rate: float = 0.001
 
 
 def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
@@ -83,7 +87,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
     if exp.asset_class == "sp500":
         train_end, val_end = "2015-12-31", "2020-12-31"
     else:  # crypto
-        train_end, val_end = "2020-12-31", "2023-12-31"  # <-- adjust when dataset ready
+        train_end, val_end = "2020-12-31", "2023-12-31"  # Note: will be overridden by intelligent splitting
 
     # encoder handling
     if exp.encoder == "vae":
@@ -132,5 +136,50 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         gae_lambda=0.95,
         discount_factor=0.99,
         min_horizon=exp.min_horizon,
-        max_horizon=exp.max_horizon
+        max_horizon=exp.max_horizon,
+        # DSR parameters (defaults, will be overridden by HPO)
+        eta=0.05,
+        rf_rate=0.02,
+        transaction_cost_rate=0.001
     )
+
+
+def create_hpo_config(asset_class: str, encoder: str = "vae", seed: int = 42, 
+                     eta: float = 0.05, rf_rate: float = 0.02, 
+                     transaction_cost_rate: float = 0.001) -> TrainingConfig:
+    """
+    Create a shortened training config for HPO trials.
+    
+    Args:
+        asset_class: "sp500" or "crypto"
+        encoder: encoder type
+        seed: random seed
+        eta: EWMA decay parameter for DSR
+        rf_rate: risk-free rate
+        transaction_cost_rate: transaction cost rate
+    """
+    # Create base experiment config
+    exp_config = ExperimentConfig(
+        seed=seed,
+        asset_class=asset_class,
+        encoder=encoder
+    )
+    
+    # Convert to training config
+    cfg = experiment_to_training_config(exp_config)
+    
+    # Override for HPO (shorter training)
+    cfg.max_episodes = 1000
+    cfg.val_episodes = 20
+    cfg.test_episodes = 30
+    cfg.val_interval = 100
+    cfg.min_episodes_before_stopping = 300
+    cfg.early_stopping_patience = 5
+    cfg.exp_name = f"hpo_{asset_class}_{encoder}_eta{eta:.3f}_rf{rf_rate:.3f}_tx{transaction_cost_rate:.4f}"
+    
+    # Set DSR parameters
+    cfg.eta = eta
+    cfg.rf_rate = rf_rate
+    cfg.transaction_cost_rate = transaction_cost_rate
+    
+    return cfg

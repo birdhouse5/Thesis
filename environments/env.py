@@ -19,7 +19,10 @@ def normalize_with_budget_constraint(raw_actions: np.ndarray, eps: float = 1e-8)
 
 
 class MetaEnv:
-    def __init__(self, dataset: dict, feature_columns: list, seq_len: int = 60, min_horizon: int = 45, max_horizon: int = 60, rf_rate=0.02, steps_per_year: int = 252, eta: float = 0.05, eps: float = 1e-12, transaction_cost_rate: float = 0.001):
+    def __init__(self, dataset: dict, feature_columns: list, seq_len: int = 60, 
+                 min_horizon: int = 45, max_horizon: int = 60, rf_rate=0.02, 
+                 steps_per_year: int = 252, eta: float = 0.05, eps: float = 1e-12, 
+                 transaction_cost_rate: float = 0.001):
         """
         Args:
             dataset: Dict with 'features' and 'raw_prices' tensors
@@ -27,16 +30,19 @@ class MetaEnv:
             seq_len: Length of each task sequence
             min_horizon: Minimum episode length within a task
             max_horizon: Maximum episode length within a task
+            rf_rate: Risk-free rate (annual)
+            steps_per_year: Number of steps per year for rf conversion
+            eta: EWMA decay parameter for DSR
+            eps: Small epsilon for numerical stability
+            transaction_cost_rate: Transaction cost rate
         """
         self.dataset = dataset
         self.feature_columns = feature_columns
         self.seq_len = seq_len
         self.min_horizon = min_horizon
         self.max_horizon = max_horizon
-        # Risk-free handling & DSR hyperparams
-        # rf_rate is assumed annual; convert to per-step LOG rf:
-        #   rf_step_log = log(1 + rf_rate) / steps_per_year
-        # If your rf_rate is already per-step, set steps_per_year=1.
+        
+        # DSR parameters (now configurable)
         self.rf_rate = rf_rate
         self.steps_per_year = steps_per_year
         self.rf_step_log = math.log(1.0 + rf_rate) / max(1, steps_per_year)
@@ -63,6 +69,13 @@ class MetaEnv:
 
         # Episode tracking
         self.episode_count = 0
+        
+        # Log DSR configuration
+        logger.info(f"MetaEnv initialized with DSR params:")
+        logger.info(f"  eta (EWMA decay): {self.eta}")
+        logger.info(f"  rf_rate (annual): {self.rf_rate}")
+        logger.info(f"  rf_step_log: {self.rf_step_log:.6f}")
+        logger.info(f"  transaction_cost_rate: {self.transaction_cost_rate}")
 
     def sample_task(self):
         """Sample a random task from the dataset"""

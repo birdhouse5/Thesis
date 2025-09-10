@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional
 import os
 import json
 import time
+import pandas as pd
 
 # --- import your config system ---
 from config import (
@@ -115,17 +116,63 @@ def ensure_dataset_exists(cfg: TrainingConfig) -> str:
     else:
         raise ValueError(f"Unknown asset class: {cfg.asset_class}")
 
+def get_crypto_date_splits(data_path: str, proportions=(0.7, 0.2, 0.1)):
+    """
+    Inspect crypto dataset and return intelligent date splits.
+    
+    Args:
+        data_path: Path to crypto dataset
+        proportions: (train, val, test) proportions
+        
+    Returns:
+        (train_end, val_end) as date strings
+    """
+    # Load crypto dataset to inspect date range
+    df = pd.read_parquet(data_path)
+    df['date'] = pd.to_datetime(df['date'])
+    
+    unique_dates = sorted(df['date'].unique())
+    total_days = len(unique_dates)
+    
+    # Calculate split points
+    train_days = int(proportions[0] * total_days)
+    val_days = int(proportions[1] * total_days)
+    
+    train_end_date = unique_dates[train_days - 1]
+    val_end_date = unique_dates[train_days + val_days - 1]
+    
+    train_end = train_end_date.strftime("%Y-%m-%d")
+    val_end = val_end_date.strftime("%Y-%m-%d")
+    
+    logger.info(f"Crypto dataset intelligent splitting:")
+    logger.info(f"  Total days: {total_days}")
+    logger.info(f"  Date range: {unique_dates[0].date()} to {unique_dates[-1].date()}")
+    logger.info(f"  Train: {proportions[0]:.0%} → up to {train_end}")
+    logger.info(f"  Val: {proportions[1]:.0%} → {train_end} to {val_end}")
+    logger.info(f"  Test: {proportions[2]:.0%} → after {val_end}")
+    
+    return train_end, val_end
+
 def prepare_environments(cfg: TrainingConfig):
     """Prepare train/val/test environments from dataset."""
     
-    # Create datasets with appropriate splitting strategy
+    # For crypto: Get intelligent date splits based on actual data
     if cfg.asset_class == "crypto":
+        train_end, val_end = get_crypto_date_splits(cfg.data_path)
+        # Update config with computed dates for consistency
+        cfg.train_end = train_end
+        cfg.val_end = val_end
+        logger.info(f"Updated crypto config: train_end={train_end}, val_end={val_end}")
+        
+        # Use date-based splitting consistently
         datasets = create_split_datasets(
             data_path=cfg.data_path,
-            proportional=True,
-            proportions=(0.7, 0.2, 0.1)
+            train_end=train_end,
+            val_end=val_end,
+            proportional=False  # Use date-based now that we have proper dates
         )
     else:
+        # SP500 uses original date-based approach
         datasets = create_split_datasets(
             data_path=cfg.data_path,
             train_end=cfg.train_end,
@@ -162,7 +209,7 @@ def prepare_environments(cfg: TrainingConfig):
             'num_windows': len(features_list)
         }
     
-    # Create environments
+    # Create environments with DSR parameters from config
     environments = {}
     for split_name, tensor_data in split_tensors.items():
         environments[split_name] = MetaEnv(
@@ -173,7 +220,10 @@ def prepare_environments(cfg: TrainingConfig):
             feature_columns=tensor_data['feature_columns'],
             seq_len=cfg.seq_len,
             min_horizon=cfg.min_horizon,
-            max_horizon=cfg.max_horizon
+            max_horizon=cfg.max_horizon,
+            eta=getattr(cfg, 'eta', 0.05),
+            rf_rate=getattr(cfg, 'rf_rate', 0.02),
+            transaction_cost_rate=getattr(cfg, 'transaction_cost_rate', 0.001)
         )
     
     return environments, split_tensors
@@ -243,6 +293,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         
         logger.info(f"Starting training: {cfg.exp_name}")
         logger.info(f"Asset class: {cfg.asset_class}, Encoder: {cfg.encoder}, Seed: {cfg.seed}")
+        logger.info(f"DSR params: eta={getattr(cfg, 'eta', 0.05)}, rf_rate={getattr(cfg, 'rf_rate', 0.02)}, tx_cost={getattr(cfg, 'transaction_cost_rate', 0.001)}")
         
         # Training loop
         while episodes_trained < cfg.max_episodes:
@@ -365,6 +416,31 @@ def run_experiment_batch(experiments, experiment_name: str = "portfolio_optimiza
     
     return summary
 
+
+def ensure_mlflow_setup():
+    """Ensure MLflow is properly configured."""
+    try:
+        from smlflow_setup import setup_mlflow
+        if setup_mlflow():
+            return "remote"
+        else:
+            # Fallback to local
+            import mlflow
+            mlflow.set_tracking_uri("file:./mlruns")
+            return "local"
+    except ImportError:
+        # Fallback to local
+        import mlflow
+        mlflow.set_tracking_uri("file:./mlruns")
+        return "local"
+
+def log_essential_artifacts(model_dict, config_dict, experiment_name):
+    """Log essential artifacts - placeholder for now."""
+    try:
+        from smlflow_setup import log_essential_artifacts as log_fn
+        log_fn(model_dict, config_dict, experiment_name)
+    except ImportError:
+        logger.warning("Could not import smlflow_setup - skipping artifact logging")
 
 def main():
     """Main experiment runner."""
