@@ -177,91 +177,84 @@ class SmokeTest:
         logger.info("All imports successful")
     
     def test_sp500_dataset_creation(self):
-        """Test SP500 dataset creation with full dataset"""
+        """Test SP500 dataset creation with minimal data"""
         logger.info("Testing SP500 dataset creation...")
         
         from environments.data_preparation import create_dataset
         
-        # Create full SP500 dataset
+        # Create small SP500 dataset
         sp500_path = Path(self.temp_dir) / "test_sp500.parquet"
         
-        # Use full dataset configuration - hardcoded values, no config references
+        # Use a very small date range for quick testing
         created_path = create_dataset(
             output_path=str(sp500_path),
-            tickers=None,  # Use all SP500_TICKERS from the module
-            start_date='1990-01-01',  # Full date range
-            end_date='2025-01-01',
+            tickers=['AAPL', 'MSFT', 'GOOGL'],  # Just 3 tickers
+            start_date=self.config["sp500_start"],
+            end_date=self.config["sp500_end"],
             force_recreate=True
         )
         
         # Verify dataset
         df = pd.read_parquet(created_path)
-        assert len(df) > 0, f"Dataset is empty - got {len(df)} rows"
+        assert len(df) > 0, "Dataset is empty"
         assert 'ticker' in df.columns, "Missing ticker column"
         assert 'returns' in df.columns, "Missing returns column"
-        
-        # Should have substantial data - realistic expectations
-        assert len(df) > 5000, f"Dataset too small: {len(df)} rows"
-        assert df['ticker'].nunique() >= 20, f"Too few tickers: {df['ticker'].nunique()}"
+        assert df['ticker'].nunique() == 3, "Wrong number of tickers"
         
         logger.info(f"SP500 dataset created: {df.shape} rows, {df['ticker'].nunique()} tickers")
-
+    
     def test_crypto_dataset_creation(self):
-        """Test crypto dataset creation with full dataset"""
+        """Test crypto dataset creation with minimal data"""
         logger.info("Testing crypto dataset creation...")
         
         from environments.data_preparation import create_crypto_dataset
         
-        # Create full crypto dataset
+        # Create small crypto dataset
         crypto_path = Path(self.temp_dir) / "test_crypto.parquet"
         
-        # Use full dataset configuration - hardcoded values, no config references
         created_path = create_crypto_dataset(
             output_path=str(crypto_path),
-            tickers=None,  # Use all CRYPTO_TICKERS from the module
-            days=92,  # Standard 92 days
+            tickers=['BTCUSDT', 'ETHUSDT', 'BNBUSDT'],  # Just 3 crypto tickers
+            days=self.config["crypto_days"],
             force_recreate=True
         )
         
         # Verify dataset
         df = pd.read_parquet(created_path)
-        assert len(df) > 0, f"Dataset is empty - got {len(df)} rows"
+        assert len(df) > 0, "Dataset is empty"
         assert 'ticker' in df.columns, "Missing ticker column"
         assert 'returns' in df.columns, "Missing returns column"
-        
-        # Should have substantial data - realistic expectations
-        assert len(df) > 50000, f"Dataset too small: {len(df)} rows"
-        assert df['ticker'].nunique() >= 20, f"Too few tickers: {df['ticker'].nunique()}"
+        assert df['ticker'].nunique() == 3, "Wrong number of tickers"
         
         logger.info(f"Crypto dataset created: {df.shape} rows, {df['ticker'].nunique()} tickers")
+    
+    def test_dataset_loading_and_splits(self):
+        """Test dataset loading and temporal splitting"""
+        logger.info("Testing dataset loading and splits...")
         
-        def test_dataset_loading_and_splits(self):
-            """Test dataset loading and temporal splitting"""
-            logger.info("Testing dataset loading and splits...")
-            
-            from environments.dataset import create_split_datasets
-            
-            # Test with SP500 dataset
-            sp500_path = Path(self.temp_dir) / "test_sp500.parquet"
-            
-            datasets = create_split_datasets(
-                data_path=str(sp500_path),
-                train_end='2020-01-15',
-                val_end='2020-01-25',
-                proportional=False
-            )
-            
-            # Verify splits
-            assert 'train' in datasets, "Missing train split"
-            assert 'val' in datasets, "Missing val split"
-            assert 'test' in datasets, "Missing test split"
-            
-            for split_name, dataset in datasets.items():
-                assert len(dataset) > 0, f"{split_name} split is empty"
-                assert dataset.num_assets > 0, f"{split_name} has no assets"
-                assert dataset.num_features > 0, f"{split_name} has no features"
-            
-            logger.info("Dataset splits created successfully")
+        from environments.dataset import create_split_datasets
+        
+        # Test with SP500 dataset
+        sp500_path = Path(self.temp_dir) / "test_sp500.parquet"
+        
+        datasets = create_split_datasets(
+            data_path=str(sp500_path),
+            train_end='2020-01-15',
+            val_end='2020-01-25',
+            proportional=False
+        )
+        
+        # Verify splits
+        assert 'train' in datasets, "Missing train split"
+        assert 'val' in datasets, "Missing val split"
+        assert 'test' in datasets, "Missing test split"
+        
+        for split_name, dataset in datasets.items():
+            assert len(dataset) > 0, f"{split_name} split is empty"
+            assert dataset.num_assets > 0, f"{split_name} has no assets"
+            assert dataset.num_features > 0, f"{split_name} has no features"
+        
+        logger.info("Dataset splits created successfully")
     
     def test_environment_creation(self):
         """Test MetaEnv creation and basic functionality"""
