@@ -29,7 +29,7 @@ from models.hmm_encoder import HMMEncoder  # New stub
 from algorithms.trainer import PPOTrainer
 
 # Import evaluation functions
-from evaluation_backtest import evaluate, run_backtest
+from evaluation_backtest import evaluate, run_sequential_backtest
 
 # Set up logging
 def setup_debug_logging():
@@ -350,10 +350,9 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                     
                     logger.info(f"Episode {episodes_trained}: val_reward={current_val_reward:.4f}, best={best_val_reward:.4f}")
         
-        # Final test evaluation and backtest
-        logger.info("Running final evaluation and backtest...")
-        test_results = evaluate(test_env, policy, encoder, cfg, cfg.test_episodes)
-        backtest_results = run_backtest(test_env, policy, encoder, cfg, save_details=False)
+        # Running backtest
+        logger.info("Running sequential backtest...")
+        backtest_results = run_sequential_backtest(environments, policy, encoder, cfg, split='test')
         
         # Log test and backtest results
         for key, value in test_results.items():
