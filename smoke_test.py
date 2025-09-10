@@ -177,54 +177,61 @@ class SmokeTest:
         logger.info("All imports successful")
     
     def test_sp500_dataset_creation(self):
-        """Test SP500 dataset creation with minimal data"""
+        """Test SP500 dataset creation with full dataset"""
         logger.info("Testing SP500 dataset creation...")
         
         from environments.data_preparation import create_dataset
         
-        # Create small SP500 dataset
+        # Create full SP500 dataset
         sp500_path = Path(self.temp_dir) / "test_sp500.parquet"
         
-        # Use a very small date range for quick testing
+        # Use full dataset configuration - hardcoded values, no config references
         created_path = create_dataset(
             output_path=str(sp500_path),
-            tickers=['AAPL', 'MSFT', 'GOOGL'],  # Just 3 tickers
-            start_date=self.config["sp500_start"],
-            end_date=self.config["sp500_end"],
+            tickers=None,  # Use all SP500_TICKERS from the module
+            start_date='1990-01-01',  # Full date range
+            end_date='2025-01-01',
             force_recreate=True
         )
         
         # Verify dataset
         df = pd.read_parquet(created_path)
-        assert len(df) > 0, "Dataset is empty"
+        assert len(df) > 0, f"Dataset is empty - got {len(df)} rows"
         assert 'ticker' in df.columns, "Missing ticker column"
         assert 'returns' in df.columns, "Missing returns column"
-        assert df['ticker'].nunique() == 3, "Wrong number of tickers"
+        
+        # Should have substantial data - realistic expectations
+        assert len(df) > 5000, f"Dataset too small: {len(df)} rows"
+        assert df['ticker'].nunique() >= 20, f"Too few tickers: {df['ticker'].nunique()}"
         
         logger.info(f"SP500 dataset created: {df.shape} rows, {df['ticker'].nunique()} tickers")
-    
+
     def test_crypto_dataset_creation(self):
-        """Test crypto dataset creation with minimal data"""
+        """Test crypto dataset creation with full dataset"""
         logger.info("Testing crypto dataset creation...")
         
         from environments.data_preparation import create_crypto_dataset
         
-        # Create small crypto dataset
+        # Create full crypto dataset
         crypto_path = Path(self.temp_dir) / "test_crypto.parquet"
         
+        # Use full dataset configuration - hardcoded values, no config references
         created_path = create_crypto_dataset(
             output_path=str(crypto_path),
-            tickers=['BTCUSDT', 'ETHUSDT', 'BNBUSDT'],  # Just 3 crypto tickers
-            days=self.config["crypto_days"],
+            tickers=None,  # Use all CRYPTO_TICKERS from the module
+            days=92,  # Standard 92 days
             force_recreate=True
         )
         
         # Verify dataset
         df = pd.read_parquet(created_path)
-        assert len(df) > 0, "Dataset is empty"
+        assert len(df) > 0, f"Dataset is empty - got {len(df)} rows"
         assert 'ticker' in df.columns, "Missing ticker column"
         assert 'returns' in df.columns, "Missing returns column"
-        assert df['ticker'].nunique() == 3, "Wrong number of tickers"
+        
+        # Should have substantial data - realistic expectations
+        assert len(df) > 50000, f"Dataset too small: {len(df)} rows"
+        assert df['ticker'].nunique() >= 20, f"Too few tickers: {df['ticker'].nunique()}"
         
         logger.info(f"Crypto dataset created: {df.shape} rows, {df['ticker'].nunique()} tickers")
     
