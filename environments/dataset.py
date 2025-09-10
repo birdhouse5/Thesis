@@ -1,142 +1,210 @@
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from typing import Dict, Tuple
+from typing import Optional, Tuple
 
 class Dataset:
-    """Simplified dataset with temporal splitting."""
-    
-    def __init__(self, data_path: str, split: str, train_end: str, val_end: str):
+    def __init__(self, data_path, split='train', train_end='2015-12-31', val_end='2020-12-31'):
         """
-        Initialize dataset with temporal split.
+        Initialize dataset with temporal split support.
         
         Args:
-            data_path: Path to parquet file
+            data_path: Path to the parquet file
             split: 'train', 'val', or 'test'
-            train_end: End date for training split (for SP500)
-            val_end: End date for validation split (for SP500)
+            train_end: End date for training split (inclusive)
+            val_end: End date for validation split (inclusive)
         """
         # Load full dataset
         full_data = pd.read_parquet(data_path)
         full_data['date'] = pd.to_datetime(full_data['date'])
         
-        # Determine splitting method based on data characteristics
-        date_range_days = (full_data['date'].max() - full_data['date'].min()).days
-        
-        if date_range_days > 10000:  # SP500 case (many years of daily data)
-            self.data = self._date_based_split(full_data, split, train_end, val_end)
-            self.split_info = f"{split} (date-based)"
-        else:  # Crypto case (shorter time period, high frequency)
-            self.data = self._proportional_split(full_data, split)
-            self.split_info = f"{split} (proportional)"
+        # Define split boundaries
+        train_end_date = pd.to_datetime(train_end)
+        val_end_date = pd.to_datetime(val_end)
+
+        # Convert split dates to match the data's timezone if data has timezone
+        if full_data['date'].dt.tz is not None:
+            if train_end_date.tz is None:
+                train_end_date = train_end_date.tz_localize(full_data['date'].dt.tz)
+            else:
+                train_end_date = train_end_date.tz_convert(full_data['date'].dt.tz)
+                
+            if val_end_date.tz is None:
+                val_end_date = val_end_date.tz_localize(full_data['date'].dt.tz)
+            else:
+                val_end_date = val_end_date.tz_convert(full_data['date'].dt.tz)
+
+
+        # Apply temporal split
+        if split == 'train':
+            self.data = full_data[full_data['date'] <= train_end_date].copy()
+            self.split_name = f"train (up to {train_end})"
+        elif split == 'val':
+            self.data = full_data[
+                (full_data['date'] > train_end_date) & 
+                (full_data['date'] <= val_end_date)
+            ].copy()
+            self.split_name = f"val ({train_end} to {val_end})"
+        elif split == 'test':
+            self.data = full_data[full_data['date'] > val_end_date].copy()
+            self.split_name = f"test (after {val_end})"
+        else:
+            raise ValueError(f"Invalid split: {split}. Must be 'train', 'val', or 'test'")
         
         # Verify we have data
         if len(self.data) == 0:
             raise ValueError(f"No data found for {split} split")
         
-        # Initialize properties
+        # Initialize dataset properties
         self.split = split
         self.tickers = sorted(self.data['ticker'].unique())
         self.num_assets = len(self.tickers)
-        self.dates = sorted(self.data['date'].unique())
-        self.num_days = len(self.dates)
+        self.timestamps = sorted(self.data['date'].unique())
+        self.num_intervals = len(self.timestamps)
+        self.num_days = self.num_intervals  # backward compat
+        self.dates = self.timestamps  # alias for backward compatibility
         
-        # Feature selection
-        self.feature_cols = [col for col in self.data.columns if col.endswith('_norm')]
+        # Select features for training
+        self.feature_cols = self._select_training_features()
         self.num_features = len(self.feature_cols)
-        
-        # Validation
+
+        # Verify rectangular structure
         expected_rows = self.num_days * self.num_assets
-        if len(self.data) != expected_rows:
-            raise ValueError(f"{split} split not rectangular: {len(self.data)} != {expected_rows}")
+        actual_rows = len(self.data)
+        if actual_rows != expected_rows:
+            print(f"Warning: {split} split not perfectly rectangular: {actual_rows} rows, expected {expected_rows}")
+            # Clean up any missing combinations
+            self._ensure_rectangular()
         
-        print(f"Dataset {self.split_info}:")
+        print(f"Dataset {self.split_name}:")
         print(f"  Dates: {self.data['date'].min().date()} to {self.data['date'].max().date()}")
         print(f"  Shape: {self.data.shape}")
-        print(f"  Days: {self.num_days}, Assets: {self.num_assets}, Features: {self.num_features}")
+        print(f"  Time Steps: {self.num_days}, Assets: {self.num_assets}, Features: {self.num_features}")
 
-    def _date_based_split(self, data: pd.DataFrame, split: str, train_end: str, val_end: str):
-        """Split based on explicit dates (for SP500)."""
-        train_end_date = pd.to_datetime(train_end)
-        val_end_date = pd.to_datetime(val_end)
+    def _select_training_features(self):
+        """Use only normalized features for consistent scaling"""
+        normalized_cols = [col for col in self.data.columns if col.endswith('_norm')]
+        return sorted(normalized_cols)
+    
+    def _ensure_rectangular(self):
+        """Ensure all date-ticker combinations exist"""
+        # Create complete index
+        complete_idx = pd.MultiIndex.from_product(
+            [self.dates, self.tickers],
+            names=['date', 'ticker']
+        )
         
-        if split == 'train':
-            return data[data['date'] <= train_end_date].copy()
-        elif split == 'val':
-            return data[(data['date'] > train_end_date) & (data['date'] <= val_end_date)].copy()
-        else:  # test
-            return data[data['date'] > val_end_date].copy()
+        # Reindex and fill missing values
+        self.data = self.data.set_index(['date', 'ticker']).reindex(complete_idx).reset_index()
+        
+        # Forward fill missing values within each ticker
+        numeric_cols = self.data.select_dtypes(include=[np.number]).columns
+        self.data[numeric_cols] = self.data.groupby('ticker')[numeric_cols].ffill().bfill()
+        
+        # Update counts
+        self.dates = sorted(self.data['date'].unique())
+        self.num_days = len(self.dates)
 
-    def _proportional_split(self, data: pd.DataFrame, split: str, 
-                          proportions: Tuple[float, float, float] = (0.7, 0.2, 0.1)):
-        """Split based on proportions (for crypto)."""
-        unique_dates = sorted(data['date'].unique())
-        total_days = len(unique_dates)
-        
-        train_days = int(proportions[0] * total_days)
-        val_days = int(proportions[1] * total_days)
-        
-        if split == 'train':
-            split_dates = unique_dates[:train_days]
-        elif split == 'val':
-            split_dates = unique_dates[train_days:train_days + val_days]
-        else:  # test
-            split_dates = unique_dates[train_days + val_days:]
-        
-        return data[data['date'].isin(split_dates)].copy()
-
-    def get_window(self, start_day_idx: int, end_day_idx: int) -> Dict[str, np.ndarray]:
-        """Return features and prices for date range."""
+    def get_window(self, start_day_idx, end_day_idx):
+        """Return normalized features and raw prices for date range"""
         window_dates = self.dates[start_day_idx:end_day_idx]
         window_data = self.data[self.data['date'].isin(window_dates)]
         window_data = window_data.sort_values(['date', 'ticker'])
         
-        # Reshape to (T, N, F) and (T, N)
+        # Normalized features for VAE/policy
         features = window_data[self.feature_cols].values
         features = features.reshape(len(window_dates), self.num_assets, self.num_features)
         
-        prices = window_data['close'].values
-        prices = prices.reshape(len(window_dates), self.num_assets)
+        # Raw prices for return calculations  
+        raw_prices = window_data['close'].values
+        raw_prices = raw_prices.reshape(len(window_dates), self.num_assets)
         
         return {
-            'features': features,
-            'raw_prices': prices
-        }
-
-    def get_split_info(self) -> Dict:
-        """Get split information."""
+            'features': features,      # (T, N, F)
+            'raw_prices': raw_prices   # (T, N)
+        }   
+    
+    def get_split_info(self):
+        """Get information about the current split"""
         return {
             'split': self.split,
-            'split_info': self.split_info,
+            'split_name': self.split_name,
             'num_days': self.num_days,
             'num_assets': self.num_assets,
             'num_features': self.num_features,
             'date_range': (self.data['date'].min().date(), self.data['date'].max().date()),
             'total_samples': len(self.data)
         }
-
+    
     def __len__(self):
         return self.num_days
 
 
-def create_split_datasets(data_path: str, train_end: str = '2015-12-31', 
-                         val_end: str = '2020-12-31') -> Dict[str, Dataset]:
-    """Create train/val/test datasets with automatic split detection."""
-    
+def create_split_datasets(data_path,
+                        train_end='2015-12-31',
+                        val_end='2020-12-31',
+                        proportional: bool = False,
+                        proportions: Tuple[float, float, float] = (0.7, 0.2, 0.1)):
+    """
+    Create train, validation, and test datasets.
+
+    Modes:
+    - Date-based (default): use explicit `train_end` and `val_end` dates.
+    - Proportional: split dataset by row proportions (useful for crypto).
+
+    Args:
+        data_path: Path to the full dataset parquet
+        train_end: End date for training (inclusive) [date-based mode]
+        val_end: End date for validation (inclusive) [date-based mode]
+        proportional: If True, use proportional splitting
+        proportions: (train, val, test) fractions that sum to 1
+
+    Returns:
+        Dictionary with train, val, test Dataset objects
+    """
     datasets = {}
-    
     try:
-        datasets['train'] = Dataset(data_path, 'train', train_end, val_end)
-        datasets['val'] = Dataset(data_path, 'val', train_end, val_end)
-        datasets['test'] = Dataset(data_path, 'test', train_end, val_end)
-        
-        print(f"\nSplit datasets created:")
-        for name, dataset in datasets.items():
+        if proportional:
+            full_data = pd.read_parquet(data_path)
+            full_data['date'] = pd.to_datetime(full_data['date'])
+            unique_dates = sorted(full_data['date'].unique())
+            num_days = len(unique_dates)
+
+            if abs(sum(proportions) - 1.0) > 1e-6:
+                raise ValueError(f"Proportions must sum to 1. Got {proportions}")
+
+            train_days = int(proportions[0] * num_days)
+            val_days = int(proportions[1] * num_days)
+
+            train_end_date = unique_dates[train_days - 1]
+            val_end_date = unique_dates[train_days + val_days - 1]
+
+            datasets['train'] = Dataset(data_path, 'train',
+                                        train_end=train_end_date.strftime("%Y-%m-%d"),
+                                        val_end=val_end_date.strftime("%Y-%m-%d"))
+            datasets['val'] = Dataset(data_path, 'val',
+                                    train_end=train_end_date.strftime("%Y-%m-%d"),
+                                    val_end=val_end_date.strftime("%Y-%m-%d"))
+            datasets['test'] = Dataset(data_path, 'test',
+                                    train_end=train_end_date.strftime("%Y-%m-%d"),
+                                    val_end=val_end_date.strftime("%Y-%m-%d"))
+
+            mode_info = f"Proportional splits (train={proportions[0]:.0%}, val={proportions[1]:.0%}, test={proportions[2]:.0%})"
+
+        else:
+            datasets['train'] = Dataset(data_path, 'train', train_end, val_end)
+            datasets['val'] = Dataset(data_path, 'val', train_end, val_end)
+            datasets['test'] = Dataset(data_path, 'test', train_end, val_end)
+
+            mode_info = f"Date-based splits (train_end={train_end}, val_end={val_end})"
+
+        print(f"\nSuccessfully created all splits using {mode_info}:")
+        for split_name, dataset in datasets.items():
             info = dataset.get_split_info()
-            print(f"  {name}: {info['num_days']} days, {info['date_range'][0]} to {info['date_range'][1]}")
-        
+            print(f"  {split_name}: {info['num_days']} days, {info['date_range'][0]} to {info['date_range'][1]}")
+
         return datasets
-        
+
     except Exception as e:
-        print(f"Error creating datasets: {e}")
+        print(f"Error creating splits: {e}")
         raise
