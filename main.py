@@ -298,16 +298,23 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
             if isinstance(value, (int, float)):
                 mlflow.log_metric(f"backtest_{key}", value)
         
-        # Save models
+        # Save models to MinIO via MLflow
+        model_dict = {
+            'policy': policy,
+            'encoder': encoder
+        }
+        
+        # Log essential artifacts (models + config) to MinIO
+        log_essential_artifacts(model_dict, cfg.__dict__, cfg.exp_name)
+        
+        # Also save locally for backup
         model_dir = Path("models") / cfg.exp_name
         model_dir.mkdir(parents=True, exist_ok=True)
         
         if encoder is not None:
             torch.save(encoder.state_dict(), model_dir / "encoder.pt")
-            mlflow.pytorch.log_model(encoder, "encoder_model")
         
         torch.save(policy.state_dict(), model_dir / "policy.pt")
-        mlflow.pytorch.log_model(policy, "policy_model")
         
         # Final results
         final_results = {
@@ -361,6 +368,11 @@ def run_experiment_batch(experiments, experiment_name: str = "portfolio_optimiza
 
 def main():
     """Main experiment runner."""
+    
+    # Setup MLflow before anything else
+    logger.info("Setting up MLflow configuration...")
+    backend = ensure_mlflow_setup()
+    logger.info(f"MLflow configured with {backend} backend")
     
     # Generate all experiment configurations
     experiments = generate_experiment_configs(num_seeds=10)
