@@ -206,7 +206,12 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
                 latent = torch.zeros(1, config.latent_dim, device=device)
             else:
                 # Use the environment's method which handles rolling context
-                latent = env._get_latent_for_step(current_obs_tensor, {})  # Empty trajectory_context since we use rolling
+                if len(rolling_context) > 0:
+                    ctx_obs = torch.stack([ctx['observations'] for ctx in rolling_context]).unsqueeze(0)
+                    ctx_acts = torch.stack([ctx['actions'] for ctx in rolling_context]).unsqueeze(0)  
+                    ctx_rews = torch.stack([ctx['rewards'] for ctx in rolling_context]).unsqueeze(0).unsqueeze(-1)
+                    mu, logvar, _ = encoder.encode(ctx_obs, ctx_acts, ctx_rews)
+                    latent = encoder.reparameterize(mu, logvar) # Empty trajectory_context since we use rolling
             
             # Get action from policy
             action, _ = policy.act(current_obs_tensor, latent, deterministic=True)
