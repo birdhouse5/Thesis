@@ -10,7 +10,7 @@ from hmmlearn.hmm import GaussianHMM
 from environments.dataset import Dataset
 from models.hmm_encoder import HMMEncoder
 from config import experiment_to_training_config, ExperimentConfig
-from smlflow_setup import setup_mlflow
+from mlflow_setup import setup_mlflow
 
 
 def pretrain_hmm(asset_class: str, seed: int = 0):
