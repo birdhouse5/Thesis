@@ -50,8 +50,8 @@ TEST_CONFIGS = {
         "test_episodes": 3,
         "val_interval": 2,
         "seq_len": 20,
-        "min_horizon": 5,
-        "max_horizon": 10,
+        "min_horizon": 2,
+        "max_horizon": 4,
         "batch_size": 32
     },
     "normal": {
@@ -276,7 +276,8 @@ class SmokeTest:
         train_dataset = datasets['train']
         
         # Create tensor data for environment
-        window = train_dataset.get_window(0, min(self.config["seq_len"], len(train_dataset)))
+        seq_len_safe = min(self.config["seq_len"], len(train_dataset) - 1)
+        window = train_dataset.get_window(0, seq_len_safe)
         
         mock_dataset = {
             'features': torch.tensor(window['features'], dtype=torch.float32),
@@ -287,7 +288,7 @@ class SmokeTest:
         env = MetaEnv(
             dataset=mock_dataset,
             feature_columns=train_dataset.feature_cols,
-            seq_len=self.config["seq_len"],
+            seq_len=seq_len_safe,
             min_horizon=self.config["min_horizon"],
             max_horizon=self.config["max_horizon"],
             eta=0.05,  # Fixed: use proper eta value, not max_horizon
