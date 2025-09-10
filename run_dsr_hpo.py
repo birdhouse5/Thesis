@@ -29,7 +29,7 @@ def main():
     
     # Import here to ensure logging is set up
     from dsr_hpo_study import run_asset_class_study, summarize_all_studies
-    from smlflow_setup import setup_mlflow
+    from mlflow_setup import setup_mlflow
     import mlflow
     
     # Set up MLflow
