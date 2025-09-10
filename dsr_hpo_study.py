@@ -26,7 +26,7 @@ from typing import Dict, Any
 # Import your modules
 from config import create_hpo_config
 from main import run_training, setup_debug_logging, cleanup_gpu_memory
-from smlflow_setup import setup_mlflow
+from mlflow_setup import setup_mlflow
 
 # Set up logging
 logger = logging.getLogger(__name__)
