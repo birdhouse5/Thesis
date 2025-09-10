@@ -52,10 +52,7 @@ TEST_CONFIGS = {
         "seq_len": 20,
         "min_horizon": 5,
         "max_horizon": 10,
-        "batch_size": 32,
-        "crypto_days": 5,  # Very small crypto sample
-        "sp500_start": "2020-01-01",  # Recent data only
-        "sp500_end": "2020-02-01"
+        "batch_size": 32
     },
     "normal": {
         "max_episodes": 20,
@@ -65,10 +62,7 @@ TEST_CONFIGS = {
         "seq_len": 60,
         "min_horizon": 20,
         "max_horizon": 30,
-        "batch_size": 128,
-        "crypto_days": 10,
-        "sp500_start": "2019-01-01",
-        "sp500_end": "2020-01-01"
+        "batch_size": 128
     }
 }
 
