@@ -71,7 +71,7 @@ class TrainingConfig:
     min_horizon: int
     max_horizon: int
     # DSR parameters
-    eta: float = 0.05
+    eta: float
     rf_rate: float = 0.02
     transaction_cost_rate: float = 0.001
 
@@ -86,8 +86,10 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
     # end dates (align with dataset availability)
     if exp.asset_class == "sp500":
         train_end, val_end = "2015-12-31", "2020-12-31"
+        eta = 0.01
     else:  # crypto
-        train_end, val_end = "2020-12-31", "2023-12-31"  # Note: will be overridden by intelligent splitting
+        train_end, val_end = "2020-12-31", "2023-12-31" # Note: will be overridden by intelligent splitting
+        eta = 0.1  
 
     # encoder handling
     if exp.encoder == "vae":
@@ -138,7 +140,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         min_horizon=exp.min_horizon,
         max_horizon=exp.max_horizon,
         # DSR parameters (defaults, will be overridden by HPO)
-        eta=0.05,
+        eta=eta,
         rf_rate=0.02,
         transaction_cost_rate=0.001
     )
