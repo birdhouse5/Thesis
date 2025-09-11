@@ -94,7 +94,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
     # encoder handling
     if exp.encoder == "vae":
         disable_vae = False
-        latent_dim = 128 #TODO latent_dim = 512
+        latent_dim = 512
     elif exp.encoder == "hmm":
         disable_vae = True
         latent_dim = 4   # number of HMM states
