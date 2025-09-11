@@ -141,7 +141,9 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
     from environments.env import MetaEnv, normalize_with_budget_constraint
     
     device = torch.device(config.device)
-    dataset = datasets[split]
+    # Get dataset info from environments dict structure
+    print(f"  Dataset period: test split")
+    print(f"  Total timesteps: {len(datasets[split].current_task['features']) if datasets[split].current_task else 'unknown'}")
     
     print(f"Running sequential backtest on {split} split:")
     print(f"  Dataset period: {dataset.get_split_info()['date_range']}")
