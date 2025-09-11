@@ -76,7 +76,7 @@ class VAE(nn.Module):
     
     def compute_loss(self, obs_seq, action_seq, reward_seq, beta=0.1, context_len=None):
         """
-        Compute VAE loss (reconstruction + KL divergence).
+        Compute VAE loss (reconstruction + KL divergence) with enhanced component tracking.
         If context_len provided, encode only τ:context_len but decode full sequence (VariBAD approach).
         
         Args:
@@ -87,7 +87,7 @@ class VAE(nn.Module):
             context_len: If provided, encode only first context_len timesteps
             
         Returns:
-            total_loss, loss_components_dict
+            total_loss, enhanced_loss_components_dict
         """
         batch_size, seq_len = obs_seq.shape[:2]
         
@@ -119,6 +119,10 @@ class VAE(nn.Module):
         recon_obs_loss = 0
         recon_reward_loss = 0
         
+        # === NEW: Track per-timestep losses for analysis ===
+        obs_losses_per_step = []
+        reward_losses_per_step = []
+        
         # Predict next observations and rewards for each timestep
         decode_seq_len = decode_obs.shape[1]
         for t in range(decode_seq_len - 1):
@@ -129,11 +133,15 @@ class VAE(nn.Module):
             
             # Predict next observation
             pred_next_obs = self.decode_obs(latent, current_obs, current_action)
-            recon_obs_loss += F.mse_loss(pred_next_obs, next_obs)
+            step_obs_loss = F.mse_loss(pred_next_obs, next_obs)
+            recon_obs_loss += step_obs_loss
+            obs_losses_per_step.append(step_obs_loss.item())
             
             # Predict reward  
             pred_reward = self.decode_reward(latent, current_obs, current_action, next_obs)
-            recon_reward_loss += F.mse_loss(pred_reward, reward)
+            step_reward_loss = F.mse_loss(pred_reward, reward)
+            recon_reward_loss += step_reward_loss
+            reward_losses_per_step.append(step_reward_loss.item())
         
         # Average over sequence length (avoid division by zero)
         if decode_seq_len > 1:
@@ -153,12 +161,77 @@ class VAE(nn.Module):
         # Logging
         if self.training:
             self.training_step += 1
-            
+        
+        # === NEW: Enhanced loss components with detailed breakdowns ===
         loss_components = {
+            # === Original components ===
             'recon_obs': recon_obs_loss.item(),
             'recon_reward': recon_reward_loss.item(),
             'kl': kl_loss.item(),
-            'total': total_loss.item()
+            'total': total_loss.item(),
+            
+            # === NEW: Detailed breakdowns ===
+            'recon_obs_per_step': float(recon_obs_loss.item() / max(decode_seq_len - 1, 1)),
+            'recon_reward_per_step': float(recon_reward_loss.item() / max(decode_seq_len - 1, 1)),
+            'kl_per_batch': float(kl_loss.item() / batch_size),
+            'sequence_length': int(decode_seq_len),
+            'context_length': int(context_len) if context_len else int(decode_seq_len),
+            'encode_length': int(encode_obs.shape[1]),
+            
+            # === NEW: Latent statistics ===
+            'latent_mu_mean': float(mu.mean().item()),
+            'latent_mu_std': float(mu.std().item()),
+            'latent_mu_max': float(mu.max().item()),
+            'latent_mu_min': float(mu.min().item()),
+            'latent_logvar_mean': float(logvar.mean().item()),
+            'latent_logvar_std': float(logvar.std().item()),
+            'latent_logvar_max': float(logvar.max().item()),
+            'latent_logvar_min': float(logvar.min().item()),
+            'latent_dim': int(self.latent_dim),
+            
+            # === NEW: Latent distribution properties ===
+            'latent_kl_per_dim': float(kl_loss.item() / self.latent_dim),
+            'latent_effective_dim': float(torch.sum(torch.exp(logvar) > 0.1).item()),  # Dims with meaningful variance
+            'latent_posterior_norm': float(torch.norm(mu, dim=1).mean().item()),
+            'latent_prior_kl_divergence': float(kl_loss.item()),
+            
+            # === NEW: Reconstruction quality metrics ===
+            'obs_reconstruction_mse': float(recon_obs_loss.item()),
+            'reward_reconstruction_mse': float(recon_reward_loss.item()),
+            'obs_reconstruction_rmse': float(torch.sqrt(recon_obs_loss).item()),
+            'reward_reconstruction_rmse': float(torch.sqrt(recon_reward_loss).item()),
+            'reconstruction_ratio': float(recon_obs_loss.item() / max(recon_reward_loss.item(), 1e-8)),
+            
+            # === NEW: Per-timestep statistics ===
+            'obs_loss_per_step_mean': float(np.mean(obs_losses_per_step)) if obs_losses_per_step else 0.0,
+            'obs_loss_per_step_std': float(np.std(obs_losses_per_step)) if len(obs_losses_per_step) > 1 else 0.0,
+            'obs_loss_per_step_max': float(np.max(obs_losses_per_step)) if obs_losses_per_step else 0.0,
+            'reward_loss_per_step_mean': float(np.mean(reward_losses_per_step)) if reward_losses_per_step else 0.0,
+            'reward_loss_per_step_std': float(np.std(reward_losses_per_step)) if len(reward_losses_per_step) > 1 else 0.0,
+            'reward_loss_per_step_max': float(np.max(reward_losses_per_step)) if reward_losses_per_step else 0.0,
+            
+            # === NEW: Training progress and hyperparameters ===
+            'training_step': int(self.training_step),
+            'beta_weight': float(beta),
+            'beta_weighted_kl': float(beta * kl_loss.item()),
+            'unweighted_total_loss': float((recon_obs_loss + recon_reward_loss + kl_loss).item()),
+            'kl_weight_ratio': float(beta * kl_loss.item() / max(total_loss.item(), 1e-8)),
+            
+            # === NEW: Batch and architecture info ===
+            'batch_size': int(batch_size),
+            'num_assets': int(obs_seq.shape[2]) if len(obs_seq.shape) > 2 else 0,
+            'num_features': int(obs_seq.shape[3]) if len(obs_seq.shape) > 3 else 0,
+            'hidden_dim': int(self.hidden_dim),
+            
+            # === NEW: Loss component ratios ===
+            'obs_loss_fraction': float(recon_obs_loss.item() / max(total_loss.item(), 1e-8)),
+            'reward_loss_fraction': float(recon_reward_loss.item() / max(total_loss.item(), 1e-8)),
+            'kl_loss_fraction': float(beta * kl_loss.item() / max(total_loss.item(), 1e-8)),
+            
+            # === NEW: Gradient information (if available) ===
+            'has_gradients': bool(mu.grad is not None),
+            'mu_grad_norm': float(torch.norm(mu.grad).item()) if mu.grad is not None else 0.0,
+            'logvar_grad_norm': float(torch.norm(logvar.grad).item()) if logvar.grad is not None else 0.0,
         }
         
         return total_loss, loss_components

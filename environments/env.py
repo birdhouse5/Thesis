@@ -191,18 +191,42 @@ class MetaEnv:
         pure_return = self.log_returns[-1] if self.log_returns else 0.0
 
         info = {
+            # === Portfolio Composition ===
             'capital': self.current_capital,
             'investment_pct': investment_pct,
-            'cash_pct': cash_pct,
+            'cash_pct': w_cash,
             'cumulative_return': cumulative_return,
-            'pure_return': pure_return,   # kept for backward-compat
-            'sharpe_reward': reward,      # name kept for downstream compatibility; now DSR
+            'weights': weights.copy(),                    # Portfolio allocation
+            'weights_long': weights[weights > 0].sum(),   # Long exposure
+            'weights_short': abs(weights[weights < 0]).sum(), # Short exposure
+            'portfolio_concentration': np.sum(weights**2), # HHI concentration
+            'num_active_positions': np.sum(np.abs(weights) > 0.01), # Active positions
+            
+            # === Returns & Performance ===
             'log_return': self.log_returns[-1] if self.log_returns else 0.0,
             'excess_log_return': self.excess_log_returns[-1] if self.excess_log_returns else 0.0,
-            'weights': weights.copy(),
-            'w_cash': w_cash,
+            'pure_return': pure_return,
+            'sharpe_reward': reward,  # DSR reward
+            
+            # === DSR State Tracking ===
+            'dsr_alpha': self.alpha,                     # EWMA first moment
+            'dsr_beta': self.beta,                       # EWMA second moment
+            'dsr_variance': max(self.beta - self.alpha**2, self.eps), # Current variance estimate
+            
+            # === Transaction Costs ===
+            'transaction_cost': cost if 'cost' in locals() else 0.0,
+            'turnover': turnover if 'turnover' in locals() else 0.0,
+            
+            # === Environment Context ===
+            'task_id': getattr(self, 'task_id', -1),
+            'terminal_step': self.terminal_step,
             'step': self.current_step,
-            'episode_id': self.episode_count
+            'episode_id': self.episode_count,
+            
+            # === Market Context ===
+            'current_prices': current_prices.copy() if 'current_prices' in locals() else np.array([]),
+            'price_changes': (next_prices - current_prices) if 'next_prices' in locals() else np.array([]),
+            'market_return': np.mean(asset_log_returns) if 'asset_log_returns' in locals() else 0.0,
         }
 
         

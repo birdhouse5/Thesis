@@ -96,12 +96,31 @@ class PPOTrainer:
     # ---------------------------------------------------------------------
     # Public training entry point
     # ---------------------------------------------------------------------
+
     def train_episode(self) -> Dict[str, float]:
         """
         Train for one (or many) episode(s) with performance diagnostics.
-        Uses fixed-length optimization when min_horizon == max_horizon.
+        Enhanced training with comprehensive step-level tracking
         """
         diag = PerformanceDiagnostic()
+        
+        # === NEW: Initialize episode tracking ===
+        episode_data = {
+            'step_rewards': [],
+            'step_capital': [],
+            'step_weights': [],
+            'step_returns': [],
+            'step_excess_returns': [],
+            'step_dsr_alpha': [],
+            'step_dsr_beta': [],
+            'step_transaction_costs': [],
+            'step_concentrations': [],
+            'step_active_positions': [],
+            'step_cash_positions': [],
+            'step_turnovers': [],
+            'final_capital': 0.0,
+            'num_episodes': 0
+        }
         
         if self.num_envs > 1:
             if self.use_fixed_length:
@@ -117,17 +136,63 @@ class PPOTrainer:
                     self.experience_buffer.add_trajectory(tr)
             
             episode_reward_mean = float(np.mean([float(sum(tr["rewards"])) for tr in trajectories]))
+            
+            # === NEW: Extract step-level data from batched trajectories ===
+            episode_data['num_episodes'] = len(trajectories)
+            for tr in trajectories:
+                # Extract step-level arrays from trajectory metadata if available
+                if hasattr(tr, 'step_info_list'):
+                    for step_info in tr.step_info_list:
+                        episode_data['step_rewards'].append(step_info.get('sharpe_reward', 0.0))
+                        episode_data['step_capital'].append(step_info.get('capital', 0.0))
+                        episode_data['step_weights'].append(step_info.get('weights', []))
+                        episode_data['step_returns'].append(step_info.get('log_return', 0.0))
+                        episode_data['step_excess_returns'].append(step_info.get('excess_log_return', 0.0))
+                        episode_data['step_dsr_alpha'].append(step_info.get('dsr_alpha', 0.0))
+                        episode_data['step_dsr_beta'].append(step_info.get('dsr_beta', 0.0))
+                        episode_data['step_transaction_costs'].append(step_info.get('transaction_cost', 0.0))
+                        episode_data['step_concentrations'].append(step_info.get('portfolio_concentration', 0.0))
+                        episode_data['step_active_positions'].append(step_info.get('num_active_positions', 0))
+                        episode_data['step_cash_positions'].append(step_info.get('cash_pct', 0.0))
+                        episode_data['step_turnovers'].append(step_info.get('turnover', 0.0))
+                
+                # Get final capital from last step
+                if len(episode_data['step_capital']) > 0:
+                    episode_data['final_capital'] = episode_data['step_capital'][-1]
+            
         else:
             with diag.time_section("collect_single_trajectory"):
                 tr = self.collect_trajectory()
                 self.vae_buffer.append(tr)
                 self.experience_buffer.add_trajectory(tr)
             episode_reward_mean = float(sum(tr["rewards"]))
+            
+            # === NEW: Extract step-level data from single trajectory ===
+            episode_data['num_episodes'] = 1
+            if hasattr(tr, 'step_info_list'):
+                for step_info in tr.step_info_list:
+                    episode_data['step_rewards'].append(step_info.get('sharpe_reward', 0.0))
+                    episode_data['step_capital'].append(step_info.get('capital', 0.0))
+                    episode_data['step_weights'].append(step_info.get('weights', []))
+                    episode_data['step_returns'].append(step_info.get('log_return', 0.0))
+                    episode_data['step_excess_returns'].append(step_info.get('excess_log_return', 0.0))
+                    episode_data['step_dsr_alpha'].append(step_info.get('dsr_alpha', 0.0))
+                    episode_data['step_dsr_beta'].append(step_info.get('dsr_beta', 0.0))
+                    episode_data['step_transaction_costs'].append(step_info.get('transaction_cost', 0.0))
+                    episode_data['step_concentrations'].append(step_info.get('portfolio_concentration', 0.0))
+                    episode_data['step_active_positions'].append(step_info.get('num_active_positions', 0))
+                    episode_data['step_cash_positions'].append(step_info.get('cash_pct', 0.0))
+                    episode_data['step_turnovers'].append(step_info.get('turnover', 0.0))
+            
+            # Get final capital
+            if len(episode_data['step_capital']) > 0:
+                episode_data['final_capital'] = episode_data['step_capital'][-1]
 
         # Updates
         policy_loss = 0.0
         vae_loss = 0.0
-
+        vae_loss_components = {}  # NEW: Store VAE loss components
+        
         if self.experience_buffer.is_ready():
             with diag.time_section("update_policy"):
                 policy_loss = float(self.update_policy())
@@ -139,7 +204,7 @@ class PPOTrainer:
             and len(self.vae_buffer) >= self.config.vae_batch_size
         ):
             with diag.time_section("update_vae"):
-                vae_loss = float(self.update_vae())
+                vae_loss, vae_loss_components = self.update_vae()
 
         self.episode_rewards.append(float(episode_reward_mean))
         if policy_loss > 0:
@@ -153,11 +218,52 @@ class PPOTrainer:
 
         self.episode_count += 1
 
+        # === NEW: Enhanced results with comprehensive tracking ===
         results = {
+            # Existing core metrics
             "episode_reward": float(episode_reward_mean),
             "policy_loss": float(policy_loss),
             "vae_loss": float(vae_loss),
             "total_steps": int(self.total_steps),
+            
+            # === NEW: Episode-level portfolio aggregates ===
+            "episode_final_capital": float(episode_data['final_capital']),
+            "episode_total_return": float(sum(episode_data['step_returns'])) if episode_data['step_returns'] else 0.0,
+            "episode_total_excess_return": float(sum(episode_data['step_excess_returns'])) if episode_data['step_excess_returns'] else 0.0,
+            "episode_avg_concentration": float(np.mean(episode_data['step_concentrations'])) if episode_data['step_concentrations'] else 0.0,
+            "episode_max_concentration": float(np.max(episode_data['step_concentrations'])) if episode_data['step_concentrations'] else 0.0,
+            "episode_avg_active_positions": float(np.mean(episode_data['step_active_positions'])) if episode_data['step_active_positions'] else 0.0,
+            "episode_avg_cash_position": float(np.mean(episode_data['step_cash_positions'])) if episode_data['step_cash_positions'] else 0.0,
+            "episode_total_transaction_costs": float(sum(episode_data['step_transaction_costs'])) if episode_data['step_transaction_costs'] else 0.0,
+            "episode_avg_turnover": float(np.mean(episode_data['step_turnovers'])) if episode_data['step_turnovers'] else 0.0,
+            "episode_volatility": float(np.std(episode_data['step_returns'])) if len(episode_data['step_returns']) > 1 else 0.0,
+            "episode_excess_volatility": float(np.std(episode_data['step_excess_returns'])) if len(episode_data['step_excess_returns']) > 1 else 0.0,
+            
+            # === NEW: DSR tracking ===
+            "episode_final_dsr_alpha": float(episode_data['step_dsr_alpha'][-1]) if episode_data['step_dsr_alpha'] else 0.0,
+            "episode_final_dsr_beta": float(episode_data['step_dsr_beta'][-1]) if episode_data['step_dsr_beta'] else 0.0,
+            "episode_dsr_variance": float(max(episode_data['step_dsr_beta'][-1] - episode_data['step_dsr_alpha'][-1]**2, 1e-8)) if episode_data['step_dsr_beta'] and episode_data['step_dsr_alpha'] else 0.0,
+            
+            # === NEW: Portfolio composition tracking ===
+            "episode_long_exposure": float(np.mean([np.sum(np.maximum(w, 0)) for w in episode_data['step_weights']])) if episode_data['step_weights'] else 0.0,
+            "episode_short_exposure": float(np.mean([np.sum(np.abs(np.minimum(w, 0))) for w in episode_data['step_weights']])) if episode_data['step_weights'] else 0.0,
+            
+            # === NEW: VAE loss components (when available) ===
+            **{f"vae_{k}": float(v) for k, v in vae_loss_components.items()},
+            
+            # === NEW: Rolling statistics ===
+            "rolling_avg_episode_reward": float(np.mean(list(self.episode_rewards))) if self.episode_rewards else 0.0,
+            "rolling_std_episode_reward": float(np.std(list(self.episode_rewards))) if len(self.episode_rewards) > 1 else 0.0,
+            "rolling_avg_policy_loss": float(np.mean(list(self.policy_losses))) if self.policy_losses else 0.0,
+            "rolling_avg_vae_loss": float(np.mean(list(self.vae_losses))) if self.vae_losses else 0.0,
+            
+            # === NEW: Step-by-step data for artifact logging ===
+            "step_data": episode_data,
+            
+            # === NEW: Training diagnostics ===
+            "num_episodes_in_batch": int(episode_data['num_episodes']),
+            "episode_count": int(self.episode_count),
+            "steps_per_episode": float(len(episode_data['step_returns'])) if episode_data['step_returns'] else 0.0,
         }
 
         return results
@@ -167,6 +273,9 @@ class PPOTrainer:
     # ---------------------------------------------------------------------
     def collect_trajectory(self):
         traj = {"observations": [], "actions": [], "rewards": [], "values": [], "log_probs": [], "latents": [], "dones": []}
+        
+        # === NEW: Add step info collection ===
+        step_info_list = []
 
         obs = self.env.reset()
         obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
@@ -183,7 +292,10 @@ class PPOTrainer:
                 values, log_prob, _ = self.policy.evaluate_actions(obs_tensor, latent, action)
 
             action_cpu = action.squeeze(0).detach().cpu().numpy()
-            next_obs, reward, done, _ = self.env.step(action_cpu)
+            next_obs, reward, done, info = self.env.step(action_cpu)
+
+            # === NEW: Capture comprehensive step info ===
+            step_info_list.append(info.copy())
 
             # Store (CPU)
             traj["observations"].append(obs_tensor.squeeze(0).detach().cpu())
@@ -212,6 +324,10 @@ class PPOTrainer:
         traj["log_probs"] = torch.stack(traj["log_probs"]).to(self.device)
         traj["latents"] = torch.stack(traj["latents"]).to(self.device)
         traj["rewards"] = torch.tensor(traj["rewards"], dtype=torch.float32, device=self.device)
+        
+        # === NEW: Attach step info to trajectory ===
+        traj.step_info_list = step_info_list
+        
         return traj
 
     # ---------------------------------------------------------------------
@@ -233,8 +349,7 @@ class PPOTrainer:
     # ---------------------------------------------------------------------
     def collect_trajectories_batched_fixed_length(self, B: int) -> List[Dict]:
         """
-        OPTIMIZED: Fixed-length trajectories where all environments finish simultaneously.
-        This eliminates synchronization bottlenecks and enables true VAE batching.
+        OPTIMIZED: Fixed-length trajectories with comprehensive step info collection.
         """
         B = max(1, int(B))
         envs = [self._clone_env() for _ in range(B)]
@@ -246,7 +361,7 @@ class PPOTrainer:
         # For fixed lengths, we know exactly when all environments will finish
         fixed_length = self.config.min_horizon  # Since min_horizon == max_horizon
         
-        # Pre-allocate for exact trajectory length - this is key for performance
+        # Pre-allocate for exact trajectory length
         ctx_obs_tensor = torch.zeros(B, fixed_length, *obs.shape[1:], device=self.device)
         ctx_act_tensor = torch.zeros(B, fixed_length, self.config.num_assets, device=self.device)
         ctx_rew_tensor = torch.zeros(B, fixed_length, 1, device=self.device)
@@ -258,19 +373,20 @@ class PPOTrainer:
         all_rewards = torch.zeros(B, fixed_length, device=self.device)
         all_values = torch.zeros(B, fixed_length, device=self.device)
         all_log_probs = torch.zeros(B, fixed_length, device=self.device)
+        
+        # === NEW: Pre-allocate step info storage ===
+        all_step_info = [[{} for _ in range(fixed_length)] for _ in range(B)]
 
         for step in range(fixed_length):
-            # VAE processing - efficient because we know the step count
+            # VAE processing
             if getattr(self.config, "disable_vae", False) or step == 0:
                 latent = torch.zeros(B, self.config.latent_dim, device=self.device)
             else:
-                # Use data from previous steps (all environments have same history length)
                 ctx_len = step
                 batch_obs = ctx_obs_tensor[:, :ctx_len]
                 batch_acts = ctx_act_tensor[:, :ctx_len]  
                 batch_rews = ctx_rew_tensor[:, :ctx_len]
                 
-                # TRUE BATCHED VAE CALL - no masking needed since all have same length!
                 try:
                     with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
                         mu, logvar, _ = self.vae.encode(batch_obs, batch_acts, batch_rews)
@@ -279,7 +395,7 @@ class PPOTrainer:
                     print(f"VAE batch encode failed: {e}")
                     latent = torch.zeros(B, self.config.latent_dim, device=self.device)
 
-            # Policy step (already batched)
+            # Policy step
             with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
                 action, _ = self.policy.act(obs, latent, deterministic=False)
                 values, log_probs, _ = self.policy.evaluate_actions(obs, latent, action)
@@ -291,15 +407,18 @@ class PPOTrainer:
             all_values[:, step] = values.squeeze(-1)
             all_log_probs[:, step] = log_probs.squeeze(-1)
             
-            # Environment steps
+            # Environment steps with step info collection
             action_np = action.detach().cpu().numpy()
             next_obs_list = []
             rewards = []
             
             for i, e in enumerate(envs):
-                o2, r, d, _ = e.step(action_np[i])
+                o2, r, d, info = e.step(action_np[i])
                 next_obs_list.append(o2)
                 rewards.append(r)
+                
+                # === NEW: Store comprehensive step info ===
+                all_step_info[i][step] = info.copy()
                 
                 # Store context for next VAE call
                 if not getattr(self.config, "disable_vae", False):
@@ -313,10 +432,10 @@ class PPOTrainer:
             if step < fixed_length - 1:
                 obs = torch.as_tensor(np.stack(next_obs_list), dtype=torch.float32, device=self.device)
 
-        # Convert to list of trajectories (expected format for PPO)
+        # Convert to list of trajectories with step info
         trajs = []
         for i in range(B):
-            trajs.append({
+            traj = {
                 "observations": all_observations[i],      # [fixed_length, ...]
                 "actions": all_actions[i],               # [fixed_length, num_assets]
                 "latents": all_latents[i],               # [fixed_length, latent_dim]
@@ -324,7 +443,12 @@ class PPOTrainer:
                 "values": all_values[i],                 # [fixed_length]
                 "log_probs": all_log_probs[i],           # [fixed_length]
                 "dones": [False] * (fixed_length - 1) + [True]  # Only last step is done
-            })
+            }
+            
+            # === NEW: Attach step info list ===
+            traj.step_info_list = all_step_info[i]
+            
+            trajs.append(traj)
 
         self.total_steps += B * fixed_length
         return trajs
@@ -333,7 +457,7 @@ class PPOTrainer:
     # FALLBACK: Variable-length trajectory collection (original approach)
     # ---------------------------------------------------------------------
     def collect_trajectories_batched(self, B: int) -> List[Dict]:
-        """Fallback method for variable-length trajectories"""
+        """Fallback method for variable-length trajectories with step info collection"""
         B = max(1, int(B))
         envs = [self._clone_env() for _ in range(B)]
         for e in envs:
@@ -355,6 +479,9 @@ class PPOTrainer:
             {"observations": [], "actions": [], "rewards": [], "values": [], "log_probs": [], "latents": [], "dones": []}
             for _ in range(B)
         ]
+        
+        # === NEW: Initialize step info lists ===
+        step_info_lists = [[] for _ in range(B)]
 
         while not np.all(done) and step < self.config.max_horizon:
             if getattr(self.config, "disable_vae", False):
@@ -376,7 +503,7 @@ class PPOTrainer:
                     next_obs_list.append(obs_np[i])
                     continue
 
-                o2, r, d, _ = e.step(action_np[i])
+                o2, r, d, info = e.step(action_np[i])
                 
                 trajs[i]["observations"].append(obs[i].detach().cpu())
                 trajs[i]["actions"].append(action[i].detach().cpu())
@@ -385,6 +512,9 @@ class PPOTrainer:
                 trajs[i]["values"].append(values[i].detach().cpu())
                 trajs[i]["log_probs"].append(log_probs[i].detach().cpu())
                 trajs[i]["dones"].append(bool(d))
+                
+                # === NEW: Collect step info ===
+                step_info_lists[i].append(info.copy())
 
                 if not getattr(self.config, "disable_vae", False) and ctx_lengths[i] < max_context_len:
                     idx = ctx_lengths[i]
@@ -401,15 +531,19 @@ class PPOTrainer:
             step += 1
             self.total_steps += int(np.sum(~done))
 
-        # Stack to device per env
+        # Stack to device per env and attach step info
         for i in range(B):
             if len(trajs[i]["rewards"]) == 0:
                 trajs[i] = self._create_empty_trajectory()
+                trajs[i].step_info_list = []
                 continue
 
             for k in ["observations", "actions", "values", "log_probs", "latents"]:
                 trajs[i][k] = torch.stack(trajs[i][k]).to(self.device)
             trajs[i]["rewards"] = torch.tensor(trajs[i]["rewards"], dtype=torch.float32, device=self.device)
+            
+            # === NEW: Attach step info list ===
+            trajs[i].step_info_list = step_info_lists[i]
 
         return trajs
 
@@ -451,7 +585,7 @@ class PPOTrainer:
     def _create_empty_trajectory(self):
         """Helper to create empty trajectory for failed environments"""
         empty_obs_shape = (1,) + tuple(self.env.reset().shape)
-        return {
+        traj = {
             "observations": torch.zeros(empty_obs_shape, dtype=torch.float32, device=self.device),
             "actions": torch.zeros((1, self.config.num_assets), dtype=torch.float32, device=self.device),
             "values": torch.zeros(1, dtype=torch.float32, device=self.device),
@@ -460,6 +594,11 @@ class PPOTrainer:
             "rewards": torch.zeros(1, dtype=torch.float32, device=self.device),
             "dones": [True]
         }
+        
+        # === NEW: Add empty step info list ===
+        traj.step_info_list = [{}]  # Single empty step info
+        
+        return traj
 
     # ---------------------------------------------------------------------
     # PPO / VAE updates (unchanged)
@@ -531,15 +670,18 @@ class PPOTrainer:
         return total_loss / max(self.config.ppo_epochs, 1)
 
     def update_vae(self):
-        if self.vae_optimizer is None:  # No VAE
-            return 0.0
+        """Enhanced VAE update that returns loss components"""
+        if self.vae_optimizer is None:
+            return 0.0, {}
         if len(self.vae_buffer) < self.config.vae_batch_size:
-            return 0.0
+            return 0.0, {}
 
         indices = np.random.choice(len(self.vae_buffer), self.config.vae_batch_size, replace=False)
         batch_traj = [self.vae_buffer[i] for i in indices]
         total_loss_value = 0.0
         loss_count = 0
+        accumulated_components = {}
+        
         self.vae_optimizer.zero_grad()
 
         for tr in batch_traj:
@@ -555,18 +697,28 @@ class PPOTrainer:
             rew_ctx = tr["rewards"][:t].detach().clone().unsqueeze(0).unsqueeze(-1)
 
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
-                vae_loss, _ = self.vae.compute_loss(obs_ctx, act_ctx, rew_ctx, beta=self.config.vae_beta, context_len=t)
+                vae_loss, loss_components = self.vae.compute_loss(obs_ctx, act_ctx, rew_ctx, beta=self.config.vae_beta, context_len=t)
 
             vae_loss.backward(retain_graph=False)
             total_loss_value += float(vae_loss.item())
             loss_count += 1
+            
+            # Accumulate loss components
+            for k, v in loss_components.items():
+                if k not in accumulated_components:
+                    accumulated_components[k] = []
+                accumulated_components[k].append(v)
 
         if loss_count == 0:
-            return 0.0
+            return 0.0, {}
 
         torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
         self.vae_optimizer.step()
-        return total_loss_value / loss_count
+        
+        # Average the accumulated components
+        avg_components = {k: float(np.mean(v)) for k, v in accumulated_components.items()}
+        
+        return total_loss_value / loss_count, avg_components
 
     # ---------------------------------------------------------------------
     # Checkpoint helpers (unchanged)
