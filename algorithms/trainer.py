@@ -75,7 +75,7 @@ class PPOTrainer:
 
         # Optimizers
         self.policy_optimizer = Adam(policy.parameters(), lr=config.policy_lr)
-        self.vae_optimizer = Adam(vae.parameters(), lr=config.vae_lr)
+        self.vae_optimizer = Adam(vae.parameters(), lr=config.vae_lr) if vae is not None else None
 
         # Experience buffers
         self.experience_buffer = ExperienceBuffer(config.batch_size)  # for PPO
@@ -531,6 +531,8 @@ class PPOTrainer:
         return total_loss / max(self.config.ppo_epochs, 1)
 
     def update_vae(self):
+        if self.vae_optimizer is None:  # No VAE
+            return 0.0
         if len(self.vae_buffer) < self.config.vae_batch_size:
             return 0.0
 

@@ -416,7 +416,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         # Cleanup
         cleanup_gpu_memory()
 
-def run_experiment_batch(experiments, experiment_name: str = "portfolio_optimization_study"):
+def run_experiment_batch(experiments, experiment_name: str = "test_001"):
     """Run batch of experiments using ExperimentManager (simplified without resource management)."""
     
     # Create experiment manager without resource limits (since the current ExperimentManager doesn't support it)
