@@ -156,14 +156,10 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
     
     # Create environment in sequential mode
     # We need to create a mock dataset for MetaEnv - it expects tensor format
-    full_window = dataset.get_window(0, len(dataset))
-    mock_dataset = {
-        'features': torch.tensor(full_window['features'], dtype=torch.float32),
-        'raw_prices': torch.tensor(full_window['raw_prices'], dtype=torch.float32)
-    }
+    full_window = dataset.get_window_tensor(0, len(dataset), device='cpu')
     
     env = MetaEnv(
-        dataset=mock_dataset, # TODO
+        dataset=full_window,
         feature_columns=dataset.feature_cols,
         seq_len=config.seq_len,
         min_horizon=config.min_horizon,
