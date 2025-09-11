@@ -49,7 +49,7 @@ TEST_CONFIGS = {
         "val_episodes": 2,
         "test_episodes": 3,
         "val_interval": 2,
-        "seq_len": 20,
+        "seq_len": 5,
         "min_horizon": 2,
         "max_horizon": 4,
         "batch_size": 32
@@ -492,7 +492,8 @@ class SmokeTest:
         cfg.num_assets = train_dataset.num_assets
         
         # Create environment
-        window = train_dataset.get_window(0, min(cfg.seq_len, len(train_dataset)))
+        seq_len_safe = min(self.config["seq_len"], len(train_dataset) - 1)
+        window = train_dataset.get_window(0, seq_len_safe)
         mock_dataset = {
             'features': torch.tensor(window['features'], dtype=torch.float32),
             'raw_prices': torch.tensor(window['raw_prices'], dtype=torch.float32)
@@ -501,7 +502,7 @@ class SmokeTest:
         env = MetaEnv(
             dataset=mock_dataset,
             feature_columns=train_dataset.feature_cols,
-            seq_len=cfg.seq_len,
+            seq_len=seq_len_safe,
             min_horizon=cfg.min_horizon,
             max_horizon=cfg.max_horizon,
             eta=getattr(cfg, 'eta', 0.05),
