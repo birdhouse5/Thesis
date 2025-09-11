@@ -227,7 +227,7 @@ def prepare_environments(cfg: TrainingConfig):
             seq_len=cfg.seq_len,
             min_horizon=cfg.min_horizon,
             max_horizon=cfg.max_horizon,
-            eta=cfg.max_horizon,
+            eta=cfg.eta,
             rf_rate=cfg.rf_rate,
             transaction_cost_rate=cfg.transaction_cost_rate,
             steps_per_year=steps_per_year
