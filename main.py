@@ -453,7 +453,7 @@ def main():
     logger.info(f"MLflow configured with {backend} backend")
     
     # Generate all experiment configurations
-    experiments = generate_experiment_configs(num_seeds=10)
+    experiments = generate_experiment_configs(num_seeds=1) #TODO experiments = generate_experiment_configs(num_seeds=10)
     
     logger.info(f"Generated {len(experiments)} experiment configurations")
     logger.info("Experiment matrix:")

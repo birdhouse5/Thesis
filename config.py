@@ -12,7 +12,7 @@ class ExperimentConfig:
 
 
 # --- 2. Generator for all 60 configs ---
-def generate_experiment_configs(num_seeds: int = 10) -> List[ExperimentConfig]:
+def generate_experiment_configs(num_seeds: int = 1) -> List[ExperimentConfig]: #TODO def generate_experiment_configs(num_seeds: int = 10) -> List[ExperimentConfig]:
     assets = ["sp500", "crypto"]
     encoders = ["vae", "none", "hmm"]
     configs = []
@@ -94,7 +94,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
     # encoder handling
     if exp.encoder == "vae":
         disable_vae = False
-        latent_dim = 512
+        latent_dim = 128 #TODO latent_dim = 512
     elif exp.encoder == "hmm":
         disable_vae = True
         latent_dim = 4   # number of HMM states
@@ -121,7 +121,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         vae_batch_size=1024,
         ppo_epochs=8,
         entropy_coef=0.0013141391952945,
-        max_episodes=6000,
+        max_episodes=1000, #TODO max_episodes=6000,
         early_stopping_patience=10,
         early_stopping_min_delta=0.02,
         val_interval=200,
@@ -131,7 +131,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         num_assets=30,
         device="cuda",
         val_episodes=50,
-        test_episodes=100,
+        test_episodes=100, # why is this here?
         ppo_clip_ratio=0.2,
         value_loss_coef=0.5,
         max_grad_norm=0.5,
@@ -144,44 +144,3 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         rf_rate=0.02,
         transaction_cost_rate=0.001
     )
-
-
-def create_hpo_config(asset_class: str, encoder: str = "vae", seed: int = 42, 
-                     eta: float = 0.05, rf_rate: float = 0.02, 
-                     transaction_cost_rate: float = 0.001) -> TrainingConfig:
-    """
-    Create a shortened training config for HPO trials.
-    
-    Args:
-        asset_class: "sp500" or "crypto"
-        encoder: encoder type
-        seed: random seed
-        eta: EWMA decay parameter for DSR
-        rf_rate: risk-free rate
-        transaction_cost_rate: transaction cost rate
-    """
-    # Create base experiment config
-    exp_config = ExperimentConfig(
-        seed=seed,
-        asset_class=asset_class,
-        encoder=encoder
-    )
-    
-    # Convert to training config
-    cfg = experiment_to_training_config(exp_config)
-    
-    # Override for HPO (shorter training)
-    cfg.max_episodes = 1000
-    cfg.val_episodes = 20
-    cfg.test_episodes = 30
-    cfg.val_interval = 100
-    cfg.min_episodes_before_stopping = 300
-    cfg.early_stopping_patience = 5
-    cfg.exp_name = f"hpo_{asset_class}_{encoder}_eta{eta:.3f}_rf{rf_rate:.3f}_tx{transaction_cost_rate:.4f}"
-    
-    # Set DSR parameters
-    cfg.eta = eta
-    cfg.rf_rate = rf_rate
-    cfg.transaction_cost_rate = transaction_cost_rate
-    
-    return cfg
