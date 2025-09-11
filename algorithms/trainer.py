@@ -65,6 +65,8 @@ class PPOTrainer:
         self.total_steps = 0
         self.device = torch.device(config.device)
 
+        self.sequential_mode = False
+
         # Vectorization knob
         self.num_envs = max(1, int(getattr(config, "num_envs", 1)))
 
@@ -78,7 +80,6 @@ class PPOTrainer:
         # Experience buffers
         self.experience_buffer = ExperienceBuffer(config.batch_size)  # for PPO
         self.vae_buffer = deque(maxlen=1000)  # recent trajectories for VAE
-
 
         # Rolling stats (store Python floats to avoid CUDA logging issues)
         self.policy_losses = deque(maxlen=100)
