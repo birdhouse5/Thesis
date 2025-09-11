@@ -161,7 +161,7 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
     }
     
     env = MetaEnv(
-        dataset=mock_dataset,
+        dataset=mock_dataset, # TODO
         feature_columns=dataset.feature_cols,
         seq_len=config.seq_len,
         min_horizon=config.min_horizon,
