@@ -433,7 +433,7 @@ def run_experiment_batch(experiments, experiment_name: str = "portfolio_optimiza
 
 def ensure_mlflow_setup():
     """Ensure MLflow is properly configured."""
-    from mlflow_integration import setup_mlflow
+    from mlflow_logger import setup_mlflow
     return setup_mlflow()
 
 def log_essential_artifacts(model_dict, config_dict, experiment_name):
