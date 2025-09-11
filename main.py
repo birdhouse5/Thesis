@@ -416,7 +416,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         # Cleanup
         cleanup_gpu_memory()
 
-def run_experiment_batch(experiments, experiment_name: str = "test_study"):
+def run_experiment_batch(experiments, experiment_name: str = "portfolio_optimization_study"):
     """Run batch of experiments using ExperimentManager (simplified without resource management)."""
     
     # Create experiment manager without resource limits (since the current ExperimentManager doesn't support it)
@@ -475,7 +475,7 @@ def main():
         logger.debug(f"- Checkpoint directory: experiment_checkpoints/")
     
     # Run all experiments
-    summary = run_experiment_batch(experiments, experiment_name="portfolio_optimization_comprehensive_study")
+    summary = run_experiment_batch(experiments, experiment_name="test_study")
     
     if debug_mode:
         logger.debug("Final summary keys:")
