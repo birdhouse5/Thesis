@@ -12,7 +12,7 @@ import logging
 from environments.data import PortfolioDataset, DatasetSplit
 from models.hmm_encoder import HMMEncoder
 from config import experiment_to_training_config, ExperimentConfig
-from mlflow_integration import setup_mlflow
+from mlflow_logger import setup_mlflow
 
 logger = logging.getLogger(__name__)
 
