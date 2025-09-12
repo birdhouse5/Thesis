@@ -296,12 +296,16 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                 train_env.set_task(task)
                 
                 # Train episodes on this task
-                for _ in tqdm(range(cfg.episodes_per_task), desc="training on sampled task"):
+                for _ in range(cfg.episodes_per_task):
                     if episodes_trained >= cfg.max_episodes:
                         break
                         
                     # Training step
                     result = trainer.train_episode()
+                    print("Result keys:", result.keys())
+                    print("Episode final capital:", result["episode_final_capital"])
+                    print("Episode total return:", result["episode_total_return"])
+                    print("Step count:", len(result["step_data"]["step_returns"]))
                     episodes_trained += 1
                     pbar.update(1)
                     
