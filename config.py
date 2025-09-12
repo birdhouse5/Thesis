@@ -13,6 +13,7 @@ class ExperimentConfig:
 
 # --- 2. Generator for all 60 configs ---
 def generate_experiment_configs(num_seeds: int = 10) -> List[ExperimentConfig]:
+    assets = ["sp500", "crypto"]
     encoders = ["vae", "none", "hmm"]
     configs = []
 
