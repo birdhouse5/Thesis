@@ -537,19 +537,16 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         # Cleanup
         cleanup_gpu_memory()
 
-def run_experiment_batch(experiments, experiment_name: str = "test_001"):
+def run_experiment_batch(experiments, experiment_name: str = "test_001", force_recreate: bool = False):
     """Run batch of experiments using ExperimentManager (simplified without resource management)."""
     
     # Create experiment manager without resource limits (since the current ExperimentManager doesn't support it)
     manager = ExperimentManager(
         experiments, 
-        max_retries=0
-    )
-    
-    # Run all experiments
-    summary = manager.run_all_experiments(experiment_name)
-    
-    return summary
+        max_retries=0,
+        force_recreate=force_recreate
+    )    
+    return manager.run_all_experiments(experiment_name)
 
 
 def ensure_mlflow_setup():
@@ -609,7 +606,12 @@ def main():
         logger.debug(f"- Checkpoint directory: experiment_checkpoints/")
     
     # Run all experiments
-    summary = run_experiment_batch(experiments, experiment_name="test_study_001")
+    summary = run_experiment_batch(
+        experiments, 
+        experiment_name=args.exp_name or "test_study",
+        force_recreate=args.force_recreate
+    )
+
     
     if debug_mode:
         logger.debug("Final summary keys:")
