@@ -141,8 +141,8 @@ class PPOTrainer:
             episode_data['num_episodes'] = len(trajectories)
             for tr in trajectories:
                 # Extract step-level arrays from trajectory metadata if available
-                if hasattr(tr, 'step_info_list'):
-                    for step_info in tr.step_info_list:
+                if "step_info_list" in tr:
+                    for step_info in tr["step_info_list"]:
                         episode_data['step_rewards'].append(step_info.get('sharpe_reward', 0.0))
                         episode_data['step_capital'].append(step_info.get('capital', 0.0))
                         episode_data['step_weights'].append(step_info.get('weights', []))
@@ -169,8 +169,8 @@ class PPOTrainer:
             
             # === NEW: Extract step-level data from single trajectory ===
             episode_data['num_episodes'] = 1
-            if hasattr(tr, 'step_info_list'):
-                for step_info in tr.step_info_list:
+            if "step_info_list" in tr:
+                for step_info in tr["step_info_list"]:
                     episode_data['step_rewards'].append(step_info.get('sharpe_reward', 0.0))
                     episode_data['step_capital'].append(step_info.get('capital', 0.0))
                     episode_data['step_weights'].append(step_info.get('weights', []))
