@@ -125,7 +125,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         vae_batch_size=1024,
         ppo_epochs=8,
         entropy_coef=0.0013141391952945,
-        max_episodes=1000, #TODO max_episodes=6000,
+        max_episodes=6000,
         early_stopping_patience=10,
         early_stopping_min_delta=0.02,
         val_interval=200,
