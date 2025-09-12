@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from typing import List, Dict
+from typing import List, Dict, Optional
+
 
 # --- 1. High-level experiment spec (only varying factors) ---
 @dataclass
