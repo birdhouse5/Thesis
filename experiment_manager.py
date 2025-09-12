@@ -19,12 +19,14 @@ class ExperimentManager:
     def __init__(self, 
                  experiments: List[ExperimentConfig],
                  checkpoint_dir: str = "experiment_checkpoints",
-                 max_retries: int = 0):
+                 max_retries: int = 0,
+                 force_recreate: bool = False):
         
         self.experiments = experiments
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(exist_ok=True)
         self.max_retries = max_retries
+        self.force_recreate = force_recreate
         
         # State tracking
         self.results = {}
@@ -32,6 +34,10 @@ class ExperimentManager:
         self.start_time = datetime.now()
         self.checkpoint_file = self.checkpoint_dir / "experiment_state.pkl"
         
+        if self.force_recreate and self.checkpoint_file.exists():
+            logger.info("⚡ Force recreate enabled: removing old checkpoint")
+            self.checkpoint_file.unlink()
+
         # Load existing state if available
         self.load_checkpoint()
     
