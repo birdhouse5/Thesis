@@ -278,6 +278,7 @@ class PPOTrainer:
         step_info_list = []
 
         obs = self.env.reset()
+        print("Reset done:", self.env.done, "terminal_step:", self.env.terminal_step)
         obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
 
         context = {"observations": [], "actions": [], "rewards": []}
