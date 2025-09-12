@@ -8,8 +8,8 @@ from hmmlearn.hmm import GaussianHMM
 from copy import deepcopy
 import logging
 
-from environments.dataset import Dataset
-from environments.data_preparation import get_crypto_date_splits
+
+from environments.from data import PortfolioDataset, DatasetSplit
 from models.hmm_encoder import HMMEncoder
 from config import experiment_to_training_config, ExperimentConfig
 from mlflow_integration import setup_mlflow
@@ -43,14 +43,21 @@ def pretrain_hmm(asset_class: str, seed: int = 0):
         try:
             # --- Handle data splits consistently with main pipeline ---
             if cfg.asset_class == "crypto":
-                # Use intelligent splitting for crypto
-                train_end, val_end = get_crypto_date_splits(cfg.data_path)
-                cfg.train_end = train_end
-                cfg.val_end = val_end
-                logger.info(f"Crypto splits: train_end={train_end}, val_end={val_end}")
-            
+                # Use proportional splitting for crypto
+                cfg.proportional = True
+                cfg.proportions = (0.7, 0.2, 0.1)  # or your chosen fractions
+                logger.info(f"Using proportional splits for crypto: {cfg.proportions}")
+                        
             # Load training dataset only (HMM pretraining uses train split)
-            dataset = Dataset(cfg.data_path, split="train", train_end=cfg.train_end, val_end=cfg.val_end)
+            dataset = PortfolioDataset(
+                asset_class=cfg.asset_class,
+                data_path=cfg.data_path,
+                split="train",
+                train_end=cfg.train_end,
+                val_end=cfg.val_end,
+                proportional=cfg.proportional,
+                proportions=cfg.proportions
+            )
             
             # Get features in same format as main pipeline
             features = dataset.data[dataset.feature_cols].values.reshape(
