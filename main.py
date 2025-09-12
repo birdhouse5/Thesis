@@ -202,7 +202,7 @@ def prepare_environments(cfg: TrainingConfig):
     
     return environments, split_tensors
 
-from pretrain_hmm import pretrain_hmm
+from algorithms.pretrain_hmm import pretrain_hmm
 
 def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
     """Create encoder and policy models based on configuration."""
