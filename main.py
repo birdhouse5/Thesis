@@ -12,7 +12,7 @@ import json
 import time
 import pandas as pd
 import argparse
-import tqdm
+from tqdm import tqdm
 
 # --- import your config system ---
 from config import (
