@@ -9,7 +9,7 @@ from copy import deepcopy
 import logging
 
 
-from environments.from data import PortfolioDataset, DatasetSplit
+from environments.data import PortfolioDataset, DatasetSplit
 from models.hmm_encoder import HMMEncoder
 from config import experiment_to_training_config, ExperimentConfig
 from mlflow_integration import setup_mlflow
