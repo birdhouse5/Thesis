@@ -32,6 +32,15 @@ from algorithms.trainer import PPOTrainer
 # Import evaluation functions
 from evaluation_backtest import evaluate, run_sequential_backtest
 
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, np.generic):
+            return obj.item()
+        return super().default(obj)
+
+
 # Set up logging
 def setup_debug_logging():
     """Configure logging based on DEBUG environment variable."""
@@ -371,7 +380,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                         
                         # Save and log artifact
                         with open(step_data_file, 'w') as f:
-                            json.dump(serializable_step_data, f, indent=2)
+                            json.dump(serializable_step_data, f, indent=2, cls=NpEncoder)
                         mlflow.log_artifact(step_data_file, "step_data")
                         os.unlink(step_data_file)  # Cleanup temp file
                         

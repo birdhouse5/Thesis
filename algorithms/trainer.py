@@ -627,6 +627,8 @@ class PPOTrainer:
         return advantages, returns
 
     def update_policy(self):
+        print(f"[POLICY] Starting PPO gradient update at episode {self.episode_count}")
+
         all_traj = self.experience_buffer.get_all()
         if not all_traj:
             return 0.0
@@ -668,11 +670,15 @@ class PPOTrainer:
             torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
             self.policy_optimizer.step()
             total_loss += float(loss.item())
+        print(f"[POLICY] Finished backprop (loss={loss.item():.4f})")  
 
         return total_loss / max(self.config.ppo_epochs, 1)
 
     def update_vae(self):
         """Enhanced VAE update that returns loss components"""
+
+        print(f"[VAE] Starting VAE gradient update at episode {self.episode_count}")
+        
         if self.vae_optimizer is None:
             return 0.0, {}
         if len(self.vae_buffer) < self.config.vae_batch_size:
@@ -719,7 +725,8 @@ class PPOTrainer:
         
         # Average the accumulated components
         avg_components = {k: float(np.mean(v)) for k, v in accumulated_components.items()}
-        
+        print(f"[VAE] Finished backprop (loss={total_loss.item():.4f})")
+
         return total_loss_value / loss_count, avg_components
 
     # ---------------------------------------------------------------------
