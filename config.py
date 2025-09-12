@@ -9,6 +9,8 @@ class ExperimentConfig:
     encoder: str           # "vae" | "none" | "hmm"
     min_horizon: int = 150
     max_horizon: int = 200
+    exp_name: Optional[str] = None
+    force_recreate: bool = False
 
 
 # --- 2. Generator for all 60 configs ---
@@ -74,6 +76,7 @@ class TrainingConfig:
     eta: float
     rf_rate: float = 0.02
     transaction_cost_rate: float = 0.001
+    force_recreate: bool = False
 
 
 def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:

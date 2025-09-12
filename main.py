@@ -11,6 +11,7 @@ import os
 import json
 import time
 import pandas as pd
+import argparse
 
 # --- import your config system ---
 from config import (
@@ -111,7 +112,7 @@ def ensure_dataset_exists(cfg: TrainingConfig) -> str:
     PortfolioDataset(
         asset_class=cfg.asset_class,
         data_path=str(data_path),
-        force_recreate=True  # ensures new file is created
+        force_recreate=cfg.force_recreate   # instead of hardcoded True
     )
 
     return str(data_path)
@@ -569,6 +570,11 @@ def ensure_mlflow_setup():
 def main():
     """Main experiment runner."""
     
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--exp_name", type=str, default=None, help="Override experiment name")
+    parser.add_argument("--force_recreate", action="store_true", help="Force dataset and MLflow overwrite")
+    args = parser.parse_args()
+
     # Setup MLflow before anything else
     logger.info("Setting up MLflow configuration...")
     backend = ensure_mlflow_setup()
@@ -576,7 +582,13 @@ def main():
     
     # Generate all experiment configurations
     experiments = generate_experiment_configs(num_seeds=1) #TODO experiments = generate_experiment_configs(num_seeds=10)
-    
+    if args.exp_name:
+        for exp in experiments:
+            exp.exp_name = args.exp_name
+    if args.force_recreate:
+        for exp in experiments:
+            exp.force_recreate = True
+
     logger.info(f"Generated {len(experiments)} experiment configurations")
     logger.info("Experiment matrix:")
     logger.info("- Asset classes: SP500, Crypto")
