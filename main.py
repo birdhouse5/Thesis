@@ -12,6 +12,7 @@ import json
 import time
 import pandas as pd
 import argparse
+import tqdm
 
 # --- import your config system ---
 from config import (
@@ -285,11 +286,12 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         # Training loop with enhanced comprehensive tracking
         while episodes_trained < cfg.max_episodes:
             # Sample new task
+            print("sammpling task")
             task = train_env.sample_task()
             train_env.set_task(task)
             
             # Train episodes on this task
-            for _ in range(cfg.episodes_per_task):
+            for _ in tqdm(range(cfg.episodes_per_task), desc="training on sampled task"):
                 if episodes_trained >= cfg.max_episodes:
                     break
                     
