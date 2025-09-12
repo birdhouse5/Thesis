@@ -202,11 +202,12 @@ def prepare_environments(cfg: TrainingConfig):
     
     return environments, split_tensors
 
+from pretrain_hmm import pretrain_hmm
+
 def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
     """Create encoder and policy models based on configuration."""
     device = torch.device(cfg.device)
     
-    # Create encoder based on type
     encoder = None
     if cfg.encoder == "vae":
         encoder = VAE(
@@ -215,6 +216,7 @@ def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
             latent_dim=cfg.latent_dim,
             hidden_dim=cfg.hidden_dim
         ).to(device)
+    
     elif cfg.encoder == "hmm":
         import mlflow.pytorch
         model_name = f"{cfg.asset_class}_hmm_encoder"
@@ -222,10 +224,16 @@ def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
             encoder = mlflow.pytorch.load_model(f"models:/{model_name}/latest").to(device)
             logger.info(f"✅ Loaded pretrained HMM encoder from MinIO: {model_name}")
         except Exception as e:
-            logger.error(f"Required pretrained HMM encoder not found: {e}")
-            raise RuntimeError(f"HMM encoder '{model_name}' must be pretrained first. Run pretrain_hmm.py")
-
-    # encoder == "none" -> encoder remains None
+            logger.warning(f"HMM encoder not found in registry: {e}")
+            logger.info(f"⚡ Triggering on-the-fly pretraining for {model_name}...")
+            
+            success = pretrain_hmm(asset_class=cfg.asset_class, seed=cfg.seed)
+            if not success:
+                raise RuntimeError(f"Failed to pretrain HMM encoder for {cfg.asset_class}")
+            
+            # Try loading again after pretraining
+            encoder = mlflow.pytorch.load_model(f"models:/{model_name}/latest").to(device)
+            logger.info(f"✅ Successfully pretrained and loaded HMM encoder: {model_name}")
     
     # Create policy
     policy = PortfolioPolicy(
@@ -236,6 +244,7 @@ def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
     ).to(device)
     
     return encoder, policy
+
 
 def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
     """Run complete training pipeline with comprehensive logging."""

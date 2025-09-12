@@ -326,7 +326,7 @@ class PPOTrainer:
         traj["rewards"] = torch.tensor(traj["rewards"], dtype=torch.float32, device=self.device)
         
         # === NEW: Attach step info to trajectory ===
-        traj.step_info_list = step_info_list
+        traj["step_info_list"] = step_info_list
         
         return traj
 
@@ -446,7 +446,7 @@ class PPOTrainer:
             }
             
             # === NEW: Attach step info list ===
-            traj.step_info_list = all_step_info[i]
+            traj["step_info_list"] = all_step_info[i]
             
             trajs.append(traj)
 
@@ -596,7 +596,8 @@ class PPOTrainer:
         }
         
         # === NEW: Add empty step info list ===
-        traj.step_info_list = [{}]  # Single empty step info
+        traj["step_info_list"] = [{}]
+        # Single empty step info
         
         return traj
 
