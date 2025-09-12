@@ -153,9 +153,8 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
     policy.eval()
     if encoder is not None:
         encoder.eval()
-    
-    # Create environment in sequential mode
-    # We need to create a mock dataset for MetaEnv - it expects tensor format
+
+    dataset = datasets[split]
     full_window = dataset.get_window_tensor(0, len(dataset), device='cpu')
     
     env = MetaEnv(
@@ -193,44 +192,51 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
     env.prev_weights = np.zeros(dataset.num_assets, dtype=np.float32)
     
     with torch.no_grad():
-        for t in range(len(dataset) - 1):  # -1 because we need t+1 for returns
-            
-            # Get current observation
-            current_obs = mock_dataset['features'][t].numpy()  # [N, F]
-            current_obs_tensor = torch.tensor(current_obs, dtype=torch.float32, device=device).unsqueeze(0)
-            
-            # Get latent encoding from rolling context (handles initialization automatically)
+        for t in range(len(dataset) - 1):
+            # --- Get current observation ---
+            current_obs = full_window['features'][t].numpy()  # [N, F]
+            current_obs_tensor = torch.tensor(
+                current_obs, dtype=torch.float32, device=device
+            ).unsqueeze(0)
+
+            # --- Build rolling context for VAE ---
             if encoder is None or getattr(config, 'disable_vae', False):
                 latent = torch.zeros(1, config.latent_dim, device=device)
             else:
-                # Use the environment's method which handles rolling context
-                if len(env.rolling_context) > 0:
-                    ctx_obs = torch.stack([ctx['observations'] for ctx in rolling_context]).unsqueeze(0)
-                    ctx_acts = torch.stack([ctx['actions'] for ctx in rolling_context]).unsqueeze(0)  
-                    ctx_rews = torch.stack([ctx['rewards'] for ctx in rolling_context]).unsqueeze(0).unsqueeze(-1)
-                    mu, logvar, _ = encoder.encode(ctx_obs, ctx_acts, ctx_rews)
-                    latent = encoder.reparameterize(mu, logvar) # Empty trajectory_context since we use rolling
-            
-            # Get action from policy
+                # Slice the last seq_len steps (or fewer if t < seq_len)
+                start = max(0, t - config.seq_len + 1)
+                end = t + 1
+                ctx_obs = full_window['features'][start:end]           # [L, N, F]
+                ctx_acts = torch.zeros((end - start, dataset.num_assets), device=device)  # placeholder
+                ctx_rews = torch.zeros((end - start, 1), device=device)                  # placeholder
+
+                ctx_obs = ctx_obs.unsqueeze(0).to(device)   # [1, L, N, F]
+                ctx_acts = ctx_acts.unsqueeze(0)            # [1, L, N]
+                ctx_rews = ctx_rews.unsqueeze(0)            # [1, L, 1]
+
+                mu, logvar, _ = encoder.encode(ctx_obs, ctx_acts, ctx_rews)
+                latent = encoder.reparameterize(mu, logvar)
+
+            # --- Policy step ---
             action, _ = policy.act(current_obs_tensor, latent, deterministic=True)
             action_cpu = action.squeeze(0).detach().cpu().numpy()
-            
-            # Simulate environment step to get reward and update context
-            # We manually compute the reward using the same logic as MetaEnv
+
+            # --- Environment reward step ---
             env.current_step = t
             reward, weights, w_cash = env.compute_reward_with_capital(action_cpu)
-            
-            # Store results
+
+            # --- Tracking ---
             daily_returns.append(env.excess_log_returns[-1] if env.excess_log_returns else 0.0)
             daily_weights.append(weights.copy())
             daily_capital.append(env.current_capital)
             portfolio_values.append(env.current_capital / initial_capital)
-            
-            # Progress update
+
             if t % 100 == 0:
-                context_size = env.get_rolling_context_size()
                 current_return = (env.current_capital - initial_capital) / initial_capital
-                print(f"  Step {t:4d}/{len(dataset)-1}: Return = {current_return:.3%}, Capital = ${env.current_capital:,.0f}, Context = {context_size}")
+                print(f"  Step {t:4d}/{len(dataset)-1}: "
+                    f"Return = {current_return:.3%}, "
+                    f"Capital = ${env.current_capital:,.0f}")
+
     
     # Calculate comprehensive metrics
     returns_array = np.array(daily_returns)

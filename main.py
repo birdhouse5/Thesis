@@ -108,49 +108,14 @@ def ensure_dataset_exists(cfg: TrainingConfig) -> str:
     
     logger.info(f"Creating {cfg.asset_class} dataset...")
     
-    if cfg.asset_class == "sp500":
-        return create_dataset(str(data_path))
-    elif cfg.asset_class == "crypto":
-        return create_crypto_dataset(str(data_path))
-    else:
-        raise ValueError(f"Unknown asset class: {cfg.asset_class}")
+    PortfolioDataset(
+        asset_class=cfg.asset_class,
+        data_path=str(data_path),
+        force_recreate=True  # ensures new file is created
+    )
 
-def get_crypto_date_splits(data_path: str, proportions=(0.7, 0.2, 0.1)):
-    """
-    Inspect crypto dataset and return intelligent date splits.
-    
-    Args:
-        data_path: Path to crypto dataset
-        proportions: (train, val, test) proportions
-        
-    Returns:
-        (train_end, val_end) as date strings
-    """
-    # Load crypto dataset to inspect date range
-    df = pd.read_parquet(data_path)
-    df['date'] = pd.to_datetime(df['date'])
-    
-    unique_dates = sorted(df['date'].unique())
-    total_days = len(unique_dates)
-    
-    # Calculate split points
-    train_days = int(proportions[0] * total_days)
-    val_days = int(proportions[1] * total_days)
-    
-    train_end_date = unique_dates[train_days - 1]
-    val_end_date = unique_dates[train_days + val_days - 1]
-    
-    train_end = train_end_date.strftime("%Y-%m-%d")
-    val_end = val_end_date.strftime("%Y-%m-%d")
-    
-    logger.info(f"Crypto dataset intelligent splitting:")
-    logger.info(f"  Total days: {total_days}")
-    logger.info(f"  Date range: {unique_dates[0].date()} to {unique_dates[-1].date()}")
-    logger.info(f"  Train: {proportions[0]:.0%} → up to {train_end}")
-    logger.info(f"  Val: {proportions[1]:.0%} → {train_end} to {val_end}")
-    logger.info(f"  Test: {proportions[2]:.0%} → after {val_end}")
-    
-    return train_end, val_end
+    return str(data_path)
+
 
 def prepare_environments(cfg: TrainingConfig):
     """Prepare train/val/test environments from dataset."""
@@ -498,7 +463,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
 
         # Running backtest
         logger.info("Running sequential backtest...")
-        backtest_results = run_sequential_backtest(environments, policy, encoder, cfg, split='test')
+        backtest_results = backtest_results = run_sequential_backtest(datasets, policy, encoder, cfg, split='test')
         
         # Log test and backtest results
         for key, value in test_results.items():
@@ -582,13 +547,15 @@ def ensure_mlflow_setup():
     from mlflow_logger import setup_mlflow
     return setup_mlflow()
 
-def log_essential_artifacts(model_dict, config_dict, experiment_name):
-    """Log essential artifacts - placeholder for now."""
-    try:
-        from smlflow_setup import log_essential_artifacts as log_fn
-        log_fn(model_dict, config_dict, experiment_name)
-    except ImportError:
-        logger.warning("Could not import smlflow_setup - skipping artifact logging")
+
+# TODO delete when confirmed useless
+# def log_essential_artifacts(model_dict, config_dict, experiment_name):
+#     """Log essential artifacts - placeholder for now."""
+#     try:
+#         from mlflow_setup import log_essential_artifacts as log_fn
+#         log_fn(model_dict, config_dict, experiment_name)
+#     except ImportError:
+#         logger.warning("Could not import mlflow_setup - skipping artifact logging")
 
 def main():
     """Main experiment runner."""
