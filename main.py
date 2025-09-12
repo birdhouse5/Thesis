@@ -566,16 +566,6 @@ def ensure_mlflow_setup():
     from mlflow_logger import setup_mlflow
     return setup_mlflow()
 
-
-# TODO delete when confirmed useless
-# def log_essential_artifacts(model_dict, config_dict, experiment_name):
-#     """Log essential artifacts - placeholder for now."""
-#     try:
-#         from mlflow_setup import log_essential_artifacts as log_fn
-#         log_fn(model_dict, config_dict, experiment_name)
-#     except ImportError:
-#         logger.warning("Could not import mlflow_setup - skipping artifact logging")
-
 def main():
     """Main experiment runner."""
     
@@ -590,7 +580,7 @@ def main():
     logger.info(f"MLflow configured with {backend} backend")
     
     # Generate all experiment configurations
-    experiments = generate_experiment_configs(num_seeds=1) #TODO experiments = generate_experiment_configs(num_seeds=10)
+    experiments = generate_experiment_configs(num_seeds=10)
     if args.exp_name:
         for exp in experiments:
             exp.exp_name = args.exp_name
