@@ -284,190 +284,196 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         logger.info(f"DSR params: eta={getattr(cfg, 'eta', 0.05)}, rf_rate={getattr(cfg, 'rf_rate', 0.02)}, tx_cost={getattr(cfg, 'transaction_cost_rate', 0.001)}")
         
         # Training loop with enhanced comprehensive tracking
-        while episodes_trained < cfg.max_episodes:
-            # Sample new task
-            print("sammpling task")
-            task = train_env.sample_task()
-            train_env.set_task(task)
-            
-            # Train episodes on this task
-            for _ in tqdm(range(cfg.episodes_per_task), desc="training on sampled task"):
-                if episodes_trained >= cfg.max_episodes:
-                    break
+        with tqdm(total=cfg.max_episodes, desc="Training Episodes") as pbar:
+            while episodes_trained < cfg.max_episodes:
+                # Sample new task
+                task_idx = int(episodes_trained // cfg.episodes_per_task) + 1
+                total_tasks = cfg.max_episodes // cfg.episodes_per_task
+                pbar.set_postfix(task=f"{task_idx}/{total_tasks}")
+
+
+                task = train_env.sample_task()
+                train_env.set_task(task)
+                
+                # Train episodes on this task
+                for _ in tqdm(range(cfg.episodes_per_task), desc="training on sampled task"):
+                    if episodes_trained >= cfg.max_episodes:
+                        break
+                        
+                    # Training step
+                    result = trainer.train_episode()
+                    episodes_trained += 1
+                    pbar.update(1)
                     
-                # Training step
-                result = trainer.train_episode()
-                episodes_trained += 1
-                
-                # === CORE TRAINING METRICS (existing) ===
-                mlflow.log_metric("episode_reward", result.get('episode_reward', 0), step=episodes_trained)
-                mlflow.log_metric("policy_loss", result.get('policy_loss', 0), step=episodes_trained)
-                mlflow.log_metric("vae_loss", result.get('vae_loss', 0), step=episodes_trained)
-                mlflow.log_metric("total_steps", result.get('total_steps', 0), step=episodes_trained)
-                
-                # === NEW: EPISODE-LEVEL PORTFOLIO METRICS ===
-                mlflow.log_metric("episode_final_capital", result.get('episode_final_capital', 0), step=episodes_trained)
-                mlflow.log_metric("episode_total_return", result.get('episode_total_return', 0), step=episodes_trained)
-                mlflow.log_metric("episode_total_excess_return", result.get('episode_total_excess_return', 0), step=episodes_trained)
-                mlflow.log_metric("episode_avg_concentration", result.get('episode_avg_concentration', 0), step=episodes_trained)
-                mlflow.log_metric("episode_max_concentration", result.get('episode_max_concentration', 0), step=episodes_trained)
-                mlflow.log_metric("episode_avg_active_positions", result.get('episode_avg_active_positions', 0), step=episodes_trained)
-                mlflow.log_metric("episode_avg_cash_position", result.get('episode_avg_cash_position', 0), step=episodes_trained)
-                mlflow.log_metric("episode_total_transaction_costs", result.get('episode_total_transaction_costs', 0), step=episodes_trained)
-                mlflow.log_metric("episode_avg_turnover", result.get('episode_avg_turnover', 0), step=episodes_trained)
-                mlflow.log_metric("episode_volatility", result.get('episode_volatility', 0), step=episodes_trained)
-                mlflow.log_metric("episode_excess_volatility", result.get('episode_excess_volatility', 0), step=episodes_trained)
-                
-                # === NEW: DSR STATE TRACKING ===
-                mlflow.log_metric("episode_final_dsr_alpha", result.get('episode_final_dsr_alpha', 0), step=episodes_trained)
-                mlflow.log_metric("episode_final_dsr_beta", result.get('episode_final_dsr_beta', 0), step=episodes_trained)
-                mlflow.log_metric("episode_dsr_variance", result.get('episode_dsr_variance', 0), step=episodes_trained)
-                
-                # === NEW: PORTFOLIO COMPOSITION TRACKING ===
-                mlflow.log_metric("episode_long_exposure", result.get('episode_long_exposure', 0), step=episodes_trained)
-                mlflow.log_metric("episode_short_exposure", result.get('episode_short_exposure', 0), step=episodes_trained)
-                
-                # === NEW: ROLLING STATISTICS ===
-                mlflow.log_metric("rolling_avg_episode_reward", result.get('rolling_avg_episode_reward', 0), step=episodes_trained)
-                mlflow.log_metric("rolling_std_episode_reward", result.get('rolling_std_episode_reward', 0), step=episodes_trained)
-                mlflow.log_metric("rolling_avg_policy_loss", result.get('rolling_avg_policy_loss', 0), step=episodes_trained)
-                mlflow.log_metric("rolling_avg_vae_loss", result.get('rolling_avg_vae_loss', 0), step=episodes_trained)
-                
-                # === NEW: TRAINING DIAGNOSTICS ===
-                mlflow.log_metric("num_episodes_in_batch", result.get('num_episodes_in_batch', 1), step=episodes_trained)
-                mlflow.log_metric("steps_per_episode", result.get('steps_per_episode', 0), step=episodes_trained)
-                
-                # === NEW: VAE LOSS COMPONENTS (when available) ===
-                vae_components = {k: v for k, v in result.items() if k.startswith('vae_') and k != 'vae_loss'}
-                for component_name, component_value in vae_components.items():
-                    mlflow.log_metric(component_name, component_value, step=episodes_trained)
-                
-                # === NEW: STEP-BY-STEP DATA AS ARTIFACTS (every N episodes) ===
-                if episodes_trained % 50 == 0 and 'step_data' in result:
-                    step_data = result['step_data']
+                    # === CORE TRAINING METRICS (existing) ===
+                    mlflow.log_metric("episode_reward", result.get('episode_reward', 0), step=episodes_trained)
+                    mlflow.log_metric("policy_loss", result.get('policy_loss', 0), step=episodes_trained)
+                    mlflow.log_metric("vae_loss", result.get('vae_loss', 0), step=episodes_trained)
+                    mlflow.log_metric("total_steps", result.get('total_steps', 0), step=episodes_trained)
                     
-                    # Create artifact with step-by-step data
-                    step_data_file = f"episode_{episodes_trained}_step_data.json"
+                    # === NEW: EPISODE-LEVEL PORTFOLIO METRICS ===
+                    mlflow.log_metric("episode_final_capital", result.get('episode_final_capital', 0), step=episodes_trained)
+                    mlflow.log_metric("episode_total_return", result.get('episode_total_return', 0), step=episodes_trained)
+                    mlflow.log_metric("episode_total_excess_return", result.get('episode_total_excess_return', 0), step=episodes_trained)
+                    mlflow.log_metric("episode_avg_concentration", result.get('episode_avg_concentration', 0), step=episodes_trained)
+                    mlflow.log_metric("episode_max_concentration", result.get('episode_max_concentration', 0), step=episodes_trained)
+                    mlflow.log_metric("episode_avg_active_positions", result.get('episode_avg_active_positions', 0), step=episodes_trained)
+                    mlflow.log_metric("episode_avg_cash_position", result.get('episode_avg_cash_position', 0), step=episodes_trained)
+                    mlflow.log_metric("episode_total_transaction_costs", result.get('episode_total_transaction_costs', 0), step=episodes_trained)
+                    mlflow.log_metric("episode_avg_turnover", result.get('episode_avg_turnover', 0), step=episodes_trained)
+                    mlflow.log_metric("episode_volatility", result.get('episode_volatility', 0), step=episodes_trained)
+                    mlflow.log_metric("episode_excess_volatility", result.get('episode_excess_volatility', 0), step=episodes_trained)
                     
-                    # Convert numpy arrays to lists for JSON serialization
-                    serializable_step_data = {}
-                    for key, value in step_data.items():
-                        if isinstance(value, list):
-                            # Handle list of arrays (like step_weights)
-                            if value and isinstance(value[0], np.ndarray):
-                                serializable_step_data[key] = [arr.tolist() for arr in value]
+                    # === NEW: DSR STATE TRACKING ===
+                    mlflow.log_metric("episode_final_dsr_alpha", result.get('episode_final_dsr_alpha', 0), step=episodes_trained)
+                    mlflow.log_metric("episode_final_dsr_beta", result.get('episode_final_dsr_beta', 0), step=episodes_trained)
+                    mlflow.log_metric("episode_dsr_variance", result.get('episode_dsr_variance', 0), step=episodes_trained)
+                    
+                    # === NEW: PORTFOLIO COMPOSITION TRACKING ===
+                    mlflow.log_metric("episode_long_exposure", result.get('episode_long_exposure', 0), step=episodes_trained)
+                    mlflow.log_metric("episode_short_exposure", result.get('episode_short_exposure', 0), step=episodes_trained)
+                    
+                    # === NEW: ROLLING STATISTICS ===
+                    mlflow.log_metric("rolling_avg_episode_reward", result.get('rolling_avg_episode_reward', 0), step=episodes_trained)
+                    mlflow.log_metric("rolling_std_episode_reward", result.get('rolling_std_episode_reward', 0), step=episodes_trained)
+                    mlflow.log_metric("rolling_avg_policy_loss", result.get('rolling_avg_policy_loss', 0), step=episodes_trained)
+                    mlflow.log_metric("rolling_avg_vae_loss", result.get('rolling_avg_vae_loss', 0), step=episodes_trained)
+                    
+                    # === NEW: TRAINING DIAGNOSTICS ===
+                    mlflow.log_metric("num_episodes_in_batch", result.get('num_episodes_in_batch', 1), step=episodes_trained)
+                    mlflow.log_metric("steps_per_episode", result.get('steps_per_episode', 0), step=episodes_trained)
+                    
+                    # === NEW: VAE LOSS COMPONENTS (when available) ===
+                    vae_components = {k: v for k, v in result.items() if k.startswith('vae_') and k != 'vae_loss'}
+                    for component_name, component_value in vae_components.items():
+                        mlflow.log_metric(component_name, component_value, step=episodes_trained)
+                    
+                    # === NEW: STEP-BY-STEP DATA AS ARTIFACTS (every N episodes) ===
+                    if episodes_trained % 50 == 0 and 'step_data' in result:
+                        step_data = result['step_data']
+                        
+                        # Create artifact with step-by-step data
+                        step_data_file = f"episode_{episodes_trained}_step_data.json"
+                        
+                        # Convert numpy arrays to lists for JSON serialization
+                        serializable_step_data = {}
+                        for key, value in step_data.items():
+                            if isinstance(value, list):
+                                # Handle list of arrays (like step_weights)
+                                if value and isinstance(value[0], np.ndarray):
+                                    serializable_step_data[key] = [arr.tolist() for arr in value]
+                                else:
+                                    serializable_step_data[key] = value
+                            elif isinstance(value, np.ndarray):
+                                serializable_step_data[key] = value.tolist()
                             else:
                                 serializable_step_data[key] = value
-                        elif isinstance(value, np.ndarray):
-                            serializable_step_data[key] = value.tolist()
-                        else:
-                            serializable_step_data[key] = value
-                    
-                    # Save and log artifact
-                    with open(step_data_file, 'w') as f:
-                        json.dump(serializable_step_data, f, indent=2)
-                    mlflow.log_artifact(step_data_file, "step_data")
-                    os.unlink(step_data_file)  # Cleanup temp file
-                    
-                    logger.info(f"Logged step-by-step data artifact for episode {episodes_trained}")
-                
-                # === NEW: DETAILED VAE LOGGING (every 10 episodes when VAE is active) ===
-                if episodes_trained % 10 == 0 and result.get('vae_loss', 0) > 0:
-                    # Log additional VAE insights
-                    if 'vae_latent_effective_dim' in result:
-                        mlflow.log_metric("vae_latent_utilization", 
-                                        result.get('vae_latent_effective_dim', 0) / max(result.get('vae_latent_dim', 1), 1), 
-                                        step=episodes_trained)
-                    
-                    if 'vae_kl_weight_ratio' in result:
-                        mlflow.log_metric("vae_kl_dominance", result.get('vae_kl_weight_ratio', 0), step=episodes_trained)
-                
-                # === NEW: PORTFOLIO RISK METRICS (every 25 episodes) ===
-                if episodes_trained % 25 == 0:
-                    # Calculate additional risk metrics from recent episodes
-                    recent_returns = [result.get('episode_total_return', 0)]  # Would need to track more episodes
-                    recent_volatilities = [result.get('episode_volatility', 0)]
-                    
-                    if len(recent_returns) > 1:
-                        mlflow.log_metric("recent_return_skewness", float(np.mean(recent_returns)), step=episodes_trained)
-                        mlflow.log_metric("recent_volatility_avg", float(np.mean(recent_volatilities)), step=episodes_trained)
-                
-                # Validation
-                if episodes_trained % cfg.val_interval == 0:
-                    val_results = evaluate(val_env, policy, encoder, cfg, cfg.val_episodes)
-                    
-                    # === ENHANCED VALIDATION LOGGING ===
-                    # Core validation metrics (existing)
-                    for key, value in val_results.items():
-                        mlflow.log_metric(f"val_{key}", value, step=episodes_trained)
-                    
-                    # === NEW: VALIDATION INSIGHTS ===
-                    current_val_reward = val_results['avg_reward']
-                    
-                    # Track validation improvement
-                    val_improvement = current_val_reward - best_val_reward if 'best_val_reward' in locals() else 0
-                    mlflow.log_metric("val_reward_improvement", val_improvement, step=episodes_trained)
-                    
-                    # Validation stability metrics
-                    if 'std_reward' in val_results:
-                        val_stability = val_results['avg_reward'] / max(val_results['std_reward'], 1e-8)
-                        mlflow.log_metric("val_reward_stability", val_stability, step=episodes_trained)
-                    
-                    # Risk-adjusted validation performance
-                    if 'avg_return' in val_results and 'avg_volatility' in val_results:
-                        val_risk_adjusted = val_results['avg_return'] / max(val_results['avg_volatility'], 1e-8)
-                        mlflow.log_metric("val_risk_adjusted_return", val_risk_adjusted, step=episodes_trained)
-                    
-                    # Track best model
-                    if current_val_reward > best_val_reward:
-                        best_val_reward = current_val_reward
                         
-                        # Enhanced best model tracking
-                        mlflow.log_metric("best_val_reward", best_val_reward, step=episodes_trained)
-                        mlflow.log_metric("best_val_episode", episodes_trained, step=episodes_trained)
+                        # Save and log artifact
+                        with open(step_data_file, 'w') as f:
+                            json.dump(serializable_step_data, f, indent=2)
+                        mlflow.log_artifact(step_data_file, "step_data")
+                        os.unlink(step_data_file)  # Cleanup temp file
                         
-                        # Log best model portfolio characteristics
-                        mlflow.log_metric("best_model_concentration", result.get('episode_avg_concentration', 0), step=episodes_trained)
-                        mlflow.log_metric("best_model_turnover", result.get('episode_avg_turnover', 0), step=episodes_trained)
-                        mlflow.log_metric("best_model_cash_allocation", result.get('episode_avg_cash_position', 0), step=episodes_trained)
+                        logger.info(f"Logged step-by-step data artifact for episode {episodes_trained}")
                     
-                    logger.info(f"Episode {episodes_trained}: val_reward={current_val_reward:.4f}, best={best_val_reward:.4f}")
-                    
-                    # === NEW: EARLY STOPPING DIAGNOSTICS ===
-                    episodes_since_best = episodes_trained - mlflow.get_metric("best_val_episode") if "best_val_episode" in locals() else 0
-                    mlflow.log_metric("episodes_since_best", episodes_since_best, step=episodes_trained)
-                    
-                    # Overfitting detection
-                    train_val_gap = result.get('rolling_avg_episode_reward', 0) - current_val_reward
-                    mlflow.log_metric("train_val_gap", train_val_gap, step=episodes_trained)
-                
-                # === NEW: MEMORY AND PERFORMANCE MONITORING ===
-                if episodes_trained % 100 == 0:
-                    import psutil
-                    import gc
-                    
-                    # Memory usage
-                    process = psutil.Process()
-                    memory_mb = process.memory_info().rss / 1024 / 1024
-                    mlflow.log_metric("memory_usage_mb", memory_mb, step=episodes_trained)
-                    
-                    # GPU memory if available
-                    if torch.cuda.is_available():
-                        gpu_memory_mb = torch.cuda.memory_allocated() / 1024 / 1024
-                        mlflow.log_metric("gpu_memory_mb", gpu_memory_mb, step=episodes_trained)
+                    # === NEW: DETAILED VAE LOGGING (every 10 episodes when VAE is active) ===
+                    if episodes_trained % 10 == 0 and result.get('vae_loss', 0) > 0:
+                        # Log additional VAE insights
+                        if 'vae_latent_effective_dim' in result:
+                            mlflow.log_metric("vae_latent_utilization", 
+                                            result.get('vae_latent_effective_dim', 0) / max(result.get('vae_latent_dim', 1), 1), 
+                                            step=episodes_trained)
                         
-                        # GPU utilization
-                        gpu_utilization = torch.cuda.utilization() if hasattr(torch.cuda, 'utilization') else 0
-                        mlflow.log_metric("gpu_utilization_pct", gpu_utilization, step=episodes_trained)
+                        if 'vae_kl_weight_ratio' in result:
+                            mlflow.log_metric("vae_kl_dominance", result.get('vae_kl_weight_ratio', 0), step=episodes_trained)
                     
-                    # Training speed
-                    training_speed = episodes_trained / max((time.time() - trainer.training_start_time).total_seconds() / 3600, 1e-6)
-                    mlflow.log_metric("episodes_per_hour", training_speed, step=episodes_trained)
+                    # === NEW: PORTFOLIO RISK METRICS (every 25 episodes) ===
+                    if episodes_trained % 25 == 0:
+                        # Calculate additional risk metrics from recent episodes
+                        recent_returns = [result.get('episode_total_return', 0)]  # Would need to track more episodes
+                        recent_volatilities = [result.get('episode_volatility', 0)]
+                        
+                        if len(recent_returns) > 1:
+                            mlflow.log_metric("recent_return_skewness", float(np.mean(recent_returns)), step=episodes_trained)
+                            mlflow.log_metric("recent_volatility_avg", float(np.mean(recent_volatilities)), step=episodes_trained)
                     
-                    # Force garbage collection for memory management
-                    gc.collect()
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
+                    # Validation
+                    if episodes_trained % cfg.val_interval == 0:
+                        val_results = evaluate(val_env, policy, encoder, cfg, cfg.val_episodes)
+                        
+                        # === ENHANCED VALIDATION LOGGING ===
+                        # Core validation metrics (existing)
+                        for key, value in val_results.items():
+                            mlflow.log_metric(f"val_{key}", value, step=episodes_trained)
+                        
+                        # === NEW: VALIDATION INSIGHTS ===
+                        current_val_reward = val_results['avg_reward']
+                        
+                        # Track validation improvement
+                        val_improvement = current_val_reward - best_val_reward if 'best_val_reward' in locals() else 0
+                        mlflow.log_metric("val_reward_improvement", val_improvement, step=episodes_trained)
+                        
+                        # Validation stability metrics
+                        if 'std_reward' in val_results:
+                            val_stability = val_results['avg_reward'] / max(val_results['std_reward'], 1e-8)
+                            mlflow.log_metric("val_reward_stability", val_stability, step=episodes_trained)
+                        
+                        # Risk-adjusted validation performance
+                        if 'avg_return' in val_results and 'avg_volatility' in val_results:
+                            val_risk_adjusted = val_results['avg_return'] / max(val_results['avg_volatility'], 1e-8)
+                            mlflow.log_metric("val_risk_adjusted_return", val_risk_adjusted, step=episodes_trained)
+                        
+                        # Track best model
+                        if current_val_reward > best_val_reward:
+                            best_val_reward = current_val_reward
+                            
+                            # Enhanced best model tracking
+                            mlflow.log_metric("best_val_reward", best_val_reward, step=episodes_trained)
+                            mlflow.log_metric("best_val_episode", episodes_trained, step=episodes_trained)
+                            
+                            # Log best model portfolio characteristics
+                            mlflow.log_metric("best_model_concentration", result.get('episode_avg_concentration', 0), step=episodes_trained)
+                            mlflow.log_metric("best_model_turnover", result.get('episode_avg_turnover', 0), step=episodes_trained)
+                            mlflow.log_metric("best_model_cash_allocation", result.get('episode_avg_cash_position', 0), step=episodes_trained)
+                        
+                        logger.info(f"Episode {episodes_trained}: val_reward={current_val_reward:.4f}, best={best_val_reward:.4f}")
+                        
+                        # === NEW: EARLY STOPPING DIAGNOSTICS ===
+                        episodes_since_best = episodes_trained - mlflow.get_metric("best_val_episode") if "best_val_episode" in locals() else 0
+                        mlflow.log_metric("episodes_since_best", episodes_since_best, step=episodes_trained)
+                        
+                        # Overfitting detection
+                        train_val_gap = result.get('rolling_avg_episode_reward', 0) - current_val_reward
+                        mlflow.log_metric("train_val_gap", train_val_gap, step=episodes_trained)
+                    
+                    # === NEW: MEMORY AND PERFORMANCE MONITORING ===
+                    if episodes_trained % 100 == 0:
+                        import psutil
+                        import gc
+                        
+                        # Memory usage
+                        process = psutil.Process()
+                        memory_mb = process.memory_info().rss / 1024 / 1024
+                        mlflow.log_metric("memory_usage_mb", memory_mb, step=episodes_trained)
+                        
+                        # GPU memory if available
+                        if torch.cuda.is_available():
+                            gpu_memory_mb = torch.cuda.memory_allocated() / 1024 / 1024
+                            mlflow.log_metric("gpu_memory_mb", gpu_memory_mb, step=episodes_trained)
+                            
+                            # GPU utilization
+                            gpu_utilization = torch.cuda.utilization() if hasattr(torch.cuda, 'utilization') else 0
+                            mlflow.log_metric("gpu_utilization_pct", gpu_utilization, step=episodes_trained)
+                        
+                        # Training speed
+                        training_speed = episodes_trained / max((time.time() - trainer.training_start_time).total_seconds() / 3600, 1e-6)
+                        mlflow.log_metric("episodes_per_hour", training_speed, step=episodes_trained)
+                        
+                        # Force garbage collection for memory management
+                        gc.collect()
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
 
         # Final test evaluation and backtest
         logger.info("Running final evaluation and backtest...")
