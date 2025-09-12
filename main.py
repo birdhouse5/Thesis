@@ -302,10 +302,6 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                         
                     # Training step
                     result = trainer.train_episode()
-                    print("Result keys:", result.keys())
-                    print("Episode final capital:", result["episode_final_capital"])
-                    print("Episode total return:", result["episode_total_return"])
-                    print("Step count:", len(result["step_data"]["step_returns"]))
                     episodes_trained += 1
                     pbar.update(1)
                     
