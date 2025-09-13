@@ -158,14 +158,9 @@ class PPOTrainer:
         vae_loss = 0.0
         vae_loss_components = {}  # NEW: Store VAE loss components
         
-        if self.experience_buffer.is_ready():
-            with diag.time_section("update_joint"):
-                print("-" * 30, "UPDATING POLICY + VAE (JOINT)")
-                for traj in self.experience_buffer.get_all():
-                    update_info = self.update_joint(traj)
-            self.experience_buffer.clear()
-        else:
-            update_info = {}
+        with diag.time_section("update_joint"):
+            update_info = self.update_joint(tr)   # update right away with the current trajectory
+
 
         # --- extract update info (if any) ---
         policy_loss = update_info.get("policy_loss", 0.0)
