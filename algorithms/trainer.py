@@ -74,9 +74,13 @@ class PPOTrainer:
         self.use_fixed_length = (config.min_horizon == config.max_horizon)
 
         # Optimizers
-        self.policy_optimizer = Adam(policy.parameters(), lr=config.policy_lr)
-        self.vae_optimizer = Adam(vae.parameters(), lr=config.vae_lr) if vae is not None else None
-
+        params = list(policy.parameters())
+        if vae is not None and not config.disable_vae:
+            params += list(vae.parameters())
+        self.optimizer = Adam([
+            {"params": policy.parameters(), "lr": config.policy_lr},
+            {"params": vae.parameters(), "lr": config.vae_lr},
+        ])
         # Experience buffers
         self.experience_buffer = ExperienceBuffer(config.batch_size)  # for PPO
         self.vae_buffer = deque(maxlen=1000)  # recent trajectories for VAE
@@ -155,9 +159,11 @@ class PPOTrainer:
         vae_loss_components = {}  # NEW: Store VAE loss components
         
         if self.experience_buffer.is_ready():
-            with diag.time_section("update_policy"):
-                print("-"*30, "UPDATING POLICY")
-                policy_loss = float(self.update_policy())
+            with diag.time_section("update_joint"):
+                print("-" * 30, "UPDATING POLICY + VAE (JOINT)")
+                trajs = self.experience_buffer.get_all()  # however you batch
+                # for now, just use the last trajectory
+                policy_loss, vae_loss, vae_loss_components = self.update_joint(trajs[-1])
             self.experience_buffer.clear()
 
         if (
@@ -590,119 +596,154 @@ class PPOTrainer:
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         return advantages, returns
 
-    def update_policy(self):
-        print(f"[POLICY] Starting PPO gradient update at episode {self.episode_count}")
+    def update_joint(self, traj):
+        """
+        Joint update of policy (PPO) and VAE using a single objective.
+        """
+        # --- VAE prep ---
+        obs_seq = traj["observations"].unsqueeze(0)   # (1, H, N, F)
+        action_seq = traj["actions"].unsqueeze(0)     # (1, H, N)
+        reward_seq = torch.tensor(
+            traj["rewards"], device=self.device
+        ).view(1, -1, 1)
 
-        all_traj = self.experience_buffer.get_all()
-        if not all_traj:
-            return 0.0
+        # VAE loss
+        vae_loss, vae_components = self.vae.compute_loss(
+            obs_seq, action_seq, reward_seq,
+            beta=self.config.vae_beta
+        ) if self.vae is not None and not self.config.disable_vae else (0.0, {})
 
-        b_obs, b_act, b_lat, b_adv, b_ret, b_logp_old = [], [], [], [], [], []
-        for tr in all_traj:
-            adv, ret = self.compute_advantages(tr)
-            b_obs.append(tr["observations"])
-            b_act.append(tr["actions"])
-            b_lat.append(tr["latents"])
-            b_adv.append(adv)
-            b_ret.append(ret)
-            b_logp_old.append(tr["log_probs"])
+        # --- PPO loss ---
+        policy_loss = self._ppo_loss(traj)  # reuse your existing PPO routine
 
-        batch_obs = torch.cat(b_obs, dim=0)
-        batch_actions = torch.cat(b_act, dim=0)
-        batch_latents = torch.cat(b_lat, dim=0)
-        batch_adv = torch.cat(b_adv, dim=0)
-        batch_ret = torch.cat(b_ret, dim=0)
-        batch_logp_old = torch.cat(b_logp_old, dim=0)
+        # --- Joint objective ---
+        joint_loss = policy_loss + self.config.joint_loss_lambda * vae_loss
 
-        total_loss = 0.0
-        for _ in range(self.config.ppo_epochs):
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
-                values, log_probs, entropy = self.policy.evaluate_actions(batch_obs, batch_latents, batch_actions)
-                values = values.squeeze(-1)
-                log_probs = log_probs.squeeze(-1)
-                entropy = entropy.mean()
+        self.optimizer.zero_grad()
+        joint_loss.backward()
+        torch.nn.utils.clip_grad_norm_(
+            list(self.policy.parameters()) + (
+                list(self.vae.parameters()) if self.vae is not None else []),
+            self.config.max_grad_norm
+        )
+        self.optimizer.step()
 
-                ratio = torch.exp(log_probs - batch_logp_old)
-                surr1 = ratio * batch_adv
-                surr2 = torch.clamp(ratio, 1 - self.config.ppo_clip_ratio, 1 + self.config.ppo_clip_ratio) * batch_adv
-                policy_loss = -torch.min(surr1, surr2).mean()
-                value_loss = F.mse_loss(values, batch_ret)
-                loss = policy_loss + self.config.value_loss_coef * value_loss - self.config.entropy_coef * entropy
+        return policy_loss.item(), (vae_loss.item() if vae_loss != 0.0 else 0.0), vae_components
 
-            self.policy_optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
-            self.policy_optimizer.step()
-            total_loss += float(loss.item())
-        print(f"[POLICY] Finished backprop (loss={loss.item():.4f})")  
 
-        return total_loss / max(self.config.ppo_epochs, 1)
+    # def update_policy(self):
+    #     print(f"[POLICY] Starting PPO gradient update at episode {self.episode_count}")
 
-    def update_vae(self):
-        """VariBAD-style VAE update with recursive prior and multi-context ELBO."""
+    #     all_traj = self.experience_buffer.get_all()
+    #     if not all_traj:
+    #         return 0.0
 
-        print(f"[VAE] Starting VAE gradient update at episode {self.episode_count}")
+    #     b_obs, b_act, b_lat, b_adv, b_ret, b_logp_old = [], [], [], [], [], []
+    #     for tr in all_traj:
+    #         adv, ret = self.compute_advantages(tr)
+    #         b_obs.append(tr["observations"])
+    #         b_act.append(tr["actions"])
+    #         b_lat.append(tr["latents"])
+    #         b_adv.append(adv)
+    #         b_ret.append(ret)
+    #         b_logp_old.append(tr["log_probs"])
 
-        if self.vae_optimizer is None:
-            return 0.0, {}
-        if len(self.vae_buffer) < self.config.vae_batch_size:
-            return 0.0, {}
+    #     batch_obs = torch.cat(b_obs, dim=0)
+    #     batch_actions = torch.cat(b_act, dim=0)
+    #     batch_latents = torch.cat(b_lat, dim=0)
+    #     batch_adv = torch.cat(b_adv, dim=0)
+    #     batch_ret = torch.cat(b_ret, dim=0)
+    #     batch_logp_old = torch.cat(b_logp_old, dim=0)
 
-        indices = np.random.choice(len(self.vae_buffer), self.config.vae_batch_size, replace=False)
-        batch_traj = [self.vae_buffer[i] for i in indices]
+    #     total_loss = 0.0
+    #     for _ in range(self.config.ppo_epochs):
+    #         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
+    #             values, log_probs, entropy = self.policy.evaluate_actions(batch_obs, batch_latents, batch_actions)
+    #             values = values.squeeze(-1)
+    #             log_probs = log_probs.squeeze(-1)
+    #             entropy = entropy.mean()
 
-        total_loss_value = 0.0
-        loss_count = 0
-        accumulated_components = {}
+    #             ratio = torch.exp(log_probs - batch_logp_old)
+    #             surr1 = ratio * batch_adv
+    #             surr2 = torch.clamp(ratio, 1 - self.config.ppo_clip_ratio, 1 + self.config.ppo_clip_ratio) * batch_adv
+    #             policy_loss = -torch.min(surr1, surr2).mean()
+    #             value_loss = F.mse_loss(values, batch_ret)
+    #             loss = policy_loss + self.config.value_loss_coef * value_loss - self.config.entropy_coef * entropy
 
-        self.vae_optimizer.zero_grad()
+    #         self.policy_optimizer.zero_grad()
+    #         loss.backward()
+    #         torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
+    #         self.policy_optimizer.step()
+    #         total_loss += float(loss.item())
+    #     print(f"[POLICY] Finished backprop (loss={loss.item():.4f})")  
 
-        for tr in batch_traj:
-            seq_len = len(tr["rewards"])
-            if seq_len < 2:
-                continue
+    #     return total_loss / max(self.config.ppo_epochs, 1)
 
-            # Prepare full trajectory
-            obs_full = tr["observations"].unsqueeze(0).detach()
-            act_full = tr["actions"].unsqueeze(0).detach()
-            rew_full = tr["rewards"].unsqueeze(0).unsqueeze(-1).detach()
+    # def update_vae(self):
+    #     """VariBAD-style VAE update with recursive prior and multi-context ELBO."""
 
-            # Sample a few different context lengths per trajectory
-            max_t = min(seq_len - 1, self.config.max_context_len if hasattr(self.config, "max_context_len") else seq_len - 1)
-            sampled_ts = np.random.choice(range(1, max_t + 1), size=min(3, max_t), replace=False)
+    #     print(f"[VAE] Starting VAE gradient update at episode {self.episode_count}")
 
-            prev_mu, prev_logvar = None, None
-            for t in sorted(sampled_ts):
-                with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
-                    vae_loss, loss_components = self.vae.compute_loss(
-                        obs_full, act_full, rew_full,
-                        context_len=t,
-                        beta=self.config.vae_beta,
-                        prev_mu=prev_mu, prev_logvar=prev_logvar
-                    )
+    #     if self.vae_optimizer is None:
+    #         return 0.0, {}
+    #     if len(self.vae_buffer) < self.config.vae_batch_size:
+    #         return 0.0, {}
 
-                vae_loss.backward(retain_graph=True)  # keep graph for multiple t
-                total_loss_value += float(vae_loss.item())
-                loss_count += 1
+    #     indices = np.random.choice(len(self.vae_buffer), self.config.vae_batch_size, replace=False)
+    #     batch_traj = [self.vae_buffer[i] for i in indices]
 
-                # Update prev posterior for recursion
-                prev_mu, prev_logvar, _ = self.vae.encode(
-                    obs_full[:, :t], act_full[:, :t], rew_full[:, :t]
-                )
+    #     total_loss_value = 0.0
+    #     loss_count = 0
+    #     accumulated_components = {}
 
-                for k, v in loss_components.items():
-                    accumulated_components.setdefault(k, []).append(v)
+    #     self.vae_optimizer.zero_grad()
 
-        if loss_count == 0:
-            return 0.0, {}
+    #     for tr in batch_traj:
+    #         seq_len = len(tr["rewards"])
+    #         if seq_len < 2:
+    #             continue
 
-        torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
-        self.vae_optimizer.step()
+    #         # Prepare full trajectory
+    #         obs_full = tr["observations"].unsqueeze(0).detach()
+    #         act_full = tr["actions"].unsqueeze(0).detach()
+    #         rew_full = tr["rewards"].unsqueeze(0).unsqueeze(-1).detach()
 
-        avg_components = {k: float(np.mean(v)) for k, v in accumulated_components.items()}
-        print(f"[VAE] Finished backprop (loss={total_loss_value / loss_count:.4f})")
+    #         # Sample a few different context lengths per trajectory
+    #         max_t = min(seq_len - 1, self.config.max_context_len if hasattr(self.config, "max_context_len") else seq_len - 1)
+    #         sampled_ts = np.random.choice(range(1, max_t + 1), size=min(3, max_t), replace=False)
 
-        return total_loss_value / loss_count, avg_components
+    #         prev_mu, prev_logvar = None, None
+    #         for t in sorted(sampled_ts):
+    #             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
+    #                 vae_loss, loss_components = self.vae.compute_loss(
+    #                     obs_full, act_full, rew_full,
+    #                     context_len=t,
+    #                     beta=self.config.vae_beta,
+    #                     prev_mu=prev_mu, prev_logvar=prev_logvar
+    #                 )
+
+    #             vae_loss.backward(retain_graph=True)  # keep graph for multiple t
+    #             total_loss_value += float(vae_loss.item())
+    #             loss_count += 1
+
+    #             # Update prev posterior for recursion
+    #             prev_mu, prev_logvar, _ = self.vae.encode(
+    #                 obs_full[:, :t], act_full[:, :t], rew_full[:, :t]
+    #             )
+
+    #             for k, v in loss_components.items():
+    #                 accumulated_components.setdefault(k, []).append(v)
+
+    #     if loss_count == 0:
+    #         return 0.0, {}
+
+    #     torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
+    #     self.vae_optimizer.step()
+
+    #     avg_components = {k: float(np.mean(v)) for k, v in accumulated_components.items()}
+    #     print(f"[VAE] Finished backprop (loss={total_loss_value / loss_count:.4f})")
+
+    #     return total_loss_value / loss_count, avg_components
 
 
     # ---------------------------------------------------------------------
@@ -712,17 +753,14 @@ class PPOTrainer:
         return {
             "episode_count": self.episode_count,
             "total_steps": self.total_steps,
-            "policy_optimizer": self.policy_optimizer.state_dict(),
-            "vae_optimizer": self.vae_optimizer.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
         }
 
     def load_state(self, state):
         self.episode_count = state.get("episode_count", 0)
         self.total_steps = state.get("total_steps", 0)
-        if "policy_optimizer" in state:
-            self.policy_optimizer.load_state_dict(state["policy_optimizer"])
-        if "vae_optimizer" in state:
-            self.vae_optimizer.load_state_dict(state["vae_optimizer"])
+        if "optimizer" in state:
+            self.optimizer.load_state_dict(state["optimizer"])
 
     def _get_latent_for_step(self, obs_tensor, trajectory_context):
         """Get latent encoding for current step, supporting both episodic and sequential modes."""

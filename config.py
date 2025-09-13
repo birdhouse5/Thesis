@@ -55,6 +55,7 @@ class TrainingConfig:
     vae_batch_size: int
     ppo_epochs: int
     entropy_coef: float
+    joint_loss_lambda: float
     max_episodes: int
     early_stopping_patience: int
     early_stopping_min_delta: float
@@ -73,7 +74,6 @@ class TrainingConfig:
     discount_factor: float
     min_horizon: int
     max_horizon: int
-    # DSR parameters
     eta: float
     rf_rate: float = 0.02
     transaction_cost_rate: float = 0.001
@@ -125,6 +125,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         vae_batch_size=1024,
         ppo_epochs=8,
         entropy_coef=0.0013141391952945,
+        joint_loss_lambda=1.0,
         max_episodes=6000,
         early_stopping_patience=10,
         early_stopping_min_delta=0.02,
