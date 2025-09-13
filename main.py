@@ -32,6 +32,43 @@ from algorithms.trainer import PPOTrainer
 # Import evaluation functions
 from evaluation_backtest import evaluate, run_sequential_backtest
 
+
+import shutil
+
+def save_checkpoint(ckpt_dir: Path, state: dict):
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    path = ckpt_dir / f"checkpoint_ep{state['episodes_trained']}.pt"
+    torch.save(state, path)
+
+    # Save run_id for MLflow resumption
+    run_info = {"run_id": mlflow.active_run().info.run_id}
+    with open(ckpt_dir / "run_info.json", "w") as f:
+        json.dump(run_info, f)
+
+    logger.info(f"💾 Saved checkpoint: {path}")
+
+def load_latest_checkpoint(ckpt_dir: Path):
+    if not ckpt_dir.exists():
+        return None, None
+
+    checkpoints = list(ckpt_dir.glob("checkpoint_ep*.pt"))
+    if not checkpoints:
+        return None, None
+
+    latest = max(checkpoints, key=lambda p: int(p.stem.split("ep")[-1]))
+    state = torch.load(latest, map_location="cpu")
+
+    run_info_file = ckpt_dir / "run_info.json"
+    run_info = None
+    if run_info_file.exists():
+        with open(run_info_file) as f:
+            run_info = json.load(f)
+
+    logger.info(f"🔄 Loaded checkpoint from {latest}")
+    return state, run_info
+
+
+
 class NpEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, np.ndarray):
@@ -258,68 +295,99 @@ def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
 
 
 def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
-    """Run complete training pipeline with comprehensive logging."""
-    
+    """Run complete training pipeline with checkpoints + MLflow resume."""
+
+    ckpt_dir = Path("checkpoints") / cfg.exp_name
+    resume_state = None
+    episodes_trained, best_val_reward = 0, float("-inf")
+
+    # === Resume or start fresh ===
+    if getattr(cfg, "force_recreate", False):
+        if ckpt_dir.exists():
+            shutil.rmtree(ckpt_dir)
+            logger.info(f"🗑️ Removed old checkpoints for {cfg.exp_name}")
+        mlflow.start_run(run_name=cfg.exp_name)
+    else:
+        state, run_info = load_latest_checkpoint(ckpt_dir)
+        if state:
+            if run_info and "run_id" in run_info:
+                mlflow.start_run(run_id=run_info["run_id"])
+            else:
+                mlflow.start_run(run_name=cfg.exp_name)
+            resume_state = state
+            episodes_trained = state["episodes_trained"]
+            best_val_reward = state.get("best_val_reward", float("-inf"))
+            logger.info(f"▶️ Will resume training from episode {episodes_trained}")
+        else:
+            mlflow.start_run(run_name=cfg.exp_name)
+
     try:
         # Setup
         seed_everything(cfg.seed)
-        
+
         # Ensure dataset exists
         cfg.data_path = ensure_dataset_exists(cfg)
-        
+
         # Prepare environments
         environments, split_tensors = prepare_environments(cfg)
-        train_env = environments['train']
-        val_env = environments['val'] 
-        test_env = environments['test']
-        
+        train_env, val_env, test_env = environments['train'], environments['val'], environments['test']
+
         # Get observation shape
         task = train_env.sample_task()
         train_env.set_task(task)
         obs_shape = train_env.reset().shape
-        
+
         # Create models
         encoder, policy = create_models(cfg, obs_shape)
-        
+
         # Create trainer
         trainer = PPOTrainer(env=train_env, policy=policy, vae=encoder, config=cfg)
-        
-        # Training tracking
-        best_val_reward = float('-inf')
-        episodes_trained = 0
-        
+
+        # === Apply resume state after objects exist ===
+        if resume_state:
+            policy.load_state_dict(resume_state["policy"])
+            if encoder and resume_state.get("encoder"):
+                encoder.load_state_dict(resume_state["encoder"])
+            trainer.optimizer.load_state_dict(resume_state["optimizer"])
+            torch.set_rng_state(resume_state["torch_rng"])
+            np.random.set_state(tuple(resume_state["numpy_rng"]))
+            import random
+            random.setstate(tuple(resume_state["py_rng"]))
+            logger.info("✅ Restored model, optimizer, and RNG state")
+
         logger.info(f"Starting training: {cfg.exp_name}")
         logger.info(f"Asset class: {cfg.asset_class}, Encoder: {cfg.encoder}, Seed: {cfg.seed}")
-        logger.info(f"DSR params: eta={getattr(cfg, 'eta', 0.05)}, rf_rate={getattr(cfg, 'rf_rate', 0.02)}, tx_cost={getattr(cfg, 'transaction_cost_rate', 0.001)}")
-        
-        # Training loop with enhanced comprehensive tracking
-        with tqdm(total=cfg.max_episodes, desc=f"Training Progess (total episodes: {cfg.max_episodes})") as pbar:
+        logger.info(
+            f"DSR params: eta={getattr(cfg, 'eta', 0.05)}, "
+            f"rf_rate={getattr(cfg, 'rf_rate', 0.02)}, "
+            f"tx_cost={getattr(cfg, 'transaction_cost_rate', 0.001)}"
+        )
+
+        # === Training loop ===
+        with tqdm(total=cfg.max_episodes, initial=episodes_trained,
+                  desc=f"Training Progress (total episodes: {cfg.max_episodes})") as pbar:
             while episodes_trained < cfg.max_episodes:
-                # Sample new task
                 task_idx = int(episodes_trained // cfg.episodes_per_task) + 1
                 total_tasks = cfg.max_episodes // cfg.episodes_per_task
                 pbar.set_postfix(task=f"{task_idx}/{total_tasks}")
 
                 task = train_env.sample_task()
                 train_env.set_task(task)
-                
-                # Train episodes on this task
-                for i in range(cfg.episodes_per_task):
+
+                for _ in range(cfg.episodes_per_task):
                     if episodes_trained >= cfg.max_episodes:
                         break
-                        
+
                     # Training step
                     result = trainer.train_episode()
                     episodes_trained += 1
                     pbar.update(1)
-                    
-                    # === CORE TRAINING METRICS ===
+
+                    # === ALL YOUR LOGGING CODE STAYS UNCHANGED ===
                     mlflow.log_metric("episode_reward", result.get('episode_reward', 0), step=episodes_trained)
                     mlflow.log_metric("policy_loss", result.get('policy_loss', 0), step=episodes_trained)
                     mlflow.log_metric("vae_loss", result.get('vae_loss', 0), step=episodes_trained)
                     mlflow.log_metric("total_steps", result.get('total_steps', 0), step=episodes_trained)
-                    
-                    # === EPISODE-LEVEL PORTFOLIO METRICS ===
                     mlflow.log_metric("episode_final_capital", result.get('episode_final_capital', 0), step=episodes_trained)
                     mlflow.log_metric("episode_total_return", result.get('episode_total_return', 0), step=episodes_trained)
                     mlflow.log_metric("episode_total_excess_return", result.get('episode_total_excess_return', 0), step=episodes_trained)
@@ -331,59 +399,52 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                     mlflow.log_metric("episode_avg_turnover", result.get('episode_avg_turnover', 0), step=episodes_trained)
                     mlflow.log_metric("episode_volatility", result.get('episode_volatility', 0), step=episodes_trained)
                     mlflow.log_metric("episode_excess_volatility", result.get('episode_excess_volatility', 0), step=episodes_trained)
-                    
-                    # === DSR STATE TRACKING ===
                     mlflow.log_metric("episode_final_dsr_alpha", result.get('episode_final_dsr_alpha', 0), step=episodes_trained)
                     mlflow.log_metric("episode_final_dsr_beta", result.get('episode_final_dsr_beta', 0), step=episodes_trained)
                     mlflow.log_metric("episode_dsr_variance", result.get('episode_dsr_variance', 0), step=episodes_trained)
-                    
-                    # === PORTFOLIO COMPOSITION TRACKING ===
                     mlflow.log_metric("episode_long_exposure", result.get('episode_long_exposure', 0), step=episodes_trained)
                     mlflow.log_metric("episode_short_exposure", result.get('episode_short_exposure', 0), step=episodes_trained)
-                    
-                    # === ROLLING STATISTICS ===
                     mlflow.log_metric("rolling_avg_episode_reward", result.get('rolling_avg_episode_reward', 0), step=episodes_trained)
                     mlflow.log_metric("rolling_std_episode_reward", result.get('rolling_std_episode_reward', 0), step=episodes_trained)
                     mlflow.log_metric("rolling_avg_policy_loss", result.get('rolling_avg_policy_loss', 0), step=episodes_trained)
                     mlflow.log_metric("rolling_avg_vae_loss", result.get('rolling_avg_vae_loss', 0), step=episodes_trained)
-                    
-                    # === TRAINING DIAGNOSTICS ===
                     mlflow.log_metric("num_episodes_in_batch", result.get('num_episodes_in_batch', 1), step=episodes_trained)
                     mlflow.log_metric("steps_per_episode", result.get('steps_per_episode', 0), step=episodes_trained)
-                    
-                    # === VAE LOSS COMPONENTS (when available) ===
                     vae_components = {k: v for k, v in result.items() if k.startswith('vae_') and k != 'vae_loss'}
                     for component_name, component_value in vae_components.items():
                         mlflow.log_metric(component_name, component_value, step=episodes_trained)
-                    
-                    # === STEP-BY-STEP DATA AS ARTIFACTS (every N episodes) ===
-                    if episodes_trained % 50 == 0 and 'step_data' in result:
-                        step_data = result['step_data']
-                        
-                        # Create artifact with step-by-step data
-                        step_data_file = f"episode_{episodes_trained}_step_data.json"
-                        
-                        # Convert numpy arrays to lists for JSON serialization
-                        serializable_step_data = {}
-                        for key, value in step_data.items():
-                            if isinstance(value, list):
-                                # Handle list of arrays (like step_weights)
-                                if value and isinstance(value[0], np.ndarray):
+
+                    # === Save checkpoint every 50 episodes ===
+                    if episodes_trained % 50 == 0:
+                        checkpoint_state = {
+                            "episodes_trained": episodes_trained,
+                            "best_val_reward": best_val_reward,
+                            "policy": policy.state_dict(),
+                            "encoder": encoder.state_dict() if encoder else None,
+                            "optimizer": trainer.optimizer.state_dict(),
+                            "torch_rng": torch.get_rng_state(),
+                            "numpy_rng": np.random.get_state(),
+                            "py_rng": __import__("random").getstate(),
+                        }
+                        save_checkpoint(ckpt_dir, checkpoint_state)
+
+                        if 'step_data' in result:
+                            step_data = result['step_data']
+                            step_data_file = f"episode_{episodes_trained}_step_data.json"
+                            serializable_step_data = {}
+                            for key, value in step_data.items():
+                                if isinstance(value, list) and value and isinstance(value[0], np.ndarray):
                                     serializable_step_data[key] = [arr.tolist() for arr in value]
+                                elif isinstance(value, np.ndarray):
+                                    serializable_step_data[key] = value.tolist()
                                 else:
                                     serializable_step_data[key] = value
-                            elif isinstance(value, np.ndarray):
-                                serializable_step_data[key] = value.tolist()
-                            else:
-                                serializable_step_data[key] = value
-                        
-                        # Save and log artifact
-                        with open(step_data_file, 'w') as f:
-                            json.dump(serializable_step_data, f, indent=2, cls=NpEncoder)
-                        mlflow.log_artifact(step_data_file, "step_data")
-                        os.unlink(step_data_file)  # Cleanup temp file
-                        
-                        logger.info(f"Logged step-by-step data artifact for episode {episodes_trained}")
+                            with open(step_data_file, 'w') as f:
+                                json.dump(serializable_step_data, f, indent=2, cls=NpEncoder)
+                            mlflow.log_artifact(step_data_file, "step_data")
+                            os.unlink(step_data_file)
+                            
+                            logger.info(f"Logged step-by-step data artifact for episode {episodes_trained}")
                     
                     # === NEW: DETAILED VAE LOGGING (every 10 episodes when VAE is active) ===
                     if episodes_trained % 10 == 0 and result.get('vae_loss', 0) > 0:
@@ -475,7 +536,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                             mlflow.log_metric("gpu_utilization_pct", gpu_utilization, step=episodes_trained)
                         
                         # Training speed
-                        training_speed = episodes_trained / max((time.time() - trainer.training_start_time).total_seconds() / 3600, 1e-6)
+                        training_speed = episodes_trained / max((time.time() - trainer.training_start_time) / 3600, 1e-6)
                         mlflow.log_metric("episodes_per_hour", training_speed, step=episodes_trained)
                         
                         # Force garbage collection for memory management
@@ -483,42 +544,30 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                         if torch.cuda.is_available():
                             torch.cuda.empty_cache()
 
-        # Final test evaluation and backtest
+        # Final evaluation & backtest
         logger.info("Running final evaluation and backtest...")
         test_results = evaluate(test_env, policy, encoder, cfg, cfg.test_episodes)
 
-        # Running backtest
         logger.info("Running sequential backtest...")
-        backtest_results = backtest_results = run_sequential_backtest(datasets, policy, encoder, cfg, split='test')
-        
-        # Log test and backtest results
+        backtest_results = run_sequential_backtest(split_tensors, policy, encoder, cfg, split='test')
+
         for key, value in test_results.items():
             if isinstance(value, (int, float)):
                 mlflow.log_metric(f"test_{key}", value)
-        
+
         for key, value in backtest_results.items():
             if isinstance(value, (int, float)):
                 mlflow.log_metric(f"backtest_{key}", value)
-        
-        # Save models to MinIO via MLflow
-        model_dict = {
-            'policy': policy,
-            'encoder': encoder
-        }
-        
-        # Log essential artifacts (models + config) to MinIO
+
+        model_dict = {"policy": policy, "encoder": encoder}
         log_essential_artifacts(model_dict, cfg.__dict__, cfg.exp_name)
-        
-        # Also save locally for backup
+
         model_dir = Path("models") / cfg.exp_name
         model_dir.mkdir(parents=True, exist_ok=True)
-        
         if encoder is not None:
             torch.save(encoder.state_dict(), model_dir / "encoder.pt")
-        
         torch.save(policy.state_dict(), model_dir / "policy.pt")
-        
-        # Final results
+
         final_results = {
             "episodes_trained": episodes_trained,
             "best_val_reward": best_val_reward,
@@ -526,32 +575,29 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
             "backtest_sharpe": backtest_results['sharpe_ratio'],
             "backtest_return": backtest_results['total_return'],
             "backtest_max_drawdown": backtest_results['max_drawdown'],
-            "training_completed": True
+            "training_completed": True,
         }
-        
+
         logger.info(f"Training completed: {cfg.exp_name}")
         logger.info(f"Final test reward: {test_results['avg_reward']:.4f}")
         logger.info(f"Backtest Sharpe: {backtest_results['sharpe_ratio']:.4f}")
-        
+
         return final_results
-        
+
     except Exception as e:
         logger.error(f"Training failed for {cfg.exp_name}: {str(e)}")
         logger.error(traceback.format_exc())
-        
-        # Log failure
         mlflow.log_metric("training_completed", 0)
         mlflow.log_param("error_message", str(e))
-        
         return {
             "training_completed": False,
             "error": str(e),
-            "episodes_trained": episodes_trained if 'episodes_trained' in locals() else 0
+            "episodes_trained": episodes_trained,
         }
-    
+
     finally:
-        # Cleanup
         cleanup_gpu_memory()
+        mlflow.end_run()
 
 def run_experiment_batch(experiments, experiment_name: str = "test_001", force_recreate: bool = False):
     """Run batch of experiments using ExperimentManager (simplified without resource management)."""
