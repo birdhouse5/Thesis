@@ -195,6 +195,7 @@ class PPOTrainer:
         
         if self.experience_buffer.is_ready():
             with diag.time_section("update_policy"):
+                print("-"*30, "UPDATING POLICY")
                 policy_loss = float(self.update_policy())
             self.experience_buffer.clear()
 
