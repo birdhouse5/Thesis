@@ -92,7 +92,7 @@ class PPOTrainer:
 
         # Extra tracking (kept for potential analysis hooks)
         self.episode_details = []
-        self.training_start_time = datetime.now()
+        self.training_start_time = time.time()
         self.episode_start_time = None
         self.portfolio_metrics_history = []
 

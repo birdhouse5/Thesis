@@ -576,6 +576,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp_name", type=str, default=None, help="Override experiment name")
     parser.add_argument("--force_recreate", action="store_true", help="Force dataset and MLflow overwrite")
+    parser.add_argument("--encoder", type=str, choices=["vae", "hmm", "none"], help="Encoder type to run")
+    parser.add_argument("--datatype", type=str, choices=["sp500", "crypto"], help="Dataset type to run")
+
     args = parser.parse_args()
 
     # Setup MLflow before anything else
@@ -591,6 +594,10 @@ def main():
     if args.force_recreate:
         for exp in experiments:
             exp.force_recreate = True
+    if args.encoder:
+        experiments = [exp for exp in experiments if exp.encoder == args.encoder]
+    if args.datatype:
+        experiments = [exp for exp in experiments if exp.asset_class == args.datatype]
 
     logger.info(f"Generated {len(experiments)} experiment configurations")
     logger.info("Experiment matrix:")
