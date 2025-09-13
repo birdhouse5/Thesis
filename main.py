@@ -293,21 +293,18 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         logger.info(f"DSR params: eta={getattr(cfg, 'eta', 0.05)}, rf_rate={getattr(cfg, 'rf_rate', 0.02)}, tx_cost={getattr(cfg, 'transaction_cost_rate', 0.001)}")
         
         # Training loop with enhanced comprehensive tracking
-        with tqdm(total=cfg.max_episodes, desc="Training Episodes") as pbar:
+        with tqdm(total=cfg.max_episodes, desc=f"Training Progess (total episodes: {cfg.max_episodes})") as pbar:
             while episodes_trained < cfg.max_episodes:
                 # Sample new task
                 task_idx = int(episodes_trained // cfg.episodes_per_task) + 1
                 total_tasks = cfg.max_episodes // cfg.episodes_per_task
                 pbar.set_postfix(task=f"{task_idx}/{total_tasks}")
 
-
-                print("-- sampling task --")
                 task = train_env.sample_task()
                 train_env.set_task(task)
                 
                 # Train episodes on this task
                 for i in range(cfg.episodes_per_task):
-                    print("-- running episode ", i, " on task --")
                     if episodes_trained >= cfg.max_episodes:
                         break
                         
