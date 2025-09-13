@@ -254,11 +254,9 @@ class PPOTrainer:
         step = 0
 
         while not done and step < self.config.max_horizon:
-            print("DEBUG: creating latent")
             latent = self._get_latent_for_step(obs_tensor, context)
 
             with torch.no_grad():
-                print("DEBUG: sampling action")
                 action, _ = self.policy.act(obs_tensor, latent, deterministic=False)
                 values, log_prob, _ = self.policy.evaluate_actions(obs_tensor, latent, action)
 
