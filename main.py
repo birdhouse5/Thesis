@@ -297,6 +297,9 @@ def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
 def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
     """Run complete training pipeline with checkpoints + MLflow resume."""
 
+    if mlflow.active_run():
+        mlflow.end_run()
+
     ckpt_dir = Path("checkpoints") / cfg.exp_name
     resume_state = None
     episodes_trained, best_val_reward = 0, float("-inf")
