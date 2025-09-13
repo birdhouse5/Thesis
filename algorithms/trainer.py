@@ -613,13 +613,14 @@ class PPOTrainer:
         - Schulman et al., 2017 (PPO paper)
         - Spinning Up PPO implementation
         """
-        obs = traj["observations"].to(self.device)
-        actions = traj["actions"].to(self.device)
-        latents = traj["latents"].to(self.device)
-        rewards = traj["rewards"].to(self.device)
-        values = traj["values"].to(self.device)
-        dones = traj["dones"].to(self.device)
-        old_logp = traj["log_probs"].to(self.device)
+        obs = torch.tensor(traj["observations"], dtype=torch.float32, device=self.device)
+        actions = torch.tensor(traj["actions"], dtype=torch.long, device=self.device)
+        latents = torch.tensor(traj["latents"], dtype=torch.float32, device=self.device)
+        rewards = torch.tensor(traj["rewards"], dtype=torch.float32, device=self.device)
+        values = torch.tensor(traj["values"], dtype=torch.float32, device=self.device)
+        dones = torch.tensor(traj["dones"], dtype=torch.float32, device=self.device)
+        old_logp = torch.tensor(traj["log_probs"], dtype=torch.float32, device=self.device)
+
 
         # Bootstrap if provided
         last_value = traj.get("last_value", 0.0)
