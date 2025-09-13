@@ -8,8 +8,8 @@ class ExperimentConfig:
     seed: int
     asset_class: str       # "sp500" | "crypto"
     encoder: str           # "vae" | "none" | "hmm"
-    min_horizon: int = 5 #TODO
-    max_horizon: int = 5 #TODO
+    min_horizon: int = 150
+    max_horizon: int = 200
     exp_name: Optional[str] = None
     force_recreate: bool = False
 
@@ -119,7 +119,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         policy_lr=0.0020289998766945,
         vae_beta=0.0125762666385515,
         vae_update_freq=5,
-        seq_len=5, #TODO old: 200,
+        seq_len=200,
         episodes_per_task=3,
         batch_size=8192,
         vae_batch_size=1024,

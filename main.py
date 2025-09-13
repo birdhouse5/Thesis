@@ -301,11 +301,13 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                 pbar.set_postfix(task=f"{task_idx}/{total_tasks}")
 
 
+                print("-- sampling task --")
                 task = train_env.sample_task()
                 train_env.set_task(task)
                 
                 # Train episodes on this task
-                for _ in range(cfg.episodes_per_task):
+                for i in range(cfg.episodes_per_task):
+                    print("-- running episode ", i, " on task --")
                     if episodes_trained >= cfg.max_episodes:
                         break
                         
@@ -599,18 +601,6 @@ def main():
     logger.info("- Encoders: VAE, None, HMM")
     logger.info("- Seeds: 0-9 (10 seeds per combination)")
     logger.info(f"- Total: {len(experiments)} experiments")
-    
-    # Run subset for testing first (optional)
-    if test_mode:
-        logger.info("TEST MODE: Running only first 2 experiments")
-        experiments = experiments[:2]
-    
-    if debug_mode:
-        logger.debug("Debug mode configuration:")
-        logger.debug(f"- Logging level: DEBUG")
-        logger.debug(f"- Log file: experiment_debug.log")
-        logger.debug(f"- Resource monitoring: disabled (not implemented in current ExperimentManager)")
-        logger.debug(f"- Checkpoint directory: experiment_checkpoints/")
     
     # Run all experiments
     summary = run_experiment_batch(

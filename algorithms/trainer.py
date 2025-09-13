@@ -121,46 +121,7 @@ class PPOTrainer:
             'final_capital': 0.0,
             'num_episodes': 0
         }
-        
-        # if self.num_envs > 1:
-        #     if self.use_fixed_length:
-        #         with diag.time_section("collect_fixed_length_batched"):
-        #             trajectories = self.collect_trajectories_batched_fixed_length(self.num_envs)
-        #     else:
-        #         with diag.time_section("collect_trajectories_batched"):
-        #             trajectories = self.collect_trajectories_batched(self.num_envs)
-            
-        #     with diag.time_section("add_to_buffers"):
-        #         for tr in trajectories:
-        #             self.vae_buffer.append(tr)
-        #             self.experience_buffer.add_trajectory(tr)
-            
-        #     episode_reward_mean = float(np.mean([float(sum(tr["rewards"])) for tr in trajectories]))
-            
-        #     # === NEW: Extract step-level data from batched trajectories ===
-        #     episode_data['num_episodes'] = len(trajectories)
-        #     for tr in trajectories:
-        #         # Extract step-level arrays from trajectory metadata if available
-        #         if "step_info_list" in tr:
-        #             for step_info in tr["step_info_list"]:
-        #                 episode_data['step_rewards'].append(step_info.get('sharpe_reward', 0.0))
-        #                 episode_data['step_capital'].append(step_info.get('capital', 0.0))
-        #                 episode_data['step_weights'].append(step_info.get('weights', []))
-        #                 episode_data['step_returns'].append(step_info.get('log_return', 0.0))
-        #                 episode_data['step_excess_returns'].append(step_info.get('excess_log_return', 0.0))
-        #                 episode_data['step_dsr_alpha'].append(step_info.get('dsr_alpha', 0.0))
-        #                 episode_data['step_dsr_beta'].append(step_info.get('dsr_beta', 0.0))
-        #                 episode_data['step_transaction_costs'].append(step_info.get('transaction_cost', 0.0))
-        #                 episode_data['step_concentrations'].append(step_info.get('portfolio_concentration', 0.0))
-        #                 episode_data['step_active_positions'].append(step_info.get('num_active_positions', 0))
-        #                 episode_data['step_cash_positions'].append(step_info.get('cash_pct', 0.0))
-        #                 episode_data['step_turnovers'].append(step_info.get('turnover', 0.0))
-                
-        #         # Get final capital from last step
-        #         if len(episode_data['step_capital']) > 0:
-        #             episode_data['final_capital'] = episode_data['step_capital'][-1]
-            
-        # else:
+    
         with diag.time_section("collect_single_trajectory"):
             tr = self.collect_trajectory()
             self.vae_buffer.append(tr)
@@ -275,11 +236,11 @@ class PPOTrainer:
     def collect_trajectory(self):
         traj = {"observations": [], "actions": [], "rewards": [], "values": [], "log_probs": [], "latents": [], "dones": []}
         
-        # === NEW: Add step info collection ===
+        # === Add step info collection ===
         step_info_list = []
 
         obs = self.env.reset()
-        print("Reset done:", self.env.done, "terminal_step:", self.env.terminal_step)
+        print("env reset")
         obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
 
         context = {"observations": [], "actions": [], "rewards": []}
@@ -287,9 +248,11 @@ class PPOTrainer:
         step = 0
 
         while not done and step < self.config.max_horizon:
+            print("DEBUG: creating latent")
             latent = self._get_latent_for_step(obs_tensor, context)
 
             with torch.no_grad():
+                print("DEBUG: sampling action")
                 action, _ = self.policy.act(obs_tensor, latent, deterministic=False)
                 values, log_prob, _ = self.policy.evaluate_actions(obs_tensor, latent, action)
 
@@ -676,7 +639,7 @@ class PPOTrainer:
         return total_loss / max(self.config.ppo_epochs, 1)
 
     def update_vae(self):
-        """Enhanced VAE update that returns loss components"""
+        """VariBAD-style VAE update with recursive prior and multi-context ELBO."""
 
         print(f"[VAE] Starting VAE gradient update at episode {self.episode_count}")
 
@@ -687,10 +650,11 @@ class PPOTrainer:
 
         indices = np.random.choice(len(self.vae_buffer), self.config.vae_batch_size, replace=False)
         batch_traj = [self.vae_buffer[i] for i in indices]
+
         total_loss_value = 0.0
         loss_count = 0
         accumulated_components = {}
-        
+
         self.vae_optimizer.zero_grad()
 
         for tr in batch_traj:
@@ -698,37 +662,48 @@ class PPOTrainer:
             if seq_len < 2:
                 continue
 
-            max_t = min(seq_len - 1, 20)
-            t = np.random.randint(1, max_t + 1)
+            # Prepare full trajectory
+            obs_full = tr["observations"].unsqueeze(0).detach()
+            act_full = tr["actions"].unsqueeze(0).detach()
+            rew_full = tr["rewards"].unsqueeze(0).unsqueeze(-1).detach()
 
-            obs_ctx = tr["observations"][:t].detach().clone().unsqueeze(0)
-            act_ctx = tr["actions"][:t].detach().clone().unsqueeze(0)
-            rew_ctx = tr["rewards"][:t].detach().clone().unsqueeze(0).unsqueeze(-1)
+            # Sample a few different context lengths per trajectory
+            max_t = min(seq_len - 1, self.config.max_context_len if hasattr(self.config, "max_context_len") else seq_len - 1)
+            sampled_ts = np.random.choice(range(1, max_t + 1), size=min(3, max_t), replace=False)
 
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
-                vae_loss, loss_components = self.vae.compute_loss(obs_ctx, act_ctx, rew_ctx, beta=self.config.vae_beta, context_len=t)
+            prev_mu, prev_logvar = None, None
+            for t in sorted(sampled_ts):
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
+                    vae_loss, loss_components = self.vae.compute_loss(
+                        obs_full, act_full, rew_full,
+                        context_len=t,
+                        beta=self.config.vae_beta,
+                        prev_mu=prev_mu, prev_logvar=prev_logvar
+                    )
 
-            vae_loss.backward(retain_graph=False)
-            total_loss_value += float(vae_loss.item())
-            loss_count += 1
-            
-            # Accumulate loss components
-            for k, v in loss_components.items():
-                if k not in accumulated_components:
-                    accumulated_components[k] = []
-                accumulated_components[k].append(v)
+                vae_loss.backward(retain_graph=True)  # keep graph for multiple t
+                total_loss_value += float(vae_loss.item())
+                loss_count += 1
+
+                # Update prev posterior for recursion
+                prev_mu, prev_logvar, _ = self.vae.encode(
+                    obs_full[:, :t], act_full[:, :t], rew_full[:, :t]
+                )
+
+                for k, v in loss_components.items():
+                    accumulated_components.setdefault(k, []).append(v)
 
         if loss_count == 0:
             return 0.0, {}
 
         torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
         self.vae_optimizer.step()
-        
-        # Average the accumulated components
+
         avg_components = {k: float(np.mean(v)) for k, v in accumulated_components.items()}
-        print(f"[VAE] Finished backprop (loss={total_loss.item():.4f})")
+        print(f"[VAE] Finished backprop (loss={total_loss_value / loss_count:.4f})")
 
         return total_loss_value / loss_count, avg_components
+
 
     # ---------------------------------------------------------------------
     # Checkpoint helpers (unchanged)
