@@ -66,6 +66,7 @@ class MetaEnv:
         # Tracking (we keep both for interpretability & eval)
         self.log_returns = []         # total portfolio log-returns (incl. cash at rf)
         self.excess_log_returns = []  # excess log-returns over rf (agent's "risk-adjusted" atom)
+        self.relative_excess_log_returns = []
         # DSR state (EWMA first & second moments of EXCESS returns)
         self.alpha = 0.0
         self.beta = 0.0
@@ -154,7 +155,7 @@ class MetaEnv:
         current_state = self.current_task['features'][self.current_step].numpy()  # [N, F]
         
         # Compute reward and normalized allocations
-        reward, weights, w_cash = self.compute_reward_with_capital(action)
+        reward, weights, w_cash, turnover, cost = self.compute_reward_with_capital(action)
         
         # Store transition
         transition_data = {
@@ -214,8 +215,8 @@ class MetaEnv:
             'dsr_variance': max(self.beta - self.alpha**2, self.eps), # Current variance estimate
             
             # === Transaction Costs ===
-            'transaction_cost': cost if 'cost' in locals() else 0.0,
-            'turnover': turnover if 'turnover' in locals() else 0.0,
+            'transaction_cost': cost,
+            'turnover': turnover,
             
             # === Environment Context ===
             'task_id': getattr(self, 'task_id', -1),
@@ -227,6 +228,8 @@ class MetaEnv:
             'current_prices': current_prices.copy() if 'current_prices' in locals() else np.array([]),
             'price_changes': (next_prices - current_prices) if 'next_prices' in locals() else np.array([]),
             'market_return': np.mean(asset_log_returns) if 'asset_log_returns' in locals() else 0.0,
+            'benchmark_log_return': equal_weight_log_return,
+            'relative_excess_log_return': relative_excess_log_return,
         }
 
         
@@ -254,11 +257,16 @@ class MetaEnv:
         current_prices = np.clip(current_prices, self.eps, None)
         next_prices    = np.clip(next_prices,    self.eps, None)
         asset_log_returns = np.log(next_prices) - np.log(current_prices)             # [N]
+        equal_weight_log_return = np.mean(asset_log_returns)
+
 
         # --- 2) Portfolio total LOG-return decomposition:
         # total_log_ret = rf + sum_i w_i * (asset_log_i - rf)
         # DSR is defined on EXCESS returns:
         assets_excess = asset_log_returns - self.rf_step_log                         # [N]
+        equal_weight_excess = equal_weight_log_return - self.rf_step_log # benchmarked
+        agent_excess = np.dot(weights, assets_excess) - cost
+        
         weights, w_cash = normalize_with_budget_constraint(portfolio_weights, self.eps)
 
         # Transaction costs (proportional to turnover)
@@ -271,6 +279,8 @@ class MetaEnv:
         # We do NOT force sum(weights)=1; cash earns rf implicitly via decomposition
         excess_log_return = float(np.dot(weights, assets_excess)) - cost             # scalar
         total_log_return  = self.rf_step_log + excess_log_return                     # scalar
+        relative_excess_log_return = agent_excess - equal_weight_excess
+        
         self.prev_weights = weights
 
         # --- 3) Update capital using TOTAL log-return (for interpretability)
@@ -278,15 +288,16 @@ class MetaEnv:
         self.capital_history.append(self.current_capital)
         self.log_returns.append(total_log_return)
         self.excess_log_returns.append(excess_log_return)
+        self.relative_excess_log_returns.append(relative_excess_log_return)  # vs EW benchmark
 
         # --- 4) Differential Sharpe Ratio (DSR) update
         # EWMA state BEFORE update
         alpha_prev = self.alpha
         beta_prev  = self.beta
 
-        # EWMA updates for EXCESS returns
-        delta_alpha = self.eta * (excess_log_return - alpha_prev)
-        delta_beta  = self.eta * (excess_log_return**2 - beta_prev)
+        # EWMA updates for EXCESS returns ** NOW WITH BENCHMARK **
+        delta_alpha = self.eta * (relative_excess_log_return - alpha_prev)
+        delta_beta  = self.eta * (relative_excess_log_return**2 - beta_prev)
         alpha_new   = alpha_prev + delta_alpha
         beta_new    = beta_prev + delta_beta
 
@@ -305,7 +316,7 @@ class MetaEnv:
             dsr = 0.0
 
         # Return reward and the normalized allocations for logging
-        return float(dsr), weights, w_cash
+        return float(dsr), weights, w_cash, turnover, cost
 
     def rollout_episode(self, policy, encoder):
         """

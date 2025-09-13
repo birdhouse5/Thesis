@@ -321,7 +321,22 @@ class MLflowIntegration:
         
         if error_msg:
             mlflow.log_param("error_message", error_msg[:1000])  # Truncate long error messages
-    
+
+    def log_system_info(self, initial_memory: float, gpu: bool = True):
+    import psutil, torch
+    mlflow.log_param("system_cpu_count", psutil.cpu_count())
+    mlflow.log_param("system_memory_gb", psutil.virtual_memory().total / 1024**3)
+    mlflow.log_param("initial_memory_mb", initial_memory)
+
+    if gpu and torch.cuda.is_available():
+        mlflow.log_param("gpu_name", torch.cuda.get_device_name())
+        mlflow.log_param("gpu_memory_gb", torch.cuda.get_device_properties(0).total_memory / 1024**3)
+
+    def log_final_system_metrics(self, final_memory: float, training_time: float, initial_memory: float):
+        mlflow.log_metric("memory_peak_mb", final_memory)
+        mlflow.log_metric("memory_increase_mb", final_memory - initial_memory)
+        mlflow.log_metric("wall_time_minutes", training_time / 60)
+
     @staticmethod
     def _safe_skew(data):
         """Compute skewness safely."""

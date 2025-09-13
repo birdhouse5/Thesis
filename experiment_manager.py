@@ -10,6 +10,8 @@ import torch
 import gc
 
 from config import ExperimentConfig, experiment_to_training_config
+from mlflow_logger import MLflowIntegration
+
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +96,10 @@ class ExperimentManager:
         from main import run_training
         import mlflow
         
+        mlflow_integration = MLflowIntegration(run_name=exp_name, config=vars(cfg))
+        mlflow_integration.setup_mlflow()
+        mlflow_integration.log_config()
+
         cfg = experiment_to_training_config(exp_config)
         exp_name = cfg.exp_name
         
@@ -107,24 +113,15 @@ class ExperimentManager:
         try:
             with mlflow.start_run(run_name=exp_name):
                 # Log system info
-                mlflow.log_param("system_cpu_count", psutil.cpu_count())
-                mlflow.log_param("system_memory_gb", psutil.virtual_memory().total / 1024**3)
-                mlflow.log_param("initial_memory_mb", initial_memory)
-                
-                if torch.cuda.is_available():
-                    mlflow.log_param("gpu_name", torch.cuda.get_device_name())
-                    mlflow.log_param("gpu_memory_gb", torch.cuda.get_device_properties(0).total_memory / 1024**3)
-                
+                mlflow_integration.log_system_info(initial_memory)
+
                 # Run training
                 results = run_training(cfg)
-                
-                # Log final system metrics
+
+                # Final system metrics
                 final_memory = process.memory_info().rss / 1024 / 1024
                 training_time = time.time() - start_time
-                
-                mlflow.log_metric("memory_peak_mb", final_memory)
-                mlflow.log_metric("memory_increase_mb", final_memory - initial_memory)
-                mlflow.log_metric("wall_time_minutes", training_time / 60)
+                mlflow_integration.log_final_system_metrics(final_memory, training_time, initial_memory)
                 
                 # Success
                 results['wall_time_seconds'] = training_time
