@@ -158,7 +158,7 @@ class PPOTrainer:
         vae_loss = 0.0
         vae_loss_components = {}  # NEW: Store VAE loss components
         
-        with diag.time_section("update_joint"):
+        with diag.time_section("updating joint objective"):
             update_info = self.update_joint(tr)   # update right away with the current trajectory
 
 
