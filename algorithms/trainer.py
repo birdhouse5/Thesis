@@ -161,18 +161,16 @@ class PPOTrainer:
         if self.experience_buffer.is_ready():
             with diag.time_section("update_joint"):
                 print("-" * 30, "UPDATING POLICY + VAE (JOINT)")
-                trajs = self.experience_buffer.get_all()  # however you batch
-                # for now, just use the last trajectory
-                policy_loss, vae_loss, vae_loss_components = self.update_joint(trajs[-1])
+                for traj in self.experience_buffer.get_all():
+                    update_info = self.update_joint(traj)
             self.experience_buffer.clear()
+        else:
+            update_info = {}
 
-        if (
-            not getattr(self.config, "disable_vae", False)
-            and self.episode_count % self.config.vae_update_freq == 0
-            and len(self.vae_buffer) >= self.config.vae_batch_size
-        ):
-            with diag.time_section("update_vae"):
-                vae_loss, vae_loss_components = self.update_vae()
+        # --- extract update info (if any) ---
+        policy_loss = update_info.get("policy_loss", 0.0)
+        vae_loss = update_info.get("vae_loss", 0.0)
+        vae_loss_components = {k.replace("vae_", ""): v for k, v in update_info.items() if k.startswith("vae_")}
 
         self.episode_rewards.append(float(episode_reward_mean))
         if policy_loss > 0:
@@ -193,7 +191,7 @@ class PPOTrainer:
             "policy_loss": float(policy_loss),
             "vae_loss": float(vae_loss),
             "total_steps": int(self.total_steps),
-            
+
             # === NEW: Episode-level portfolio aggregates ===
             "episode_final_capital": float(episode_data['final_capital']),
             "episode_total_return": float(sum(episode_data['step_returns'])) if episode_data['step_returns'] else 0.0,
@@ -206,28 +204,28 @@ class PPOTrainer:
             "episode_avg_turnover": float(np.mean(episode_data['step_turnovers'])) if episode_data['step_turnovers'] else 0.0,
             "episode_volatility": float(np.std(episode_data['step_returns'])) if len(episode_data['step_returns']) > 1 else 0.0,
             "episode_excess_volatility": float(np.std(episode_data['step_excess_returns'])) if len(episode_data['step_excess_returns']) > 1 else 0.0,
-            
+
             # === NEW: DSR tracking ===
             "episode_final_dsr_alpha": float(episode_data['step_dsr_alpha'][-1]) if episode_data['step_dsr_alpha'] else 0.0,
             "episode_final_dsr_beta": float(episode_data['step_dsr_beta'][-1]) if episode_data['step_dsr_beta'] else 0.0,
             "episode_dsr_variance": float(max(episode_data['step_dsr_beta'][-1] - episode_data['step_dsr_alpha'][-1]**2, 1e-8)) if episode_data['step_dsr_beta'] and episode_data['step_dsr_alpha'] else 0.0,
-            
+
             # === NEW: Portfolio composition tracking ===
             "episode_long_exposure": float(np.mean([np.sum(np.maximum(w, 0)) for w in episode_data['step_weights']])) if episode_data['step_weights'] else 0.0,
             "episode_short_exposure": float(np.mean([np.sum(np.abs(np.minimum(w, 0))) for w in episode_data['step_weights']])) if episode_data['step_weights'] else 0.0,
-            
+
             # === NEW: VAE loss components (when available) ===
             **{f"vae_{k}": float(v) for k, v in vae_loss_components.items()},
-            
+
             # === NEW: Rolling statistics ===
             "rolling_avg_episode_reward": float(np.mean(list(self.episode_rewards))) if self.episode_rewards else 0.0,
             "rolling_std_episode_reward": float(np.std(list(self.episode_rewards))) if len(self.episode_rewards) > 1 else 0.0,
             "rolling_avg_policy_loss": float(np.mean(list(self.policy_losses))) if self.policy_losses else 0.0,
             "rolling_avg_vae_loss": float(np.mean(list(self.vae_losses))) if self.vae_losses else 0.0,
-            
+
             # === NEW: Step-by-step data for artifact logging ===
             "step_data": episode_data,
-            
+
             # === NEW: Training diagnostics ===
             "num_episodes_in_batch": int(episode_data['num_episodes']),
             "episode_count": int(self.episode_count),
@@ -572,6 +570,99 @@ class PPOTrainer:
     # ---------------------------------------------------------------------
     # PPO / VAE updates (unchanged)
     # ---------------------------------------------------------------------
+    
+    def compute_gae(self, rewards, values, dones, last_value=0.0):
+        """
+        Generalized Advantage Estimation (Schulman et al., 2016).
+        Computes normalized advantages and returns.
+
+        Args:
+            rewards: tensor (T,)
+            values: tensor (T,)
+            dones: tensor (T,) of 0/1 or bool
+            last_value: bootstrap value for final step (default 0)
+
+        Returns:
+            advantages, returns (both tensors shape (T,))
+        """
+        gamma = self.config.discount_factor
+        lam = self.config.gae_lambda
+        T = len(rewards)
+
+        advantages = torch.zeros_like(rewards, device=self.device)
+        returns = torch.zeros_like(rewards, device=self.device)
+
+        gae = 0.0
+        next_value = last_value
+        for t in reversed(range(T)):
+            mask = 1.0 - dones[t].float()
+            delta = rewards[t] + gamma * next_value * mask - values[t]
+            gae = delta + gamma * lam * mask * gae
+            advantages[t] = gae
+            returns[t] = gae + values[t]
+            next_value = values[t]
+
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        return advantages, returns
+
+
+    def ppo_loss(self, traj):
+        """
+        PPO clipped surrogate objective + value loss + entropy bonus.
+        References:
+        - Schulman et al., 2017 (PPO paper)
+        - Spinning Up PPO implementation
+        """
+        obs = traj["observations"].to(self.device)
+        actions = traj["actions"].to(self.device)
+        latents = traj["latents"].to(self.device)
+        rewards = traj["rewards"].to(self.device)
+        values = traj["values"].to(self.device)
+        dones = traj["dones"].to(self.device)
+        old_logp = traj["log_probs"].to(self.device)
+
+        # Bootstrap if provided
+        last_value = traj.get("last_value", 0.0)
+        if isinstance(last_value, torch.Tensor):
+            last_value = last_value.to(self.device)
+
+        # Compute GAE
+        advantages, returns = self.compute_gae(rewards, values, dones, last_value)
+
+        # Evaluate current policy
+        new_values, new_logp, entropy = self.policy.evaluate_actions(obs, latents, actions)
+        new_values = new_values.squeeze(-1)
+        new_logp = new_logp.squeeze(-1)
+        entropy = entropy.squeeze(-1)
+
+        # Probability ratio
+        ratio = torch.exp(new_logp - old_logp)
+
+        # Clipped surrogate loss
+        eps = self.config.ppo_clip_ratio
+        surr1 = ratio * advantages
+        surr2 = torch.clamp(ratio, 1.0 - eps, 1.0 + eps) * advantages
+        policy_loss = -torch.min(surr1, surr2).mean()
+
+        # Value loss
+        value_loss = F.mse_loss(new_values, returns) * self.config.value_loss_coef
+
+        # Entropy bonus
+        entropy_loss = -self.config.entropy_coef * entropy.mean()
+
+        total_loss = policy_loss + value_loss + entropy_loss
+
+        return total_loss, {
+            "policy_loss": policy_loss.item(),
+            "value_loss": value_loss.item(),
+            "entropy": entropy.mean().item(),
+            "advantages_mean": advantages.mean().item(),
+            "ratio_mean": ratio.mean().item()
+        }
+
+    
+    
+    
     def compute_advantages(self, trajectory):
         rewards = trajectory["rewards"]
         values = trajectory["values"]
@@ -597,35 +688,42 @@ class PPOTrainer:
         """
         Joint update of policy (PPO) and VAE using a single objective.
         """
-        # --- VAE prep ---
-        obs_seq = traj["observations"].unsqueeze(0)   # (1, H, N, F)
-        action_seq = traj["actions"].unsqueeze(0)     # (1, H, N)
-        reward_seq = torch.tensor(
-            traj["rewards"], device=self.device
-        ).view(1, -1, 1)
-
-        # VAE loss
-        vae_loss, vae_components = self.vae.compute_loss(
-            obs_seq, action_seq, reward_seq,
-            beta=self.config.vae_beta
-        ) if self.vae is not None and not self.config.disable_vae else (0.0, {})
-
         # --- PPO loss ---
-        policy_loss = self._ppo_loss(traj)  # reuse your existing PPO routine
+        ppo_loss, ppo_comps = self.ppo_loss(traj)
+
+        # --- VAE loss ---
+        vae_loss, vae_comps = (0.0, {})
+        if self.vae is not None and not self.config.disable_vae:
+            obs_seq = traj["observations"].unsqueeze(0)   # (1, T, N, F)
+            action_seq = traj["actions"].unsqueeze(0)     # (1, T, N)
+            reward_seq = traj["rewards"].unsqueeze(0).unsqueeze(-1)  # (1, T, 1)
+            vae_loss, vae_comps = self.vae.compute_loss(
+                obs_seq, action_seq, reward_seq,
+                beta=self.config.vae_beta
+            )
 
         # --- Joint objective ---
-        joint_loss = policy_loss + self.config.joint_loss_lambda * vae_loss
+        joint_loss = ppo_loss + self.config.joint_loss_lambda * vae_loss
 
         self.optimizer.zero_grad()
         joint_loss.backward()
         torch.nn.utils.clip_grad_norm_(
-            list(self.policy.parameters()) + (
-                list(self.vae.parameters()) if self.vae is not None else []),
+            list(self.policy.parameters()) +
+            (list(self.vae.parameters()) if self.vae is not None else []),
             self.config.max_grad_norm
         )
         self.optimizer.step()
 
-        return policy_loss.item(), (vae_loss.item() if vae_loss != 0.0 else 0.0), vae_components
+        return {
+            "policy_loss": ppo_comps["policy_loss"],
+            "value_loss": ppo_comps["value_loss"],
+            "entropy": ppo_comps["entropy"],
+            "advantages_mean": ppo_comps["advantages_mean"],
+            "ratio_mean": ppo_comps["ratio_mean"],
+            "vae_loss": vae_loss.item() if vae_loss != 0.0 else 0.0,
+            **{f"vae_{k}": v for k, v in vae_comps.items()}
+        }
+
 
 
     # def update_policy(self):
