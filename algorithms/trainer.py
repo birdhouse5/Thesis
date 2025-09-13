@@ -196,9 +196,20 @@ class PPOTrainer:
             "episode_avg_active_positions": float(np.mean(episode_data['step_active_positions'])) if episode_data['step_active_positions'] else 0.0,
             "episode_avg_cash_position": float(np.mean(episode_data['step_cash_positions'])) if episode_data['step_cash_positions'] else 0.0,
             "episode_total_transaction_costs": float(sum(episode_data['step_transaction_costs'])) if episode_data['step_transaction_costs'] else 0.0,
-            "episode_avg_turnover": float(np.mean(episode_data['step_turnovers'])) if episode_data['step_turnovers'] else 0.0,
             "episode_volatility": float(np.std(episode_data['step_returns'])) if len(episode_data['step_returns']) > 1 else 0.0,
             "episode_excess_volatility": float(np.std(episode_data['step_excess_returns'])) if len(episode_data['step_excess_returns']) > 1 else 0.0,
+
+            # === NEW: aggregated info metrics ===
+            "episode_avg_reward": float(np.mean(episode_data['step_rewards'])) if episode_data['step_rewards'] else 0.0,
+            "episode_sum_reward": float(np.sum(episode_data['step_rewards'])) if episode_data['step_rewards'] else 0.0,
+            "episode_avg_long_exposure": float(np.mean(episode_data['step_long_exposures'])) if episode_data['step_long_exposures'] else 0.0,
+            "episode_avg_short_exposure": float(np.mean(episode_data['step_short_exposures'])) if episode_data['step_short_exposures'] else 0.0,
+            "episode_avg_net_exposure": float(np.mean(episode_data['step_net_exposures'])) if episode_data['step_net_exposures'] else 0.0,
+            "episode_avg_gross_exposure": float(np.mean(episode_data['step_gross_exposures'])) if episode_data['step_gross_exposures'] else 0.0,
+            "episode_max_active_positions": float(np.max(episode_data['step_active_positions'])) if episode_data['step_active_positions'] else 0.0,
+            "episode_sum_transaction_costs": float(np.sum(episode_data['step_transaction_costs'])) if episode_data['step_transaction_costs'] else 0.0,
+            "episode_avg_turnover": float(np.mean(episode_data['step_turnovers'])) if episode_data['step_turnovers'] else 0.0,
+            "episode_sum_rel_excess_return": float(np.sum(episode_data['step_rel_excess_returns'])) if episode_data['step_rel_excess_returns'] else 0.0,
 
             # === NEW: DSR tracking ===
             "episode_final_dsr_alpha": float(episode_data['step_dsr_alpha'][-1]) if episode_data['step_dsr_alpha'] else 0.0,
@@ -208,6 +219,9 @@ class PPOTrainer:
             # === NEW: Portfolio composition tracking ===
             "episode_long_exposure": float(np.mean([np.sum(np.maximum(w, 0)) for w in episode_data['step_weights']])) if episode_data['step_weights'] else 0.0,
             "episode_short_exposure": float(np.mean([np.sum(np.abs(np.minimum(w, 0))) for w in episode_data['step_weights']])) if episode_data['step_weights'] else 0.0,
+            "episode_net_exposure": float(np.mean([np.sum(w) for w in episode_data['step_weights']])) if episode_data['step_weights'] else 0.0,
+            "episode_gross_exposure": float(np.mean([np.sum(np.abs(w)) for w in episode_data['step_weights']])) if episode_data['step_weights'] else 0.0,
+
 
             # === NEW: VAE loss components (when available) ===
             **{f"vae_{k}": float(v) for k, v in vae_loss_components.items()},
@@ -225,6 +239,7 @@ class PPOTrainer:
             "num_episodes_in_batch": int(episode_data['num_episodes']),
             "episode_count": int(self.episode_count),
             "steps_per_episode": float(len(episode_data['step_returns'])) if episode_data['step_returns'] else 0.0,
+
         }
 
         return results

@@ -150,7 +150,24 @@ class MLflowIntegration:
             mlflow.log_metric("portfolio_active_positions", np.sum(weights > 0.01), step=episode)
             mlflow.log_metric("portfolio_long_exposure", np.sum(weights[weights > 0]), step=episode)
             mlflow.log_metric("portfolio_short_exposure", abs(np.sum(weights[weights < 0])), step=episode)
-        
+            mlflow.log_metric("portfolio_net_exposure", np.sum(weights), step=episode)
+            mlflow.log_metric("portfolio_gross_exposure", np.sum(np.abs(weights)), step=episode)
+
+            aggregate_keys = [
+            "episode_avg_reward",
+            "episode_sum_reward",
+            "episode_avg_long_exposure",
+            "episode_avg_short_exposure",
+            "episode_avg_net_exposure",
+            "episode_avg_gross_exposure",
+            "episode_max_active_positions",
+            "episode_sum_transaction_costs",
+            "episode_sum_rel_excess_return",
+        ]
+        for key in aggregate_keys:
+            if key in portfolio_data:
+                mlflow.log_metric(key, portfolio_data[key], step=episode)
+
         # Performance metrics
         performance_metrics = [
             'cumulative_return', 'episode_sharpe', 'episode_volatility', 

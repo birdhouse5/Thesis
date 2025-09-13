@@ -200,6 +200,8 @@ class MetaEnv:
             'weights': weights.copy(),                    # Portfolio allocation
             'weights_long': weights[weights > 0].sum(),   # Long exposure
             'weights_short': abs(weights[weights < 0]).sum(), # Short exposure
+            'net_exposure': np.sum(weights),             
+            'gross_exposure': np.sum(np.abs(weights)),
             'portfolio_concentration': np.sum(weights**2), # HHI concentration
             'num_active_positions': np.sum(np.abs(weights) > 0.01), # Active positions
             
