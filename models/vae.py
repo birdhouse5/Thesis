@@ -293,7 +293,7 @@ class ObservationDecoder(nn.Module):
             action_seq.reshape(B, T, -1),
             latent_exp
         ], dim=-1)
-        x = self.fc_layers(x)   # implement with nn.Sequential
+        x = self.fc(x)   # implement with nn.Sequential
         return x.view(B, T, N, F)
 
 
@@ -351,5 +351,5 @@ class RewardDecoder(nn.Module):
             next_obs_seq.reshape(B, T, -1),
             latent_exp
         ], dim=-1)
-        x = self.fc_layers(x)
+        x = self.fc(x)
         return x  # (B, T, 1)
