@@ -122,71 +122,71 @@ class PPOTrainer:
             'num_episodes': 0
         }
         
-        if self.num_envs > 1:
-            if self.use_fixed_length:
-                with diag.time_section("collect_fixed_length_batched"):
-                    trajectories = self.collect_trajectories_batched_fixed_length(self.num_envs)
-            else:
-                with diag.time_section("collect_trajectories_batched"):
-                    trajectories = self.collect_trajectories_batched(self.num_envs)
+        # if self.num_envs > 1:
+        #     if self.use_fixed_length:
+        #         with diag.time_section("collect_fixed_length_batched"):
+        #             trajectories = self.collect_trajectories_batched_fixed_length(self.num_envs)
+        #     else:
+        #         with diag.time_section("collect_trajectories_batched"):
+        #             trajectories = self.collect_trajectories_batched(self.num_envs)
             
-            with diag.time_section("add_to_buffers"):
-                for tr in trajectories:
-                    self.vae_buffer.append(tr)
-                    self.experience_buffer.add_trajectory(tr)
+        #     with diag.time_section("add_to_buffers"):
+        #         for tr in trajectories:
+        #             self.vae_buffer.append(tr)
+        #             self.experience_buffer.add_trajectory(tr)
             
-            episode_reward_mean = float(np.mean([float(sum(tr["rewards"])) for tr in trajectories]))
+        #     episode_reward_mean = float(np.mean([float(sum(tr["rewards"])) for tr in trajectories]))
             
-            # === NEW: Extract step-level data from batched trajectories ===
-            episode_data['num_episodes'] = len(trajectories)
-            for tr in trajectories:
-                # Extract step-level arrays from trajectory metadata if available
-                if "step_info_list" in tr:
-                    for step_info in tr["step_info_list"]:
-                        episode_data['step_rewards'].append(step_info.get('sharpe_reward', 0.0))
-                        episode_data['step_capital'].append(step_info.get('capital', 0.0))
-                        episode_data['step_weights'].append(step_info.get('weights', []))
-                        episode_data['step_returns'].append(step_info.get('log_return', 0.0))
-                        episode_data['step_excess_returns'].append(step_info.get('excess_log_return', 0.0))
-                        episode_data['step_dsr_alpha'].append(step_info.get('dsr_alpha', 0.0))
-                        episode_data['step_dsr_beta'].append(step_info.get('dsr_beta', 0.0))
-                        episode_data['step_transaction_costs'].append(step_info.get('transaction_cost', 0.0))
-                        episode_data['step_concentrations'].append(step_info.get('portfolio_concentration', 0.0))
-                        episode_data['step_active_positions'].append(step_info.get('num_active_positions', 0))
-                        episode_data['step_cash_positions'].append(step_info.get('cash_pct', 0.0))
-                        episode_data['step_turnovers'].append(step_info.get('turnover', 0.0))
+        #     # === NEW: Extract step-level data from batched trajectories ===
+        #     episode_data['num_episodes'] = len(trajectories)
+        #     for tr in trajectories:
+        #         # Extract step-level arrays from trajectory metadata if available
+        #         if "step_info_list" in tr:
+        #             for step_info in tr["step_info_list"]:
+        #                 episode_data['step_rewards'].append(step_info.get('sharpe_reward', 0.0))
+        #                 episode_data['step_capital'].append(step_info.get('capital', 0.0))
+        #                 episode_data['step_weights'].append(step_info.get('weights', []))
+        #                 episode_data['step_returns'].append(step_info.get('log_return', 0.0))
+        #                 episode_data['step_excess_returns'].append(step_info.get('excess_log_return', 0.0))
+        #                 episode_data['step_dsr_alpha'].append(step_info.get('dsr_alpha', 0.0))
+        #                 episode_data['step_dsr_beta'].append(step_info.get('dsr_beta', 0.0))
+        #                 episode_data['step_transaction_costs'].append(step_info.get('transaction_cost', 0.0))
+        #                 episode_data['step_concentrations'].append(step_info.get('portfolio_concentration', 0.0))
+        #                 episode_data['step_active_positions'].append(step_info.get('num_active_positions', 0))
+        #                 episode_data['step_cash_positions'].append(step_info.get('cash_pct', 0.0))
+        #                 episode_data['step_turnovers'].append(step_info.get('turnover', 0.0))
                 
-                # Get final capital from last step
-                if len(episode_data['step_capital']) > 0:
-                    episode_data['final_capital'] = episode_data['step_capital'][-1]
+        #         # Get final capital from last step
+        #         if len(episode_data['step_capital']) > 0:
+        #             episode_data['final_capital'] = episode_data['step_capital'][-1]
             
-        else:
-            with diag.time_section("collect_single_trajectory"):
-                tr = self.collect_trajectory()
-                self.vae_buffer.append(tr)
-                self.experience_buffer.add_trajectory(tr)
-            episode_reward_mean = float(sum(tr["rewards"]))
-            
-            # === NEW: Extract step-level data from single trajectory ===
-            episode_data['num_episodes'] = 1
-            if "step_info_list" in tr:
-                for step_info in tr["step_info_list"]:
-                    episode_data['step_rewards'].append(step_info.get('sharpe_reward', 0.0))
-                    episode_data['step_capital'].append(step_info.get('capital', 0.0))
-                    episode_data['step_weights'].append(step_info.get('weights', []))
-                    episode_data['step_returns'].append(step_info.get('log_return', 0.0))
-                    episode_data['step_excess_returns'].append(step_info.get('excess_log_return', 0.0))
-                    episode_data['step_dsr_alpha'].append(step_info.get('dsr_alpha', 0.0))
-                    episode_data['step_dsr_beta'].append(step_info.get('dsr_beta', 0.0))
-                    episode_data['step_transaction_costs'].append(step_info.get('transaction_cost', 0.0))
-                    episode_data['step_concentrations'].append(step_info.get('portfolio_concentration', 0.0))
-                    episode_data['step_active_positions'].append(step_info.get('num_active_positions', 0))
-                    episode_data['step_cash_positions'].append(step_info.get('cash_pct', 0.0))
-                    episode_data['step_turnovers'].append(step_info.get('turnover', 0.0))
-            
-            # Get final capital
-            if len(episode_data['step_capital']) > 0:
-                episode_data['final_capital'] = episode_data['step_capital'][-1]
+        # else:
+        with diag.time_section("collect_single_trajectory"):
+            tr = self.collect_trajectory()
+            self.vae_buffer.append(tr)
+            self.experience_buffer.add_trajectory(tr)
+        episode_reward_mean = float(sum(tr["rewards"]))
+        
+        # === Extract step-level data from single trajectory ===
+        episode_data['num_episodes'] = 1
+        if "step_info_list" in tr:
+            for step_info in tr["step_info_list"]:
+                episode_data['step_rewards'].append(step_info.get('sharpe_reward', 0.0))
+                episode_data['step_capital'].append(step_info.get('capital', 0.0))
+                episode_data['step_weights'].append(step_info.get('weights', []))
+                episode_data['step_returns'].append(step_info.get('log_return', 0.0))
+                episode_data['step_excess_returns'].append(step_info.get('excess_log_return', 0.0))
+                episode_data['step_dsr_alpha'].append(step_info.get('dsr_alpha', 0.0))
+                episode_data['step_dsr_beta'].append(step_info.get('dsr_beta', 0.0))
+                episode_data['step_transaction_costs'].append(step_info.get('transaction_cost', 0.0))
+                episode_data['step_concentrations'].append(step_info.get('portfolio_concentration', 0.0))
+                episode_data['step_active_positions'].append(step_info.get('num_active_positions', 0))
+                episode_data['step_cash_positions'].append(step_info.get('cash_pct', 0.0))
+                episode_data['step_turnovers'].append(step_info.get('turnover', 0.0))
+        
+        # Get final capital
+        if len(episode_data['step_capital']) > 0:
+            episode_data['final_capital'] = episode_data['step_capital'][-1]
 
         # Updates
         policy_loss = 0.0
@@ -678,7 +678,7 @@ class PPOTrainer:
         """Enhanced VAE update that returns loss components"""
 
         print(f"[VAE] Starting VAE gradient update at episode {self.episode_count}")
-        
+
         if self.vae_optimizer is None:
             return 0.0, {}
         if len(self.vae_buffer) < self.config.vae_batch_size:

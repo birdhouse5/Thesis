@@ -314,13 +314,13 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                     episodes_trained += 1
                     pbar.update(1)
                     
-                    # === CORE TRAINING METRICS (existing) ===
+                    # === CORE TRAINING METRICS ===
                     mlflow.log_metric("episode_reward", result.get('episode_reward', 0), step=episodes_trained)
                     mlflow.log_metric("policy_loss", result.get('policy_loss', 0), step=episodes_trained)
                     mlflow.log_metric("vae_loss", result.get('vae_loss', 0), step=episodes_trained)
                     mlflow.log_metric("total_steps", result.get('total_steps', 0), step=episodes_trained)
                     
-                    # === NEW: EPISODE-LEVEL PORTFOLIO METRICS ===
+                    # === EPISODE-LEVEL PORTFOLIO METRICS ===
                     mlflow.log_metric("episode_final_capital", result.get('episode_final_capital', 0), step=episodes_trained)
                     mlflow.log_metric("episode_total_return", result.get('episode_total_return', 0), step=episodes_trained)
                     mlflow.log_metric("episode_total_excess_return", result.get('episode_total_excess_return', 0), step=episodes_trained)
@@ -333,31 +333,31 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                     mlflow.log_metric("episode_volatility", result.get('episode_volatility', 0), step=episodes_trained)
                     mlflow.log_metric("episode_excess_volatility", result.get('episode_excess_volatility', 0), step=episodes_trained)
                     
-                    # === NEW: DSR STATE TRACKING ===
+                    # === DSR STATE TRACKING ===
                     mlflow.log_metric("episode_final_dsr_alpha", result.get('episode_final_dsr_alpha', 0), step=episodes_trained)
                     mlflow.log_metric("episode_final_dsr_beta", result.get('episode_final_dsr_beta', 0), step=episodes_trained)
                     mlflow.log_metric("episode_dsr_variance", result.get('episode_dsr_variance', 0), step=episodes_trained)
                     
-                    # === NEW: PORTFOLIO COMPOSITION TRACKING ===
+                    # === PORTFOLIO COMPOSITION TRACKING ===
                     mlflow.log_metric("episode_long_exposure", result.get('episode_long_exposure', 0), step=episodes_trained)
                     mlflow.log_metric("episode_short_exposure", result.get('episode_short_exposure', 0), step=episodes_trained)
                     
-                    # === NEW: ROLLING STATISTICS ===
+                    # === ROLLING STATISTICS ===
                     mlflow.log_metric("rolling_avg_episode_reward", result.get('rolling_avg_episode_reward', 0), step=episodes_trained)
                     mlflow.log_metric("rolling_std_episode_reward", result.get('rolling_std_episode_reward', 0), step=episodes_trained)
                     mlflow.log_metric("rolling_avg_policy_loss", result.get('rolling_avg_policy_loss', 0), step=episodes_trained)
                     mlflow.log_metric("rolling_avg_vae_loss", result.get('rolling_avg_vae_loss', 0), step=episodes_trained)
                     
-                    # === NEW: TRAINING DIAGNOSTICS ===
+                    # === TRAINING DIAGNOSTICS ===
                     mlflow.log_metric("num_episodes_in_batch", result.get('num_episodes_in_batch', 1), step=episodes_trained)
                     mlflow.log_metric("steps_per_episode", result.get('steps_per_episode', 0), step=episodes_trained)
                     
-                    # === NEW: VAE LOSS COMPONENTS (when available) ===
+                    # === VAE LOSS COMPONENTS (when available) ===
                     vae_components = {k: v for k, v in result.items() if k.startswith('vae_') and k != 'vae_loss'}
                     for component_name, component_value in vae_components.items():
                         mlflow.log_metric(component_name, component_value, step=episodes_trained)
                     
-                    # === NEW: STEP-BY-STEP DATA AS ARTIFACTS (every N episodes) ===
+                    # === STEP-BY-STEP DATA AS ARTIFACTS (every N episodes) ===
                     if episodes_trained % 50 == 0 and 'step_data' in result:
                         step_data = result['step_data']
                         

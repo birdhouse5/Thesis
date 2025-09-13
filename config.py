@@ -8,8 +8,8 @@ class ExperimentConfig:
     seed: int
     asset_class: str       # "sp500" | "crypto"
     encoder: str           # "vae" | "none" | "hmm"
-    min_horizon: int = 150
-    max_horizon: int = 200
+    min_horizon: int = 5 #TODO
+    max_horizon: int = 5 #TODO
     exp_name: Optional[str] = None
     force_recreate: bool = False
 
@@ -119,10 +119,10 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         policy_lr=0.0020289998766945,
         vae_beta=0.0125762666385515,
         vae_update_freq=5,
-        seq_len=5, #TODO old 200
+        seq_len=5, #TODO old: 200,
         episodes_per_task=3,
-        batch_size=16384, #TODO old: 8192
-        vae_batch_size=2048, #TODO old: 1024
+        batch_size=8192,
+        vae_batch_size=1024,
         ppo_epochs=8,
         entropy_coef=0.0013141391952945,
         max_episodes=6000,
@@ -135,7 +135,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         num_assets=30,
         device="cuda",
         val_episodes=50,
-        test_episodes=100, # why is this here? -> we do final test on these number of episodes
+        test_episodes=100, #-> we do final test on these number of episodes
         ppo_clip_ratio=0.2,
         value_loss_coef=0.5,
         max_grad_norm=0.5,
@@ -143,7 +143,6 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         discount_factor=0.99,
         min_horizon=exp.min_horizon,
         max_horizon=exp.max_horizon,
-        # DSR parameters (defaults, will be overridden by HPO)
         eta=eta,
         rf_rate=0.02,
         transaction_cost_rate=0.001
