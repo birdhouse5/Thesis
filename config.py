@@ -48,6 +48,7 @@ class TrainingConfig:
     vae_lr: float
     policy_lr: float
     noise_factor: float
+    random_policy: bool
     vae_beta: float
     vae_update_freq: int
     seq_len: int
@@ -121,7 +122,8 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         hidden_dim=1024,
         vae_lr=0.0010748206602172,
         policy_lr=0.0020289998766945,
-        noise_factor=0.05,
+        noise_factor=0.05, #TODO
+        random_policy=True,
         vae_beta=0.0125762666385515,
         vae_update_freq=5,
         seq_len=200,
