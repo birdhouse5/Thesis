@@ -155,7 +155,7 @@ class MetaEnv:
         current_state = self.current_task['features'][self.current_step].numpy()  # [N, F]
         
         # Compute reward and normalized allocations
-        reward, weights, w_cash, turnover, cost = self.compute_reward_with_capital(action)
+        reward, weights, w_cash, turnover, cost, equal_weight_log_return, relative_excess_log_return = self.compute_reward_with_capital(action)
         
         # Store transition
         transition_data = {
@@ -307,7 +307,7 @@ class MetaEnv:
         if self.current_step < 2:  # gate very-early steps
             dsr = 0.0
 
-        return float(dsr), weights, w_cash, turnover, cost
+        return float(dsr), weights, w_cash, turnover, cost, equal_weight_log_return, relative_excess_log_return
 
 
     def rollout_episode(self, policy, encoder):
