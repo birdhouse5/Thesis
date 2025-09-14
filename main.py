@@ -33,7 +33,6 @@ from algorithms.trainer import PPOTrainer
 from evaluation_backtest import evaluate, run_sequential_backtest
 import shutil
 
-torch.serialization.add_safe_globals([np._core.multiarray.scalar])
 
 def save_checkpoint(ckpt_dir: Path, state: dict):
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -48,15 +47,20 @@ def save_checkpoint(ckpt_dir: Path, state: dict):
     logger.info(f"💾 Saved checkpoint: {path}")
 
 def load_latest_checkpoint(ckpt_dir: Path):
-    state = torch.load(latest, map_location="cpu", weights_only=False)
     if not ckpt_dir.exists():
+        logger.info(f"No checkpoint directory at {ckpt_dir}, starting fresh.")
         return None, None
 
     checkpoints = list(ckpt_dir.glob("checkpoint_ep*.pt"))
     if not checkpoints:
+        logger.info(f"No checkpoint files found in {ckpt_dir}, starting fresh.")
         return None, None
 
     latest = max(checkpoints, key=lambda p: int(p.stem.split("ep")[-1]))
+
+    import torch, numpy
+    torch.serialization.add_safe_globals([numpy._core.multiarray.scalar])
+
     state = torch.load(latest, map_location="cpu")
 
     run_info_file = ckpt_dir / "run_info.json"
@@ -67,7 +71,6 @@ def load_latest_checkpoint(ckpt_dir: Path):
 
     logger.info(f"🔄 Loaded checkpoint from {latest}")
     return state, run_info
-
 
 
 class NpEncoder(json.JSONEncoder):
