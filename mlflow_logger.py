@@ -187,12 +187,12 @@ class MLflowIntegration:
     #             mlflow.log_metric(f"portfolio_{metric}", portfolio_data[metric], step=episode)
     
     def log_training_episode(self, episode: int, metrics: Dict[str, Any]):
-    """Log all training-related episode metrics."""
-    self.episode_count = episode
+        """Log all training-related episode metrics."""
+        self.episode_count = episode
 
-    for key, value in metrics.items():
-        if isinstance(value, (int, float, np.floating)):
-            mlflow.log_metric(key, float(value), step=episode)
+        for key, value in metrics.items():
+            if isinstance(value, (int, float, np.floating)):
+                mlflow.log_metric(key, float(value), step=episode)
 
 
     def log_portfolio_episode(self, episode: int, portfolio_data: Dict[str, Any]):
