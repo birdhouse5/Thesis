@@ -116,76 +116,107 @@ class MLflowIntegration:
             else:
                 mlflow.log_param(key, str(value))
     
-    def log_training_episode(self, episode: int, metrics: Dict[str, float]):
-        """Log training episode metrics."""
-        self.episode_count = episode
+    # def log_training_episode(self, episode: int, metrics: Dict[str, float]):
+    #     """Log training episode metrics."""
+    #     self.episode_count = episode
         
-        # Core training metrics
-        if 'episode_reward' in metrics:
-            mlflow.log_metric("train_episode_reward", metrics['episode_reward'], step=episode)
-        if 'policy_loss' in metrics:
-            mlflow.log_metric("train_policy_loss", metrics['policy_loss'], step=episode)
-        if 'vae_loss' in metrics:
-            mlflow.log_metric("train_vae_loss", metrics['vae_loss'], step=episode)
-        if 'total_steps' in metrics:
-            mlflow.log_metric("total_training_steps", metrics['total_steps'], step=episode)
+    #     # Core training metrics
+    #     if 'episode_reward' in metrics:
+    #         mlflow.log_metric("train_episode_reward", metrics['episode_reward'], step=episode)
+    #     if 'policy_loss' in metrics:
+    #         mlflow.log_metric("train_policy_loss", metrics['policy_loss'], step=episode)
+    #     if 'vae_loss' in metrics:
+    #         mlflow.log_metric("train_vae_loss", metrics['vae_loss'], step=episode)
+    #     if 'total_steps' in metrics:
+    #         mlflow.log_metric("total_training_steps", metrics['total_steps'], step=episode)
             
-        # Additional training metrics if available
-        optional_metrics = [
-            'policy_entropy', 'value_loss', 'grad_norm_policy', 'grad_norm_vae',
-            'learning_rate_policy', 'learning_rate_vae', 'kl_divergence'
-        ]
+    #     # Additional training metrics if available
+    #     optional_metrics = [
+    #         'policy_entropy', 'value_loss', 'grad_norm_policy', 'grad_norm_vae',
+    #         'learning_rate_policy', 'learning_rate_vae', 'kl_divergence'
+    #     ]
         
-        for metric in optional_metrics:
-            if metric in metrics:
-                mlflow.log_metric(f"train_{metric}", metrics[metric], step=episode)
+    #     for metric in optional_metrics:
+    #         if metric in metrics:
+    #             mlflow.log_metric(f"train_{metric}", metrics[metric], step=episode)
     
-    def log_portfolio_episode(self, episode: int, portfolio_data: Dict[str, Any]):
-        """Log detailed portfolio performance for an episode."""
+    # def log_portfolio_episode(self, episode: int, portfolio_data: Dict[str, Any]):
+    #     """Log detailed portfolio performance for an episode."""
         
-        # Log everything in results dict
+    #     # Log everything in results dict
+    #     for key, value in portfolio_data.items():
+    #         if isinstance(value, (int, float, np.floating)):
+    #             mlflow.log_metric(key, float(value), step=episode)
+
+    #     aggregate_keys = [
+    #         "episode_avg_reward",
+    #         "episode_sum_reward",
+    #         "episode_avg_long_exposure",
+    #         "episode_avg_short_exposure",
+    #         "episode_avg_net_exposure",
+    #         "episode_avg_gross_exposure",
+    #         "episode_max_active_positions",
+    #         "episode_sum_transaction_costs",
+    #         "episode_sum_rel_excess_return",
+    #     ]
+
+    #     # Portfolio composition
+    #     if 'final_weights' in portfolio_data:
+    #         weights = portfolio_data['final_weights']
+    #         mlflow.log_metric("portfolio_concentration", np.sum(weights**2), step=episode)
+    #         mlflow.log_metric("portfolio_active_positions", np.sum(weights > 0.01), step=episode)
+    #         mlflow.log_metric("portfolio_long_exposure", np.sum(weights[weights > 0]), step=episode)
+    #         mlflow.log_metric("portfolio_short_exposure", abs(np.sum(weights[weights < 0])), step=episode)
+    #         mlflow.log_metric("portfolio_net_exposure", np.sum(weights), step=episode)
+    #         mlflow.log_metric("portfolio_gross_exposure", np.sum(np.abs(weights)), step=episode)
+
+    #     # Aggregate metrics (safe even if final_weights missing)
+    #     for key in aggregate_keys:
+    #         if key in portfolio_data:
+    #             mlflow.log_metric(key, portfolio_data[key], step=episode)
+
+
+    #     # Performance metrics
+    #     performance_metrics = [
+    #         'cumulative_return', 'episode_sharpe', 'episode_volatility', 
+    #         'max_drawdown', 'transaction_costs', 'turnover', 'cash_position'
+    #     ]
+        
+    #     for metric in performance_metrics:
+    #         if metric in portfolio_data:
+    #             mlflow.log_metric(f"portfolio_{metric}", portfolio_data[metric], step=episode)
+    
+    def log_training_episode(self, episode: int, metrics: Dict[str, Any]):
+    """Log all training-related episode metrics."""
+    self.episode_count = episode
+
+    for key, value in metrics.items():
+        if isinstance(value, (int, float, np.floating)):
+            mlflow.log_metric(key, float(value), step=episode)
+
+
+    def log_portfolio_episode(self, episode: int, portfolio_data: Dict[str, Any]):
+        """Log all portfolio-related episode metrics, plus derived exposures."""
+
+        # 1. Log every numeric metric
         for key, value in portfolio_data.items():
             if isinstance(value, (int, float, np.floating)):
                 mlflow.log_metric(key, float(value), step=episode)
 
-        aggregate_keys = [
-            "episode_avg_reward",
-            "episode_sum_reward",
-            "episode_avg_long_exposure",
-            "episode_avg_short_exposure",
-            "episode_avg_net_exposure",
-            "episode_avg_gross_exposure",
-            "episode_max_active_positions",
-            "episode_sum_transaction_costs",
-            "episode_sum_rel_excess_return",
-        ]
+        # 2. Derived metrics from final_weights
+        if 'final_weights' in portfolio_data and portfolio_data['final_weights'] is not None:
+            weights = np.array(portfolio_data['final_weights'], dtype=float)
 
-        # Portfolio composition
-        if 'final_weights' in portfolio_data:
-            weights = portfolio_data['final_weights']
-            mlflow.log_metric("portfolio_concentration", np.sum(weights**2), step=episode)
-            mlflow.log_metric("portfolio_active_positions", np.sum(weights > 0.01), step=episode)
-            mlflow.log_metric("portfolio_long_exposure", np.sum(weights[weights > 0]), step=episode)
-            mlflow.log_metric("portfolio_short_exposure", abs(np.sum(weights[weights < 0])), step=episode)
-            mlflow.log_metric("portfolio_net_exposure", np.sum(weights), step=episode)
-            mlflow.log_metric("portfolio_gross_exposure", np.sum(np.abs(weights)), step=episode)
-
-        # Aggregate metrics (safe even if final_weights missing)
-        for key in aggregate_keys:
-            if key in portfolio_data:
-                mlflow.log_metric(key, portfolio_data[key], step=episode)
+            mlflow.log_metric("portfolio_concentration", float(np.sum(weights ** 2)), step=episode)
+            mlflow.log_metric("portfolio_active_positions", int(np.sum(weights > 0.01)), step=episode)
+            mlflow.log_metric("portfolio_long_exposure", float(np.sum(weights[weights > 0])), step=episode)
+            mlflow.log_metric("portfolio_short_exposure", float(abs(np.sum(weights[weights < 0]))), step=episode)
+            mlflow.log_metric("portfolio_net_exposure", float(np.sum(weights)), step=episode)
+            mlflow.log_metric("portfolio_gross_exposure", float(np.sum(np.abs(weights))), step=episode)
 
 
-        # Performance metrics
-        performance_metrics = [
-            'cumulative_return', 'episode_sharpe', 'episode_volatility', 
-            'max_drawdown', 'transaction_costs', 'turnover', 'cash_position'
-        ]
-        
-        for metric in performance_metrics:
-            if metric in portfolio_data:
-                mlflow.log_metric(f"portfolio_{metric}", portfolio_data[metric], step=episode)
-    
+
+
     def log_validation_results(self, episode: int, val_results: Dict[str, float]):
         """Log validation evaluation results."""
         
