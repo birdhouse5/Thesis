@@ -23,27 +23,20 @@ class MetaEnv:
     def __init__(self, dataset: dict, feature_columns: list, seq_len: int = 60, 
                  min_horizon: int = 45, max_horizon: int = 60, rf_rate=0.02, 
                  steps_per_year: int = 252, eta: float = 0.05, eps: float = 1e-12, 
-                 transaction_cost_rate: float = 0.001, inflation_rate: float = 0.0):
+                 transaction_cost_rate: float = 0.001, inflation_rate: float = 0.0,
+                 device: str = "cpu"):   # 🔥 NEW
         """
-        Args:
-            dataset: Dict with 'features' and 'raw_prices' tensors
-            feature_columns: List of feature names in order
-            seq_len: Length of each task sequence
-            min_horizon: Minimum episode length within a task
-            max_horizon: Maximum episode length within a task
-            rf_rate: Risk-free rate (annual)
-            steps_per_year: Number of steps per year for rf conversion
-            eta: EWMA decay parameter for DSR
-            eps: Small epsilon for numerical stability
-            transaction_cost_rate: Transaction cost rate
+        dataset: Dict with 'features' and 'raw_prices' tensors
+        feature_columns: List of feature names
+        steps_per_year: 252 for stocks (daily), 35040 for crypto (15-min)
         """
         self.dataset = dataset
         self.feature_columns = feature_columns
         self.seq_len = seq_len
         self.min_horizon = min_horizon
         self.max_horizon = max_horizon
-        
-        # DSR parameters (now configurable)
+
+        # DSR / risk params
         self.rf_rate = rf_rate
         self.steps_per_year = steps_per_year
         self.rf_step_log = math.log(1.0 + rf_rate) / max(1, steps_per_year)
@@ -51,38 +44,30 @@ class MetaEnv:
         self.eps = eps
         self.transaction_cost_rate = transaction_cost_rate
         self.inflation_rate = inflation_rate
+
+        self.device = torch.device(device)   # 🔥 FIX
         self.prev_weights = None
 
-        # Sequential backtesting support
+        # Sequential backtesting
         self.sequential_mode = False
         self.rolling_context = deque(maxlen=self.seq_len)
-        
-        # Current episode state
+
+        # State trackers
         self.current_step = 0
         self.current_task = None
-        self.episode_trajectory = []  # Current episode trajectory
+        self.episode_trajectory = []
         self.terminal_step = None
         self.done = True
 
-        # Tracking (we keep both for interpretability & eval)
-        self.log_returns = []         # total portfolio log-returns (incl. cash at rf)
-        self.excess_log_returns = []  # excess log-returns over rf (agent's "risk-adjusted" atom)
+        self.log_returns = []
+        self.excess_log_returns = []
         self.relative_excess_log_returns = []
-        # DSR state (EWMA first & second moments of EXCESS returns)
-        self.alpha = 0.0
-        self.beta = 0.0
+        self.alpha, self.beta = 0.0, 0.0
         self.capital_history = []
-
-        # Episode tracking
         self.episode_count = 0
-        
-        # Log DSR configuration
-        logger.info(f"MetaEnv initialized with DSR params:")
-        logger.info(f"  eta (EWMA decay): {self.eta}")
-        logger.info(f"  rf_rate (annual): {self.rf_rate}")
-        logger.info(f"  steps_per_year: {self.steps_per_year}")
-        logger.info(f"  rf_step_log: {self.rf_step_log:.8f}")
-        logger.info(f"  transaction_cost_rate: {self.transaction_cost_rate}")
+
+        logger.info(f"MetaEnv initialized:")
+        logger.info(f"  steps_per_year={self.steps_per_year}, rf_step_log={self.rf_step_log:.8f}")
 
     def sample_task(self):
         """Sample a random task from the dataset"""
@@ -138,19 +123,15 @@ class MetaEnv:
         return initial_state
     
     def step(self, action):
-        """
-        Take environment step - expects portfolio weights as numpy array
-        
-        Args:
-            action: np.array[N] - portfolio allocation weights (sum ≤ 1)
-        """
         if self.done:
             raise ValueError("Episode is done, call reset() first")
-            
-        # Ensure action is numpy array
+
         if torch.is_tensor(action):
             action = action.detach().cpu().numpy()
         action = np.asarray(action, dtype=np.float32)
+
+        # Normalize → valid portfolio weights
+        weights, w_cash = normalize_with_budget_constraint(action)
         
         # Current state (normalized features)
         current_state = self.current_task['features'][self.current_step].numpy()  # [N, F]
@@ -198,7 +179,7 @@ class MetaEnv:
             'investment_pct': investment_pct,
             'cash_pct': w_cash,
             'cumulative_return': cumulative_return,
-            'weights': weights.copy(),                    # Portfolio allocation
+            "weights": weights.copy(),                    # Portfolio allocation
             'weights_long': weights[weights > 0].sum(),   # Long exposure
             'weights_short': abs(weights[weights < 0]).sum(), # Short exposure
             'net_exposure': np.sum(weights),             

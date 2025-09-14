@@ -247,34 +247,6 @@ class ObservationDecoder(nn.Module):
         )
         self.obs_dim = obs_dim
 
-        
-    # def forward(self, latent, current_obs, action):
-    #     """
-    #     Predict next observation.
-        
-    #     Args:
-    #         latent: (batch, latent_dim) - task embedding
-    #         current_obs: (batch, N, F) - current observation
-    #         action: (batch, N) - portfolio weights
-            
-    #     Returns:
-    #         next_obs_pred: (batch, N, F) - predicted next observation
-    #     """
-    #     batch_size = latent.shape[0]
-        
-    #     # Flatten current observation
-    #     obs_flat = current_obs.reshape(batch_size, -1)  # (batch, N×F)
-        
-    #     # Concatenate inputs
-    #     decoder_input = torch.cat([latent, obs_flat, action], dim=-1)
-        
-    #     # Predict next observation (flattened)
-    #     next_obs_flat = self.decoder(decoder_input)
-        
-    #     # Reshape to original observation dimensions
-    #     next_obs_pred = next_obs_flat.reshape(batch_size, self.obs_dim[0], self.obs_dim[1])
-        
-    #     return next_obs_pred
 
     def forward_seq(self, latent, obs_seq, action_seq):
         """

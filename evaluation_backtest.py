@@ -90,12 +90,12 @@ def evaluate(env, policy, encoder, config, num_episodes: int = 50) -> Dict[str, 
             # Calculate volatility from log returns
             if len(env.excess_log_returns) > 1:
                 returns_array = np.array(env.excess_log_returns)
-                volatility = np.std(returns_array) * np.sqrt(252)  # Annualize
-                mean_return = np.mean(returns_array) * 252
+                volatility = np.std(returns_array) * np.sqrt(env.steps_per_year)   # 🔥 FIX
+                mean_return = np.mean(returns_array) * env.steps_per_year
                 sharpe = mean_return / volatility if volatility > 0 else 0
             else:
-                volatility = 0
-                sharpe = 0
+                volatility, sharpe = 0, 0
+
             
             episode_rewards.append(episode_reward)
             episode_returns.append(total_return)
