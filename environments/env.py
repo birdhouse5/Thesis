@@ -50,6 +50,7 @@ class MetaEnv:
         self.eta = eta
         self.eps = eps
         self.transaction_cost_rate = transaction_cost_rate
+        self.inflation_rate = inflation_rate
         self.prev_weights = None
 
         # Sequential backtesting support
