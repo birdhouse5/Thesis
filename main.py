@@ -31,9 +31,9 @@ from algorithms.trainer import PPOTrainer
 
 # Import evaluation functions
 from evaluation_backtest import evaluate, run_sequential_backtest
-
-
 import shutil
+
+torch.serialization.add_safe_globals([np._core.multiarray.scalar])
 
 def save_checkpoint(ckpt_dir: Path, state: dict):
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -48,6 +48,7 @@ def save_checkpoint(ckpt_dir: Path, state: dict):
     logger.info(f"💾 Saved checkpoint: {path}")
 
 def load_latest_checkpoint(ckpt_dir: Path):
+    state = torch.load(latest, map_location="cpu", weights_only=False)
     if not ckpt_dir.exists():
         return None, None
 
