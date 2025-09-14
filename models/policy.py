@@ -12,7 +12,7 @@ class PortfolioPolicy(nn.Module):
     Portfolio policy that outputs allocation weights over assets.
     Actions are portfolio weights ∈ [0,1]^N where sum ≤ 1 (remainder is cash).
     """
-    def __init__(self, obs_shape, latent_dim, num_assets, hidden_dim=256, noise_factor):
+    def __init__(self, obs_shape, latent_dim, num_assets, hidden_dim=256, noise_factor, random_policy):
         super(PortfolioPolicy, self).__init__()
         
         self.obs_shape = obs_shape      # (N, F) - assets × features
@@ -20,6 +20,7 @@ class PortfolioPolicy(nn.Module):
         self.num_assets = num_assets
         self.hidden_dim = hidden_dim
         self.noise_factor = noise_factor
+        self.random_policy = random_policy
         
         # Input dimensions
         obs_flat_dim = obs_shape[0] * obs_shape[1]  # N × F flattened
@@ -88,6 +89,17 @@ class PortfolioPolicy(nn.Module):
         """
         Sample action from policy.
         """
+
+        batch_size = obs.shape[0]
+
+        if self.random_policy:
+            # Purely random portfolio weights (before normalization by env)
+            # Shape: (B, num_assets)
+            random_actions = torch.empty(batch_size, self.num_assets, device=obs.device).uniform_(-1.0, 1.0)
+            # Return dummy values for critic
+            values = torch.zeros(batch_size, 1, device=obs.device)
+            return random_actions, values
+            
         with torch.no_grad():
             output = self.forward(obs, latent)
             if deterministic:
