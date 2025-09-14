@@ -299,7 +299,7 @@ class MetaEnv:
         var_prev = max(beta_prev - alpha_prev**2, self.eps)
         denom = (var_prev ** 1.5) + self.eps
         dsr = (beta_prev * delta_alpha - 0.5 * alpha_prev * delta_beta) / denom
-        dsr -= 0.001 * w_cash # TODO added cash position penalty
+        dsr -= 0.01 * w_cash # TODO added cash position penalty
 
         self.alpha = alpha_new
         self.beta  = beta_new
