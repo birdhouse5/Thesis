@@ -121,9 +121,9 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         latent_dim=latent_dim,
         hidden_dim=1024,
         vae_lr=0.0010748206602172,
-        policy_lr=0.0020289998766945,
+        policy_lr=policy_lr = 5e-4,  # instead of 2e-3,
         noise_factor=0.05, #TODO
-        random_policy=True,
+        random_policy=False,
         vae_beta=0.0125762666385515,
         vae_update_freq=5,
         seq_len=200,
