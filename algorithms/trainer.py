@@ -279,20 +279,20 @@ class PPOTrainer:
             # === Latent context ===
             latent = self._get_latent_for_step(obs_tensor, context)
 
-            # === Sample action from policy ===
+            # === Sample action ===
             with torch.no_grad():
                 actions_raw, value, log_prob = self.policy.act(obs_tensor, latent, deterministic=False)
 
-            # Store before env normalization
+            # === Store detached copies (important for PPO) ===
             traj["observations"].append(obs_tensor.squeeze(0).cpu())
-            traj["actions"].append(actions_raw.squeeze(0).cpu())
-            traj["values"].append(value.squeeze(0).cpu())
-            traj["log_probs"].append(log_prob.squeeze(0).cpu())
-            traj["latents"].append(latent.squeeze(0).cpu())
+            traj["actions"].append(actions_raw.squeeze(0).detach().cpu())
+            traj["values"].append(value.squeeze(0).detach().cpu())
+            traj["log_probs"].append(log_prob.squeeze(0).detach().cpu())
+            traj["latents"].append(latent.squeeze(0).detach().cpu())
 
-            # === Step environment ===
+            # === Environment step ===
             next_obs, reward, done, info = self.env.step(actions_raw.squeeze(0).cpu().numpy())
-            traj["rewards"].append(reward)
+            traj["rewards"].append(float(reward))   # store as plain float
             traj["dones"].append(done)
 
             # Update context for VAE
@@ -300,13 +300,14 @@ class PPOTrainer:
             context["actions"].append(actions_raw.squeeze(0).detach())
             context["rewards"].append(torch.tensor(reward, dtype=torch.float32, device=self.device))
 
-            # Advance
+            # Advance state
             if not done:
                 obs_tensor = torch.as_tensor(next_obs, dtype=torch.float32, device=self.device).unsqueeze(0)
 
             step += 1
 
         return traj
+
 
 
     # ---------------------------------------------------------------------
