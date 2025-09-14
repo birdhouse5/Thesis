@@ -46,32 +46,6 @@ def save_checkpoint(ckpt_dir: Path, state: dict):
 
     logger.info(f"💾 Saved checkpoint: {path}")
 
-def load_latest_checkpoint(ckpt_dir: Path):
-    if not ckpt_dir.exists():
-        logger.info(f"No checkpoint directory at {ckpt_dir}, starting fresh.")
-        return None, None
-
-    checkpoints = list(ckpt_dir.glob("checkpoint_ep*.pt"))
-    if not checkpoints:
-        logger.info(f"No checkpoint files found in {ckpt_dir}, starting fresh.")
-        return None, None
-
-    latest = max(checkpoints, key=lambda p: int(p.stem.split("ep")[-1]))
-
-    import torch, numpy
-    torch.serialization.add_safe_globals([numpy._core.multiarray.scalar])
-
-    state = torch.load(latest, map_location="cpu")
-
-    run_info_file = ckpt_dir / "run_info.json"
-    run_info = None
-    if run_info_file.exists():
-        with open(run_info_file) as f:
-            run_info = json.load(f)
-
-    logger.info(f"🔄 Loaded checkpoint from {latest}")
-    return state, run_info
-
 
 class NpEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -312,25 +286,11 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         if ckpt_dir.exists():
             shutil.rmtree(ckpt_dir)
             logger.info(f"🗑️ Removed old checkpoints for {cfg.exp_name}")
-        #mlflow.start_run(run_name=cfg.exp_name)
-    else:
-        state, run_info = load_latest_checkpoint(ckpt_dir)
-        # if state:
-        #      if run_info and "run_id" in run_info:
-        #          mlflow.start_run(run_id=run_info["run_id"])
-        #      else:
-        #          mlflow.start_run(run_name=cfg.exp_name)
-        #     resume_state = state
-        #     episodes_trained = state["episodes_trained"]
-        #     best_val_reward = state.get("best_val_reward", float("-inf"))
-        #     logger.info(f"▶️ Will resume training from episode {episodes_trained}")
-        # else:
-        #     mlflow.start_run(run_name=cfg.exp_name)
-        if state:
-            resume_state = state
-            episodes_trained = state["episodes_trained"]
-            best_val_reward = state.get("best_val_reward", float("-inf"))
-            logger.info(f"▶️ Will resume training from episode {episodes_trained}")
+
+    # Always start fresh
+    resume_state = None
+    episodes_trained = 0
+    best_val_reward = float("-inf")
 
     # === NEW: Initialize MLflow integration ===
     from mlflow_logger import MLflowIntegration
