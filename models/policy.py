@@ -44,7 +44,7 @@ class PortfolioPolicy(nn.Module):
         # Critic
         self.critic_head = nn.Linear(hidden_dim // 2, 1)           # Value function
         
-        def forward(self, obs, latent):
+    def forward(self, obs, latent):
         B = obs.shape[0]
         obs_flat = obs.reshape(B, -1)
         obs_features = self.obs_encoder(obs_flat)
