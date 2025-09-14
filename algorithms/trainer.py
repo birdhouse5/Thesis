@@ -122,9 +122,15 @@ class PPOTrainer:
             'step_active_positions': [],
             'step_cash_positions': [],
             'step_turnovers': [],
+            'step_long_exposures': [],
+            'step_short_exposures': [],
+            'step_net_exposures': [],
+            'step_gross_exposures': [],
+            'step_rel_excess_returns': [],
             'final_capital': 0.0,
             'num_episodes': 0
         }
+
     
         with diag.time_section("collect_single_trajectory"):
             tr = self.collect_trajectory()
@@ -148,6 +154,12 @@ class PPOTrainer:
                 episode_data['step_active_positions'].append(step_info.get('num_active_positions', 0))
                 episode_data['step_cash_positions'].append(step_info.get('cash_pct', 0.0))
                 episode_data['step_turnovers'].append(step_info.get('turnover', 0.0))
+                episode_data['step_long_exposures'].append(step_info.get('weights_long', 0.0))
+                episode_data['step_short_exposures'].append(step_info.get('weights_short', 0.0))
+                episode_data['step_net_exposures'].append(step_info.get('net_exposure', 0.0))
+                episode_data['step_gross_exposures'].append(step_info.get('gross_exposure', 0.0))
+                episode_data['step_rel_excess_returns'].append(step_info.get('relative_excess_log_return', 0.0))
+
         
         # Get final capital
         if len(episode_data['step_capital']) > 0:
