@@ -268,7 +268,7 @@ def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
         latent_dim=cfg.latent_dim,
         num_assets=cfg.num_assets,
         hidden_dim=cfg.hidden_dim,
-        noise_factor=cfg.noise_factor
+        noise_factor=cfg.noise_factor,
         random_policy=cfg.random_policy
     ).to(device)
     
