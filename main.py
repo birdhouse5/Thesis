@@ -296,8 +296,8 @@ def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
 def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
     """Run complete training pipeline with checkpoints + MLflow resume."""
 
-    if mlflow.active_run():
-        mlflow.end_run()
+    # if mlflow.active_run():
+    #     mlflow.end_run()
 
     ckpt_dir = Path("checkpoints") / cfg.exp_name
     resume_state = None
@@ -308,20 +308,20 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         if ckpt_dir.exists():
             shutil.rmtree(ckpt_dir)
             logger.info(f"🗑️ Removed old checkpoints for {cfg.exp_name}")
-        mlflow.start_run(run_name=cfg.exp_name)
+        #mlflow.start_run(run_name=cfg.exp_name)
     else:
         state, run_info = load_latest_checkpoint(ckpt_dir)
         if state:
-            if run_info and "run_id" in run_info:
-                mlflow.start_run(run_id=run_info["run_id"])
-            else:
-                mlflow.start_run(run_name=cfg.exp_name)
+            # if run_info and "run_id" in run_info:
+            #     mlflow.start_run(run_id=run_info["run_id"])
+            # else:
+            #     mlflow.start_run(run_name=cfg.exp_name)
             resume_state = state
             episodes_trained = state["episodes_trained"]
             best_val_reward = state.get("best_val_reward", float("-inf"))
             logger.info(f"▶️ Will resume training from episode {episodes_trained}")
         else:
-            mlflow.start_run(run_name=cfg.exp_name)
+            #mlflow.start_run(run_name=cfg.exp_name)
 
     # === NEW: Initialize MLflow integration ===
     from mlflow_logger import MLflowIntegration
@@ -451,7 +451,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
 
     finally:
         cleanup_gpu_memory()
-        mlflow.end_run()
+        #mlflow.end_run()
 
 
 # def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
