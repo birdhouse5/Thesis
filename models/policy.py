@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
 
-from env import normalize_with_budget_constraint  # import helper
+from environments.env import normalize_with_budget_constraint  # import helper
 
 class PortfolioPolicy(nn.Module):
     def __init__(self, obs_shape, latent_dim, num_assets,
