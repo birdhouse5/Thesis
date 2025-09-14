@@ -143,6 +143,11 @@ class MLflowIntegration:
     def log_portfolio_episode(self, episode: int, portfolio_data: Dict[str, Any]):
         """Log detailed portfolio performance for an episode."""
         
+        # Log everything in results dict
+        for key, value in portfolio_data.items():
+            if isinstance(value, (int, float, np.floating)):
+                mlflow.log_metric(key, float(value), step=episode)
+
         aggregate_keys = [
             "episode_avg_reward",
             "episode_sum_reward",
