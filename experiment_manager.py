@@ -100,8 +100,7 @@ class ExperimentManager:
         exp_name = cfg.exp_name
         
         mlflow_integration = MLflowIntegration(run_name=cfg.exp_name, config=vars(cfg))
-        mlflow_integration.setup_mlflow()
-        mlflow_integration.log_config()     
+        mlflow_integration.setup_mlflow() 
         
         logger.info(f"Starting experiment: {exp_name}")
         
@@ -112,6 +111,9 @@ class ExperimentManager:
         
         try:
             with mlflow.start_run(run_name=exp_name):
+
+                mlflow_integration.log_config()    
+                
                 # Log system info
                 mlflow_integration.log_system_info(initial_memory)
 
