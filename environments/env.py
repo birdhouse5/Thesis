@@ -247,10 +247,9 @@ class MetaEnv:
             tuple: (reward, weights, w_cash, turnover, cost)
         """
         if self.current_step >= len(self.current_task['raw_prices']) - 1:
-            # No next prices available - return zero reward and all cash
             weights = np.zeros_like(portfolio_weights, dtype=np.float32)
             w_cash = 1.0
-            return 0.0, weights, w_cash, 0.0, 0.0
+            return 0.0, weights, w_cash, 0.0, 0.0, 0.0, 0.0
 
         # --- 1) Compute asset LOG-returns for the step t -> t+1
         current_prices = self.current_task['raw_prices'][self.current_step].numpy()   # [N]
