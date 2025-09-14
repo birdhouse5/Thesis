@@ -754,17 +754,15 @@ class PPOTrainer:
     def ppo_loss(self, traj):
         """
         PPO clipped surrogate objective + value loss + entropy bonus.
-        References:
-        - Schulman et al., 2017 (PPO paper)
-        - Spinning Up PPO implementation
         """
-        obs = torch.tensor(traj["observations"], dtype=torch.float32, device=self.device)
-        actions = torch.tensor(traj["actions"], dtype=torch.long, device=self.device)
-        latents = torch.tensor(traj["latents"], dtype=torch.float32, device=self.device)
-        rewards = torch.tensor(traj["rewards"], dtype=torch.float32, device=self.device)
-        values = torch.tensor(traj["values"], dtype=torch.float32, device=self.device)
-        dones = torch.tensor(traj["dones"], dtype=torch.float32, device=self.device)
-        old_logp = torch.tensor(traj["log_probs"], dtype=torch.float32, device=self.device)
+        obs = torch.stack(traj["observations"]).to(self.device)
+        actions = torch.stack(traj["actions"]).to(self.device)
+        latents = torch.stack(traj["latents"]).to(self.device)
+        rewards = torch.as_tensor(traj["rewards"], dtype=torch.float32, device=self.device)
+        values = torch.stack(traj["values"]).to(self.device)
+        dones = torch.as_tensor(traj["dones"], dtype=torch.float32, device=self.device)
+        old_logp = torch.stack(traj["log_probs"]).to(self.device)
+
 
 
         # Bootstrap if provided
