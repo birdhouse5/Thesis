@@ -78,6 +78,7 @@ class TrainingConfig:
     rf_rate: float = 0.02
     transaction_cost_rate: float = 0.001
     force_recreate: bool = False
+    inflation_penalty = True
 
 
 def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
@@ -106,9 +107,11 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         disable_vae = True
         latent_dim = 0   # policy sees obs only
 
+    default_name=f"{exp.asset_class}_{exp.encoder}_seed{exp.seed}"
+
     return TrainingConfig(
         seed=exp.seed,
-        exp_name=f"{exp.asset_class}_{exp.encoder}_seed{exp.seed}",
+        exp_name=exp.exp_name or default_name,
         asset_class=exp.asset_class,
         data_path=data_paths[exp.asset_class],
         encoder=exp.encoder,

@@ -96,12 +96,12 @@ class ExperimentManager:
         from main import run_training
         import mlflow
         
-        mlflow_integration = MLflowIntegration(run_name=exp_name, config=vars(cfg))
-        mlflow_integration.setup_mlflow()
-        mlflow_integration.log_config()
-
         cfg = experiment_to_training_config(exp_config)
         exp_name = cfg.exp_name
+        
+        mlflow_integration = MLflowIntegration(run_name=cfg.exp_name, config=vars(cfg))
+        mlflow_integration.setup_mlflow()
+        mlflow_integration.log_config()     
         
         logger.info(f"Starting experiment: {exp_name}")
         
