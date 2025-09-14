@@ -78,7 +78,7 @@ class TrainingConfig:
     rf_rate: float = 0.02
     transaction_cost_rate: float = 0.001
     force_recreate: bool = False
-    inflation_penalty = True
+    inflation_rate: float = 0.1
 
 
 def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:

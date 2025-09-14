@@ -223,7 +223,8 @@ def prepare_environments(cfg: TrainingConfig):
             eta=cfg.eta,
             rf_rate=cfg.rf_rate,
             transaction_cost_rate=cfg.transaction_cost_rate,
-            steps_per_year=steps_per_year
+            steps_per_year=steps_per_year,
+            inflation_rate=cfg.inflation_rate
         )
     
     return environments, split_tensors

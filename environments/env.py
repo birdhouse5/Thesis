@@ -23,7 +23,7 @@ class MetaEnv:
     def __init__(self, dataset: dict, feature_columns: list, seq_len: int = 60, 
                  min_horizon: int = 45, max_horizon: int = 60, rf_rate=0.02, 
                  steps_per_year: int = 252, eta: float = 0.05, eps: float = 1e-12, 
-                 transaction_cost_rate: float = 0.001):
+                 transaction_cost_rate: float = 0.001, inflation_rate: float = 0.0):
         """
         Args:
             dataset: Dict with 'features' and 'raw_prices' tensors
@@ -299,7 +299,7 @@ class MetaEnv:
         var_prev = max(beta_prev - alpha_prev**2, self.eps)
         denom = (var_prev ** 1.5) + self.eps
         dsr = (beta_prev * delta_alpha - 0.5 * alpha_prev * delta_beta) / denom
-        dsr -= 0.01 * w_cash # TODO added cash position penalty
+        dsr -= self.inflation_rate * w_cash
 
         self.alpha = alpha_new
         self.beta  = beta_new
