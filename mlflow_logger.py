@@ -143,17 +143,7 @@ class MLflowIntegration:
     def log_portfolio_episode(self, episode: int, portfolio_data: Dict[str, Any]):
         """Log detailed portfolio performance for an episode."""
         
-        # Portfolio composition
-        if 'final_weights' in portfolio_data:
-            weights = portfolio_data['final_weights']
-            mlflow.log_metric("portfolio_concentration", np.sum(weights**2), step=episode)  # HHI
-            mlflow.log_metric("portfolio_active_positions", np.sum(weights > 0.01), step=episode)
-            mlflow.log_metric("portfolio_long_exposure", np.sum(weights[weights > 0]), step=episode)
-            mlflow.log_metric("portfolio_short_exposure", abs(np.sum(weights[weights < 0])), step=episode)
-            mlflow.log_metric("portfolio_net_exposure", np.sum(weights), step=episode)
-            mlflow.log_metric("portfolio_gross_exposure", np.sum(np.abs(weights)), step=episode)
-
-            aggregate_keys = [
+        aggregate_keys = [
             "episode_avg_reward",
             "episode_sum_reward",
             "episode_avg_long_exposure",
@@ -164,9 +154,22 @@ class MLflowIntegration:
             "episode_sum_transaction_costs",
             "episode_sum_rel_excess_return",
         ]
+
+        # Portfolio composition
+        if 'final_weights' in portfolio_data:
+            weights = portfolio_data['final_weights']
+            mlflow.log_metric("portfolio_concentration", np.sum(weights**2), step=episode)
+            mlflow.log_metric("portfolio_active_positions", np.sum(weights > 0.01), step=episode)
+            mlflow.log_metric("portfolio_long_exposure", np.sum(weights[weights > 0]), step=episode)
+            mlflow.log_metric("portfolio_short_exposure", abs(np.sum(weights[weights < 0])), step=episode)
+            mlflow.log_metric("portfolio_net_exposure", np.sum(weights), step=episode)
+            mlflow.log_metric("portfolio_gross_exposure", np.sum(np.abs(weights)), step=episode)
+
+        # Aggregate metrics (safe even if final_weights missing)
         for key in aggregate_keys:
             if key in portfolio_data:
                 mlflow.log_metric(key, portfolio_data[key], step=episode)
+
 
         # Performance metrics
         performance_metrics = [
