@@ -124,7 +124,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         policy_lr=0.0005, #policy_lr=0.0020289998766945,
         noise_factor=0.05, #TODO
         random_policy=False,
-        vae_beta=0.05 # TODO was 0.0125762666385515,
+        vae_beta=0.05, # TODO was 0.0125762666385515,
         vae_update_freq=5,
         seq_len=200,
         episodes_per_task=3,
