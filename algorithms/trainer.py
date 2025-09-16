@@ -73,11 +73,14 @@ class PPOTrainer:
         # Check if we can use fixed-length optimization
         self.use_fixed_length = (config.min_horizon == config.max_horizon)
 
+        # Track VAE enablement
+        self.vae_enabled = (vae is not None) and (not getattr(config, "disable_vae", False))
+
         # Optimizer: include VAE params only if enabled/present
         param_groups = [
             {"params": policy.parameters(), "lr": config.policy_lr}
         ]
-        if vae is not None and not getattr(config, "disable_vae", False):
+        if self.vae_enabled:
             param_groups.append({"params": vae.parameters(), "lr": config.vae_lr})
         self.optimizer = Adam(param_groups)
         # Experience buffers
@@ -540,18 +543,25 @@ class PPOTrainer:
 
         # === VAE update ===
         vae_loss_val = 0.0
-        if self.vae is not None and not self.config.disable_vae:
+        if self.vae_enabled:
             obs_seq = obs.unsqueeze(0)  # (1, T, N, F)
-            act_seq = actions.unsqueeze(0)  # (1, T, N)
+            # Normalize actions to portfolio weights for VAE (sum(|w|)+w_cash=1 budget)
+            denom = actions.abs().sum(dim=-1, keepdim=True) + 1.0 + 1e-8
+            vae_actions = actions / denom
+            act_seq = vae_actions.unsqueeze(0)  # (1, T, N)
             rew_seq = rewards.unsqueeze(0).unsqueeze(-1)  # (1, T, 1)
-            vae_loss, vae_info = self.vae.compute_loss(
-                obs_seq, act_seq, rew_seq, beta=self.config.vae_beta
-            )
-            self.optimizer.zero_grad()
-            vae_loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
-            self.optimizer.step()
-            vae_loss_val = vae_loss.item()
+            try:
+                vae_loss, vae_info = self.vae.compute_loss(
+                    obs_seq, act_seq, rew_seq, beta=self.config.vae_beta
+                )
+                self.optimizer.zero_grad()
+                vae_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
+                self.optimizer.step()
+                vae_loss_val = float(vae_loss.item())
+            except Exception as e:
+                logger.warning(f"VAE loss computation failed: {e}")
+                vae_loss_val = 0.0
 
         return {
             "policy_loss": float(policy_loss.item()),
