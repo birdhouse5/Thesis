@@ -194,7 +194,6 @@ class PPOTrainer:
         final_weights = final_weights_tensor.detach().cpu().tolist() if torch.is_tensor(final_weights_tensor) else None
 
         results = {
-            "episode_reward": episode_reward_sum,
             "policy_loss": policy_loss,
             "vae_loss": vae_loss,
             "total_steps": int(self.total_steps),
@@ -211,10 +210,10 @@ class PPOTrainer:
             "final_weights": final_weights,
 
             # Rolling stats
-            "rolling_avg_episode_reward": float(np.mean(list(self.episode_rewards))) if self.episode_rewards else 0.0,
-            "rolling_std_episode_reward": float(np.std(list(self.episode_rewards))) if len(self.episode_rewards) > 1 else 0.0,
-            "rolling_avg_policy_loss": float(np.mean(list(self.policy_losses))) if self.policy_losses else 0.0,
-            "rolling_avg_vae_loss": float(np.mean(list(self.vae_losses))) if self.vae_losses else 0.0,
+            "recent_avg_episode_reward": float(np.mean(list(self.episode_rewards))) if self.episode_rewards else 0.0,
+            "recent_std_episode_reward": float(np.std(list(self.episode_rewards))) if len(self.episode_rewards) > 1 else 0.0,
+            "recent_avg_policy_loss": float(np.mean(list(self.policy_losses))) if self.policy_losses else 0.0,
+            "recent_avg_vae_loss": float(np.mean(list(self.vae_losses))) if self.vae_losses else 0.0,
 
             # VAE breakdown
             **vae_loss_components,
