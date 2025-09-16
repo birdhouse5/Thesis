@@ -221,7 +221,7 @@ class PPOTrainer:
 
             # Misc
             "episode_count": int(self.episode_count),
-            "steps_per_episode": len(episode_data["step_rewards"]),
+            "steps_per_episode": (int(tr["rewards"].shape[0]) if isinstance(tr["rewards"], torch.Tensor) else len(tr["rewards"])),
             "num_episodes_in_batch": 1,
             # Include detailed step data only in eval mode
             "step_data": episode_data if detailed_logging else None,
