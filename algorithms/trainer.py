@@ -73,14 +73,13 @@ class PPOTrainer:
         # Check if we can use fixed-length optimization
         self.use_fixed_length = (config.min_horizon == config.max_horizon)
 
-        # Optimizers
-        params = list(policy.parameters())
-        if vae is not None and not config.disable_vae:
-            params += list(vae.parameters())
-        self.optimizer = Adam([
-            {"params": policy.parameters(), "lr": config.policy_lr},
-            {"params": vae.parameters(), "lr": config.vae_lr},
-        ])
+        # Optimizer: include VAE params only if enabled/present
+        param_groups = [
+            {"params": policy.parameters(), "lr": config.policy_lr}
+        ]
+        if vae is not None and not getattr(config, "disable_vae", False):
+            param_groups.append({"params": vae.parameters(), "lr": config.vae_lr})
+        self.optimizer = Adam(param_groups)
         # Experience buffers
         self.experience_buffer = ExperienceBuffer(config.batch_size)  # for PPO
         self.vae_buffer = deque(maxlen=1000)  # recent trajectories for VAE
