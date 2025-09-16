@@ -113,7 +113,8 @@ class PPOTrainer:
             self.vae_buffer.append(tr)
             self.experience_buffer.add_trajectory(tr)
 
-        episode_reward_mean = float(sum(tr["rewards"])) # TODO is this sum or mean?
+        # Aggregate reward for episode
+        episode_reward_sum = float(tr["rewards"].sum().item()) if torch.is_tensor(tr["rewards"]) else float(sum(tr["rewards"]))
 
         # === PPO update ===
         with diag.time_section("ppo_update"):
@@ -123,54 +124,66 @@ class PPOTrainer:
             torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
             self.optimizer.step()
 
-        # === Extract step-level data ===
-        episode_data = {
-            "step_rewards": [],
-            "step_returns": [],
-            "step_excess_returns": [],
-            "step_capital": [],
-            "step_concentrations": [],
-            "step_active_positions": [],
-            "step_cash_positions": [],
-            "step_transaction_costs": [],
-            "step_long_exposures": [],
-            "step_short_exposures": [],
-            "step_net_exposures": [],
-            "step_gross_exposures": [],
-            "step_rel_excess_returns": [],
-            "step_dsr_alpha": [],
-            "step_dsr_beta": [],
-        }
-
-        #if "step_info_list" in tr: #TODO can i remove this?
-        for step_info in tr["step_info_list"]:
-            episode_data["step_rewards"].append(step_info.get("sharpe_reward", 0.0))
-            episode_data["step_returns"].append(step_info.get("log_return", 0.0))
-            episode_data["step_excess_returns"].append(step_info.get("excess_log_return", 0.0))
-            episode_data["step_capital"].append(step_info.get("capital", 0.0))
-            episode_data["step_concentrations"].append(step_info.get("portfolio_concentration", 0.0))
-            episode_data["step_active_positions"].append(step_info.get("num_active_positions", 0))
-            episode_data["step_cash_positions"].append(step_info.get("cash_pct", 0.0))
-            episode_data["step_transaction_costs"].append(step_info.get("transaction_cost", 0.0))
-            episode_data["step_long_exposures"].append(step_info.get("weights_long", 0.0))
-            episode_data["step_short_exposures"].append(step_info.get("weights_short", 0.0))
-            episode_data["step_net_exposures"].append(step_info.get("net_exposure", 0.0))
-            episode_data["step_gross_exposures"].append(step_info.get("gross_exposure", 0.0))
-            episode_data["step_rel_excess_returns"].append(step_info.get("relative_excess_log_return", 0.0))
-            episode_data["step_dsr_alpha"].append(step_info.get("dsr_alpha", 0.0))
-            episode_data["step_dsr_beta"].append(step_info.get("dsr_beta", 0.0))
+        # === Extract logging data ===
+        detailed_logging = getattr(self.env, "eval_mode", False) and ("step_info_list" in tr)
+        episode_data = None
+        if detailed_logging:
+            episode_data = {
+                "step_rewards": [],
+                "step_returns": [],
+                "step_excess_returns": [],
+                "step_capital": [],
+                "step_concentrations": [],
+                "step_active_positions": [],
+                "step_cash_positions": [],
+                "step_transaction_costs": [],
+                "step_long_exposures": [],
+                "step_short_exposures": [],
+                "step_net_exposures": [],
+                "step_gross_exposures": [],
+                "step_rel_excess_returns": [],
+                "step_dsr_alpha": [],
+                "step_dsr_beta": [],
+            }
+            for step_info in tr["step_info_list"]:
+                episode_data["step_rewards"].append(step_info.get("sharpe_reward", 0.0))
+                episode_data["step_returns"].append(step_info.get("log_return", 0.0))
+                episode_data["step_excess_returns"].append(step_info.get("excess_log_return", 0.0))
+                episode_data["step_capital"].append(step_info.get("capital", 0.0))
+                episode_data["step_concentrations"].append(step_info.get("portfolio_concentration", 0.0))
+                episode_data["step_active_positions"].append(step_info.get("num_active_positions", 0))
+                episode_data["step_cash_positions"].append(step_info.get("cash_pct", 0.0))
+                episode_data["step_transaction_costs"].append(step_info.get("transaction_cost", 0.0))
+                episode_data["step_long_exposures"].append(step_info.get("weights_long", 0.0))
+                episode_data["step_short_exposures"].append(step_info.get("weights_short", 0.0))
+                episode_data["step_net_exposures"].append(step_info.get("net_exposure", 0.0))
+                episode_data["step_gross_exposures"].append(step_info.get("gross_exposure", 0.0))
+                episode_data["step_rel_excess_returns"].append(step_info.get("relative_excess_log_return", 0.0))
+                episode_data["step_dsr_alpha"].append(step_info.get("dsr_alpha", 0.0))
+                episode_data["step_dsr_beta"].append(step_info.get("dsr_beta", 0.0))
 
         # === Final episode-level values ===
-        final_capital = episode_data["step_capital"][-1] if episode_data["step_capital"] else 0.0
+        # Aggregates available regardless of detailed logging
+        final_capital = float(getattr(self.env, "current_capital", 0.0))
         cumulative_return = final_capital / self.env.initial_capital - 1.0 if final_capital else 0.0
-        final_weights = tr.get("step_info_list", [{}])[-1].get("weights", [])
+        final_weights_tensor = getattr(self.env, "prev_weights", None)
+        if torch.is_tensor(final_weights_tensor):
+            long_exposure = float(final_weights_tensor[final_weights_tensor > 0].sum().item())
+            short_exposure = float(torch.abs(final_weights_tensor[final_weights_tensor < 0]).sum().item())
+            net_exposure = float(final_weights_tensor.sum().item())
+            gross_exposure = float(torch.sum(torch.abs(final_weights_tensor)).item())
+        else:
+            long_exposure = 0.0
+            short_exposure = 0.0
+            net_exposure = 0.0
+            gross_exposure = 0.0
 
         # === Loss tracking ===
         policy_loss = update_info.get("policy_loss", 0.0)
         vae_loss = update_info.get("vae_loss", 0.0)
         vae_loss_components = {k: v for k, v in update_info.items() if k.startswith("vae_")}
 
-        self.episode_rewards.append(episode_reward_mean)
+        self.episode_rewards.append(episode_reward_sum)
         self.policy_losses.append(policy_loss)
         if vae_loss > 0:
             self.vae_losses.append(vae_loss)
@@ -178,8 +191,11 @@ class PPOTrainer:
         self.episode_count += 1
 
         # === Build results ===
+        # Optional: include final_weights for logger consumers
+        final_weights = final_weights_tensor.detach().cpu().tolist() if torch.is_tensor(final_weights_tensor) else None
+
         results = {
-            "episode_reward": episode_reward_mean,
+            "episode_reward": episode_reward_sum,
             "policy_loss": policy_loss,
             "vae_loss": vae_loss,
             "total_steps": int(self.total_steps),
@@ -187,29 +203,13 @@ class PPOTrainer:
             # Portfolio metrics
             "episode_final_capital": final_capital,
             "episode_total_return": cumulative_return,
-            "episode_total_excess_return": float(np.sum(episode_data["step_excess_returns"])) if episode_data["step_excess_returns"] else 0.0,
-            "episode_avg_concentration": float(np.mean(episode_data["step_concentrations"])) if episode_data["step_concentrations"] else 0.0,
-            "episode_max_concentration": float(np.max(episode_data["step_concentrations"])) if episode_data["step_concentrations"] else 0.0,
-            "episode_avg_active_positions": float(np.mean(episode_data["step_active_positions"])) if episode_data["step_active_positions"] else 0.0,
-            "episode_max_active_positions": float(np.max(episode_data["step_active_positions"])) if episode_data["step_active_positions"] else 0.0,
-            "episode_avg_cash_position": float(np.mean(episode_data["step_cash_positions"])) if episode_data["step_cash_positions"] else 0.0,
-            "episode_total_transaction_costs": float(np.sum(episode_data["step_transaction_costs"])) if episode_data["step_transaction_costs"] else 0.0,
-            "episode_excess_volatility": float(np.std(episode_data["step_excess_returns"])) if len(episode_data["step_excess_returns"]) > 1 else 0.0,
-            "episode_sum_reward": float(np.sum(episode_data["step_rewards"])) if episode_data["step_rewards"] else 0.0,
-            "episode_avg_long_exposure": float(np.mean(episode_data["step_long_exposures"])) if episode_data["step_long_exposures"] else 0.0,
-            "episode_avg_short_exposure": float(np.mean(episode_data["step_short_exposures"])) if episode_data["step_short_exposures"] else 0.0,
-            "episode_avg_net_exposure": float(np.mean(episode_data["step_net_exposures"])) if episode_data["step_net_exposures"] else 0.0,
-            "episode_avg_gross_exposure": float(np.mean(episode_data["step_gross_exposures"])) if episode_data["step_gross_exposures"] else 0.0,
-            "episode_sum_transaction_costs": float(np.sum(episode_data["step_transaction_costs"])) if episode_data["step_transaction_costs"] else 0.0,
-            "episode_avg_turnover": float(np.mean(episode_data["step_transaction_costs"])) if episode_data["step_transaction_costs"] else 0.0,  # turnover proxy
-            "episode_sum_rel_excess_return": float(np.sum(episode_data["step_rel_excess_returns"])) if episode_data["step_rel_excess_returns"] else 0.0,
-            "episode_final_dsr_alpha": episode_data["step_dsr_alpha"][-1] if episode_data["step_dsr_alpha"] else 0.0,
-            "episode_final_dsr_beta": episode_data["step_dsr_beta"][-1] if episode_data["step_dsr_beta"] else 0.0,
-            "episode_dsr_variance": float(np.var(episode_data["step_dsr_alpha"])) if episode_data["step_dsr_alpha"] else 0.0,
-            "episode_long_exposure": episode_data["step_long_exposures"][-1] if episode_data["step_long_exposures"] else 0.0,
-            "episode_short_exposure": episode_data["step_short_exposures"][-1] if episode_data["step_short_exposures"] else 0.0,
-            "episode_net_exposure": episode_data["step_net_exposures"][-1] if episode_data["step_net_exposures"] else 0.0,
-            "episode_gross_exposure": episode_data["step_gross_exposures"][-1] if episode_data["step_gross_exposures"] else 0.0,
+            # Aggregates
+            "episode_sum_reward": episode_reward_sum,
+            "episode_long_exposure": long_exposure,
+            "episode_short_exposure": short_exposure,
+            "episode_net_exposure": net_exposure,
+            "episode_gross_exposure": gross_exposure,
+            "final_weights": final_weights,
 
             # Rolling stats
             "rolling_avg_episode_reward": float(np.mean(list(self.episode_rewards))) if self.episode_rewards else 0.0,
@@ -224,7 +224,8 @@ class PPOTrainer:
             "episode_count": int(self.episode_count),
             "steps_per_episode": len(episode_data["step_rewards"]),
             "num_episodes_in_batch": 1,
-            "step_data": episode_data,  # for saving as artifact
+            # Include detailed step data only in eval mode
+            "step_data": episode_data if detailed_logging else None,
         }
 
         return results
@@ -234,52 +235,67 @@ class PPOTrainer:
     # Trajectory collection (single)
     # ---------------------------------------------------------------------
     def collect_trajectory(self):
-        traj = {
-            "observations": [],
-            "actions": [],
-            "rewards": [],
-            "values": [],
-            "log_probs": [],
-            "latents": [],
-            "dones": []
-        }
+        # Reset and prepare shapes
+        obs0 = self.env.reset()  # tensor [N, F] on env.device
+        obs0 = obs0.to(self.device).to(torch.float32)
+        obs_tensor = obs0.unsqueeze(0)  # [1, N, F]
 
-        obs = self.env.reset()
-        obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+        max_horizon = int(self.config.max_horizon)
+        obs_shape = tuple(obs0.shape)
+
+        # Preallocate tensors
+        observations = torch.zeros((max_horizon,) + obs_shape, dtype=torch.float32, device=self.device)
+        actions      = torch.zeros((max_horizon, self.config.num_assets), dtype=torch.float32, device=self.device)
+        values       = torch.zeros((max_horizon,), dtype=torch.float32, device=self.device)
+        log_probs    = torch.zeros((max_horizon,), dtype=torch.float32, device=self.device)
+        latents      = torch.zeros((max_horizon, self.config.latent_dim), dtype=torch.float32, device=self.device)
+        rewards      = torch.zeros((max_horizon,), dtype=torch.float32, device=self.device)
+        dones        = torch.zeros((max_horizon,), dtype=torch.bool, device=self.device)
+
         context = {"observations": [], "actions": [], "rewards": []}
         done, step = False, 0
 
-        while not done and step < self.config.max_horizon:
+        while not done and step < max_horizon:
             # === Latent context ===
             latent = self._get_latent_for_step(obs_tensor, context)
 
             # === Sample action ===
             with torch.no_grad():
-                actions_raw, value, log_prob = self.policy.act(obs_tensor, latent, deterministic=False)
+                actions_raw, value_t, log_prob_t = self.policy.act(obs_tensor, latent, deterministic=False)
 
-            # === Store detached copies (important for PPO) ===
-            traj["observations"].append(obs_tensor.squeeze(0).cpu())
-            traj["actions"].append(actions_raw.squeeze(0).detach().cpu())
-            traj["values"].append(value.squeeze(0).detach().cpu())
-            traj["log_probs"].append(log_prob.squeeze(0).detach().cpu())
-            traj["latents"].append(latent.squeeze(0).detach().cpu())
+            # === Environment step with tensor action ===
+            next_obs, reward_scalar, done_flag, info = self.env.step(actions_raw.squeeze(0))
 
-            # === Environment step ===
-            next_obs, reward, done, info = self.env.step(actions_raw.squeeze(0).cpu().numpy())
-            traj["rewards"].append(float(reward))   # store as plain float
-            traj["dones"].append(done)
+            # === Write step data ===
+            observations[step] = obs_tensor.squeeze(0)
+            actions[step]      = actions_raw.squeeze(0).to(self.device)
+            values[step]       = value_t.squeeze(0)
+            log_probs[step]    = log_prob_t.squeeze(0)
+            latents[step]      = latent.squeeze(0)
+            rewards[step]      = float(reward_scalar)
+            dones[step]        = bool(done_flag)
 
-            # Update context for VAE
+            # Update context for VAE (keep as tensors)
             context["observations"].append(obs_tensor.squeeze(0).detach())
             context["actions"].append(actions_raw.squeeze(0).detach())
-            context["rewards"].append(torch.tensor(reward, dtype=torch.float32, device=self.device))
+            context["rewards"].append(torch.tensor(reward_scalar, dtype=torch.float32, device=self.device))
 
-            # Advance state
+            # Advance
+            done = bool(done_flag)
             if not done:
-                obs_tensor = torch.as_tensor(next_obs, dtype=torch.float32, device=self.device).unsqueeze(0)
-
+                obs_tensor = next_obs.to(self.device, dtype=torch.float32).unsqueeze(0)
             step += 1
 
+        T = step if step > 0 else 1
+        traj = {
+            "observations": observations[:T],
+            "actions": actions[:T],
+            "rewards": rewards[:T],
+            "values": values[:T],
+            "log_probs": log_probs[:T],
+            "latents": latents[:T],
+            "dones": dones[:T],
+        }
         return traj
 
 
@@ -298,208 +314,6 @@ class PPOTrainer:
             max_horizon=src.max_horizon,
         )
 
-    # ---------------------------------------------------------------------
-    # OPTIMIZED: Fixed-length trajectory collection
-    # ---------------------------------------------------------------------
-    # def collect_trajectories_batched_fixed_length(self, B: int) -> List[Dict]:
-    #     """
-    #     OPTIMIZED: Fixed-length trajectories with comprehensive step info collection.
-    #     """
-    #     B = max(1, int(B))
-    #     envs = [self._clone_env() for _ in range(B)]
-    #     for e in envs:
-    #         e.set_task(e.sample_task())
-    #     obs_np = [e.reset() for e in envs]
-    #     obs = torch.as_tensor(np.stack(obs_np, axis=0), dtype=torch.float32, device=self.device)
-
-    #     # For fixed lengths, we know exactly when all environments will finish
-    #     fixed_length = self.config.min_horizon  # Since min_horizon == max_horizon
-        
-    #     # Pre-allocate for exact trajectory length
-    #     ctx_obs_tensor = torch.zeros(B, fixed_length, *obs.shape[1:], device=self.device)
-    #     ctx_act_tensor = torch.zeros(B, fixed_length, self.config.num_assets, device=self.device)
-    #     ctx_rew_tensor = torch.zeros(B, fixed_length, 1, device=self.device)
-        
-    #     # Pre-allocate trajectory storage
-    #     all_observations = torch.zeros(B, fixed_length, *obs.shape[1:], device=self.device)
-    #     all_actions = torch.zeros(B, fixed_length, self.config.num_assets, device=self.device)
-    #     all_latents = torch.zeros(B, fixed_length, self.config.latent_dim, device=self.device)
-    #     all_rewards = torch.zeros(B, fixed_length, device=self.device)
-    #     all_values = torch.zeros(B, fixed_length, device=self.device)
-    #     all_log_probs = torch.zeros(B, fixed_length, device=self.device)
-        
-    #     # === NEW: Pre-allocate step info storage ===
-    #     all_step_info = [[{} for _ in range(fixed_length)] for _ in range(B)]
-
-    #     for step in range(fixed_length):
-    #         # VAE processing
-    #         if getattr(self.config, "disable_vae", False) or step == 0:
-    #             latent = torch.zeros(B, self.config.latent_dim, device=self.device)
-    #         else:
-    #             ctx_len = step
-    #             batch_obs = ctx_obs_tensor[:, :ctx_len]
-    #             batch_acts = ctx_act_tensor[:, :ctx_len]  
-    #             batch_rews = ctx_rew_tensor[:, :ctx_len]
-                
-    #             try:
-    #                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
-    #                     mu, logvar, _ = self.vae.encode(batch_obs, batch_acts, batch_rews)
-    #                     latent = self.vae.reparameterize(mu, logvar)
-    #             except Exception as e:
-    #                 print(f"VAE batch encode failed: {e}")
-    #                 latent = torch.zeros(B, self.config.latent_dim, device=self.device)
-
-    #         # Policy step
-    #         with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
-    #             action, _ = self.policy.act(obs, latent, deterministic=False)
-    #             values, log_probs, _ = self.policy.evaluate_actions(obs, latent, action)
-
-    #         # Store everything in pre-allocated tensors
-    #         all_observations[:, step] = obs
-    #         all_actions[:, step] = action
-    #         all_latents[:, step] = latent
-    #         all_values[:, step] = values.squeeze(-1)
-    #         all_log_probs[:, step] = log_probs.squeeze(-1)
-            
-    #         # Environment steps with step info collection
-    #         action_np = action.detach().cpu().numpy()
-    #         next_obs_list = []
-    #         rewards = []
-            
-    #         for i, e in enumerate(envs):
-    #             o2, r, d, info = e.step(action_np[i])
-    #             next_obs_list.append(o2)
-    #             rewards.append(r)
-                
-    #             # === NEW: Store comprehensive step info ===
-    #             all_step_info[i][step] = info.copy()
-                
-    #             # Store context for next VAE call
-    #             if not getattr(self.config, "disable_vae", False):
-    #                 ctx_obs_tensor[i, step] = obs[i]
-    #                 ctx_act_tensor[i, step] = action[i]
-    #                 ctx_rew_tensor[i, step, 0] = r
-
-    #         all_rewards[:, step] = torch.tensor(rewards, device=self.device)
-            
-    #         # Update observations for next step (except on final step)
-    #         if step < fixed_length - 1:
-    #             obs = torch.as_tensor(np.stack(next_obs_list), dtype=torch.float32, device=self.device)
-
-    #     # Convert to list of trajectories with step info
-    #     trajs = []
-    #     for i in range(B):
-    #         traj = {
-    #             "observations": all_observations[i],      # [fixed_length, ...]
-    #             "actions": all_actions[i],               # [fixed_length, num_assets]
-    #             "latents": all_latents[i],               # [fixed_length, latent_dim]
-    #             "rewards": all_rewards[i],               # [fixed_length]
-    #             "values": all_values[i],                 # [fixed_length]
-    #             "log_probs": all_log_probs[i],           # [fixed_length]
-    #             "dones": [False] * (fixed_length - 1) + [True]  # Only last step is done
-    #         }
-            
-    #         # === NEW: Attach step info list ===
-    #         traj["step_info_list"] = all_step_info[i]
-            
-    #         trajs.append(traj)
-
-    #     self.total_steps += B * fixed_length
-    #     return trajs
-
-    # ---------------------------------------------------------------------
-    # FALLBACK: Variable-length trajectory collection (original approach)
-    # ---------------------------------------------------------------------
-    def collect_trajectories_batched(self, B: int) -> List[Dict]:
-        """Fallback method for variable-length trajectories with step info collection"""
-        B = max(1, int(B))
-        envs = [self._clone_env() for _ in range(B)]
-        for e in envs:
-            e.set_task(e.sample_task())
-        obs_np = [e.reset() for e in envs]
-        obs = torch.as_tensor(np.stack(obs_np, axis=0), dtype=torch.float32, device=self.device)
-
-        done = np.zeros(B, dtype=bool)
-        step = 0
-
-        # Context storage for variable lengths
-        max_context_len = 100
-        ctx_obs_tensor = torch.zeros(B, max_context_len, *obs.shape[1:], device=self.device)
-        ctx_act_tensor = torch.zeros(B, max_context_len, self.config.num_assets, device=self.device)
-        ctx_rew_tensor = torch.zeros(B, max_context_len, 1, device=self.device)
-        ctx_lengths = torch.zeros(B, dtype=torch.long)
-
-        trajs = [
-            {"observations": [], "actions": [], "rewards": [], "values": [], "log_probs": [], "latents": [], "dones": []}
-            for _ in range(B)
-        ]
-        
-        # === NEW: Initialize step info lists ===
-        step_info_lists = [[] for _ in range(B)]
-
-        while not np.all(done) and step < self.config.max_horizon:
-            if getattr(self.config, "disable_vae", False):
-                latent = torch.zeros(B, self.config.latent_dim, device=self.device)
-            elif step == 0:
-                latent = torch.zeros(B, self.config.latent_dim, device=self.device)
-            else:
-                latent = self._batch_vae_encode(ctx_obs_tensor, ctx_act_tensor, ctx_rew_tensor, ctx_lengths, done)
-
-            with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
-                action, _ = self.policy.act(obs, latent, deterministic=False)
-                values, log_probs, _ = self.policy.evaluate_actions(obs, latent, action)
-
-            action_np = action.detach().cpu().numpy()
-            next_obs_list = []
-            
-            for i, e in enumerate(envs):
-                if done[i]:
-                    next_obs_list.append(obs_np[i])
-                    continue
-
-                o2, r, d, info = e.step(action_np[i])
-                
-                trajs[i]["observations"].append(obs[i].detach().cpu())
-                trajs[i]["actions"].append(action[i].detach().cpu())
-                trajs[i]["latents"].append(latent[i].detach().cpu())
-                trajs[i]["rewards"].append(float(r))
-                trajs[i]["values"].append(values[i].detach().cpu())
-                trajs[i]["log_probs"].append(log_probs[i].detach().cpu())
-                trajs[i]["dones"].append(bool(d))
-                
-                # === NEW: Collect step info ===
-                step_info_lists[i].append(info.copy())
-
-                if not getattr(self.config, "disable_vae", False) and ctx_lengths[i] < max_context_len:
-                    idx = ctx_lengths[i]
-                    ctx_obs_tensor[i, idx] = obs[i]
-                    ctx_act_tensor[i, idx] = action[i]
-                    ctx_rew_tensor[i, idx, 0] = r
-                    ctx_lengths[i] += 1
-
-                done[i] = d
-                next_obs_list.append(o2)
-
-            obs_np = next_obs_list
-            obs = torch.as_tensor(np.stack(obs_np, axis=0), dtype=torch.float32, device=self.device)
-            step += 1
-            self.total_steps += int(np.sum(~done))
-
-        # Stack to device per env and attach step info
-        for i in range(B):
-            if len(trajs[i]["rewards"]) == 0:
-                trajs[i] = self._create_empty_trajectory()
-                trajs[i].step_info_list = []
-                continue
-
-            for k in ["observations", "actions", "values", "log_probs", "latents"]:
-                trajs[i][k] = torch.stack(trajs[i][k]).to(self.device)
-            trajs[i]["rewards"] = torch.tensor(trajs[i]["rewards"], dtype=torch.float32, device=self.device)
-            
-            # === NEW: Attach step info list ===
-            trajs[i].step_info_list = step_info_lists[i]
-
-        return trajs
 
     def _batch_vae_encode(self, ctx_obs_tensor, ctx_act_tensor, ctx_rew_tensor, ctx_lengths, done):
         """VAE encoding for variable-length sequences"""
