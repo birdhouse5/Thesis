@@ -411,13 +411,18 @@ class PPOTrainer:
         """
         PPO clipped surrogate objective + value loss + entropy bonus.
         """
-        obs = torch.stack(traj["observations"]).to(self.device)
-        actions = torch.stack(traj["actions"]).to(self.device)
-        latents = torch.stack(traj["latents"]).to(self.device)
-        rewards = torch.as_tensor(traj["rewards"], dtype=torch.float32, device=self.device)
-        values = torch.stack(traj["values"]).to(self.device)
-        dones = torch.as_tensor(traj["dones"], dtype=torch.float32, device=self.device)
-        old_logp = torch.stack(traj["log_probs"]).to(self.device)
+        def ensure_stacked(x):
+            if isinstance(x, torch.Tensor):
+                return x.to(self.device)
+            return torch.stack(x).to(self.device)
+
+        obs = ensure_stacked(traj["observations"])            # (T, ...)
+        actions = ensure_stacked(traj["actions"])             # (T, N)
+        latents = ensure_stacked(traj["latents"])             # (T, Z)
+        rewards = traj["rewards"] if isinstance(traj["rewards"], torch.Tensor) else torch.as_tensor(traj["rewards"], dtype=torch.float32, device=self.device)
+        dones = traj["dones"] if isinstance(traj["dones"], torch.Tensor) else torch.as_tensor(traj["dones"], dtype=torch.float32, device=self.device)
+        values = ensure_stacked(traj["values"])               # (T, 1) or (T,)
+        old_logp = ensure_stacked(traj["log_probs"])          # (T, 1) or (T,)
 
 
 
