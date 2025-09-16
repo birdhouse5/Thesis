@@ -141,20 +141,23 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
     from environments.env import MetaEnv, normalize_with_budget_constraint
     
     device = torch.device(config.device)
-    # Get dataset info from environments dict structure
-    print(f"  Dataset period: test split")
-    print(f"  Total timesteps: {len(datasets[split].current_task['features']) if datasets[split].current_task else 'unknown'}")
-    
+
+    # Select dataset split first
+    dataset = datasets[split]
+
+    # Print info after dataset is defined
     print(f"Running sequential backtest on {split} split:")
-    print(f"  Dataset period: {dataset.get_split_info()['date_range']}")
+    if hasattr(dataset, 'get_split_info'):
+        try:
+            print(f"  Dataset period: {dataset.get_split_info().get('date_range', 'unknown')}")
+        except Exception:
+            print(f"  Dataset period: unknown")
     print(f"  Total timesteps: {len(dataset)}")
     print(f"  Context window: {config.seq_len}")
     
     policy.eval()
     if encoder is not None:
         encoder.eval()
-
-    dataset = datasets[split]
     full_window = dataset.get_window_tensor(0, len(dataset), device='cpu')
     
     env = MetaEnv(
@@ -189,15 +192,13 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
     env.excess_log_returns = []
     env.alpha = 0.0
     env.beta = 0.0
-    env.prev_weights = np.zeros(dataset.num_assets, dtype=np.float32)
+    # Initialize previous weights on env device
+    env.prev_weights = torch.zeros(dataset.num_assets, dtype=torch.float32, device=env.device)
     
     with torch.no_grad():
         for t in range(len(dataset) - 1):
             # --- Get current observation ---
-            current_obs = full_window['features'][t].numpy()  # [N, F]
-            current_obs_tensor = torch.tensor(
-                current_obs, dtype=torch.float32, device=device
-            ).unsqueeze(0)
+            current_obs_tensor = full_window['features'][t].to(device).to(torch.float32).unsqueeze(0)
 
             # --- Build rolling context for VAE ---
             if encoder is None or getattr(config, 'disable_vae', False):
@@ -219,15 +220,14 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
 
             # --- Policy step ---
             action, _ = policy.act(current_obs_tensor, latent, deterministic=True)
-            action_cpu = action.squeeze(0).detach().cpu().numpy()
 
             # --- Environment reward step ---
             env.current_step = t
-            reward, weights, w_cash = env.compute_reward_with_capital(action_cpu)
+            reward, weights, w_cash = env.compute_reward_with_capital(action.squeeze(0))
 
             # --- Tracking ---
             daily_returns.append(env.excess_log_returns[-1] if env.excess_log_returns else 0.0)
-            daily_weights.append(weights.copy())
+            daily_weights.append(weights.detach().cpu().numpy().copy())
             daily_capital.append(env.current_capital)
             portfolio_values.append(env.current_capital / initial_capital)
 
