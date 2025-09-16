@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
 
-from environments.env import normalize_with_budget_constraint  # import helper
+ 
 
 class PortfolioPolicy(nn.Module):
     def __init__(self, obs_shape, latent_dim, num_assets,
@@ -70,10 +70,8 @@ class PortfolioPolicy(nn.Module):
         else:
             raw_actions = dist.rsample()  # reparameterized sample
 
-        # Normalize to valid portfolio weights
-        actions_np = raw_actions.detach().cpu().numpy()
-        weights, _ = zip(*[normalize_with_budget_constraint(a) for a in actions_np])
-        actions = torch.tensor(weights, dtype=torch.float32, device=obs.device)
+        # Return raw actions; environment will handle normalization once
+        actions = raw_actions.to(device=obs.device, dtype=torch.float32)
 
         log_prob = dist.log_prob(raw_actions).sum(-1, keepdim=True)
         return actions, value, log_prob
