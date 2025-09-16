@@ -65,14 +65,14 @@ def evaluate(env, policy, encoder, config, num_episodes: int = 50) -> Dict[str, 
                         latent = torch.zeros(1, config.latent_dim, device=device)
                 
                 # Get action from policy
-                action, _ = policy.act(obs_tensor, latent, deterministic=True)
-                action_cpu = action.squeeze(0).detach().cpu().numpy()
+                action, _, _ = policy.act(obs_tensor, latent, deterministic=True)
                 
-                # Take environment step
-                next_obs, reward, done, info = env.step(action_cpu)
+                # Take environment step (tensor input)
+                next_obs, reward, done, info = env.step(action.squeeze(0))
                 
                 episode_reward += reward
-                episode_weights.append(info['weights'].copy())
+                weights_np = info['weights'].detach().cpu().numpy().copy() if torch.is_tensor(info['weights']) else np.array(info['weights'], dtype=float)
+                episode_weights.append(weights_np)
                 
                 # Update trajectory context
                 trajectory_context['observations'].append(obs_tensor.squeeze(0).detach())
@@ -80,7 +80,10 @@ def evaluate(env, policy, encoder, config, num_episodes: int = 50) -> Dict[str, 
                 trajectory_context['rewards'].append(torch.tensor(reward, device=device))
                 
                 if not done:
-                    obs_tensor = torch.tensor(next_obs, dtype=torch.float32, device=device).unsqueeze(0)
+                    if torch.is_tensor(next_obs):
+                        obs_tensor = next_obs.to(device).to(torch.float32).unsqueeze(0)
+                    else:
+                        obs_tensor = torch.tensor(next_obs, dtype=torch.float32, device=device).unsqueeze(0)
             
             # Calculate episode metrics
             final_capital = env.current_capital
