@@ -120,11 +120,8 @@ class PPOTrainer:
 
         # === PPO update ===
         with diag.time_section("ppo_update"):
-            loss, update_info = self.ppo_loss(tr)
-            self.optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
-            self.optimizer.step()
+            # update_ppo_and_vae performs its own optimization/update and returns metrics
+            _, update_info = self.update_ppo_and_vae(tr)
 
         # === Extract logging data ===
         detailed_logging = getattr(self.env, "eval_mode", False) and ("step_info_list" in tr)
@@ -410,26 +407,27 @@ class PPOTrainer:
         return advantages, returns
 
 
-    def ppo_loss(self, traj):
+    def update_ppo_and_vae(self, traj):
         """
-        PPO clipped surrogate objective + value loss + entropy bonus.
+        PPO clipped surrogate objective + value loss + entropy bonus,
+        with optional joint VAE update.
         """
         def ensure_stacked(x):
             if isinstance(x, torch.Tensor):
                 return x.to(self.device)
             return torch.stack(x).to(self.device)
 
-        obs = ensure_stacked(traj["observations"])            # (T, ...)
+        obs = ensure_stacked(traj["observations"])            # (T, ... )
         actions = ensure_stacked(traj["actions"])             # (T, N)
         latents = ensure_stacked(traj["latents"])             # (T, Z)
-        rewards = traj["rewards"] if isinstance(traj["rewards"], torch.Tensor) else torch.as_tensor(traj["rewards"], dtype=torch.float32, device=self.device)
-        dones = traj["dones"] if isinstance(traj["dones"], torch.Tensor) else torch.as_tensor(traj["dones"], dtype=torch.float32, device=self.device)
-        values = ensure_stacked(traj["values"])               # (T, 1) or (T,)
-        old_logp = ensure_stacked(traj["log_probs"])          # (T, 1) or (T,)
+        rewards = traj["rewards"] if isinstance(traj["rewards"], torch.Tensor) \
+            else torch.as_tensor(traj["rewards"], dtype=torch.float32, device=self.device)
+        dones = traj["dones"] if isinstance(traj["dones"], torch.Tensor) \
+            else torch.as_tensor(traj["dones"], dtype=torch.float32, device=self.device)
+        values = ensure_stacked(traj["values"])               # (T,)
+        old_logp = ensure_stacked(traj["log_probs"])          # (T,)
 
-
-
-        # Bootstrap if provided
+        # Bootstrap value if present
         last_value = traj.get("last_value", 0.0)
         if isinstance(last_value, torch.Tensor):
             last_value = last_value.to(self.device)
@@ -443,10 +441,10 @@ class PPOTrainer:
         new_logp = new_logp.squeeze(-1)
         entropy = entropy.squeeze(-1)
 
-        # Probability ratio
+        # PPO probability ratio
         ratio = torch.exp(new_logp - old_logp)
 
-        # Clipped surrogate loss
+        # Clipped surrogate objective
         eps = self.config.ppo_clip_ratio
         surr1 = ratio * advantages
         surr2 = torch.clamp(ratio, 1.0 - eps, 1.0 + eps) * advantages
@@ -458,18 +456,55 @@ class PPOTrainer:
         # Entropy bonus
         entropy_loss = -self.config.entropy_coef * entropy.mean()
 
+        # --- Base PPO loss ---
         total_loss = policy_loss + value_loss + entropy_loss
 
-        return total_loss, {
-            "policy_loss": policy_loss.item(),
-            "value_loss": value_loss.item(),
-            "entropy": entropy.mean().item(),
-            "advantages_mean": advantages.mean().item(),
-            "ratio_mean": ratio.mean().item()
+        # Prepare metrics dict
+        update_info = {
+            "policy_loss": float(policy_loss.item()),
+            "value_loss": float(value_loss.item()),
+            "entropy": float(entropy.mean().item()),
+            "advantages_mean": float(advantages.mean().item()),
+            "ratio_mean": float(ratio.mean().item()),
         }
 
-    
-    
+        # --- VAE update (every vae_update_freq episodes) ---
+        if self.vae_enabled and (self.episode_count % self.config.vae_update_freq == 0):
+            obs_seq = obs.unsqueeze(0)        # (1, T, N, F)
+            act_seq = actions.unsqueeze(0)    # (1, T, N)
+            rew_seq = rewards.unsqueeze(0).unsqueeze(-1)  # (1, T, 1)
+
+            try:
+                vae_loss, vae_info = self.vae.compute_loss(
+                    obs_seq, act_seq, rew_seq, beta=self.config.vae_beta
+                )
+
+                # Joint optimization
+                joint_loss = total_loss + self.config.joint_loss_lambda * vae_loss
+                self.optimizer.zero_grad()
+                joint_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
+                torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
+                self.optimizer.step()
+
+                update_info["vae_loss"] = float(vae_loss.item())
+                for k, v in vae_info.items():
+                    update_info[f"vae_{k}"] = v
+
+                return joint_loss, update_info
+
+            except Exception as e:
+                print(f"[Warning] VAE update failed: {e}")
+
+        # --- PPO-only update ---
+        self.optimizer.zero_grad()
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
+        self.optimizer.step()
+
+        update_info["vae_loss"] = 0.0
+        return total_loss, update_info
+
     
     def compute_advantages(self, trajectory):
         rewards = trajectory["rewards"]
