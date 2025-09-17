@@ -193,6 +193,11 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
     env.config = config  # Ensure config is available for _get_latent_for_step
     env.vae = encoder  # Ensure VAE is available
     
+    env.set_task({
+        'features': full_window['features'],
+        'raw_prices': full_window['raw_prices']
+    })
+
     # Initialize tracking
     daily_returns = []
     daily_weights = []
