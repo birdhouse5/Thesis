@@ -194,8 +194,10 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
     env.vae = encoder  # Ensure VAE is available
     
     env.set_task({
-        'features': full_window['features'],
-        'raw_prices': full_window['raw_prices']
+        "sequence": {
+            "features": full_window['features'],
+            "raw_prices": full_window['raw_prices']
+        }
     })
 
     # Initialize tracking
