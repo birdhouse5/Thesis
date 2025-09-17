@@ -197,7 +197,8 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
         "sequence": {
             "features": full_window['features'],
             "raw_prices": full_window['raw_prices']
-        }
+        },
+        "task_id": f"{split}_sequential"
     })
 
     # Initialize tracking
