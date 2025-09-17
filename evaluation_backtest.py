@@ -247,7 +247,7 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
 
             # --- Environment reward step ---
             env.current_step = t
-            reward, weights, w_cash = env.compute_reward_with_capital(action.squeeze(0))
+            reward, weights, w_cash, *_ = env.compute_reward_with_capital(action.squeeze(0))
 
             # --- Tracking ---
             daily_returns.append(env.excess_log_returns[-1] if env.excess_log_returns else 0.0)
