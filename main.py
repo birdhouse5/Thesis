@@ -227,7 +227,7 @@ def prepare_environments(cfg: TrainingConfig):
             inflation_rate=cfg.inflation_rate
         )
     
-    return environments, split_tensors
+    return environments, split_tensors, datasets
 
 from algorithms.pretrain_hmm import pretrain_hmm
 
@@ -309,7 +309,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         cfg.data_path = ensure_dataset_exists(cfg)
 
         # Prepare environments
-        environments, split_tensors = prepare_environments(cfg)
+        environments, split_tensors, datasets = prepare_environments(cfg)
         train_env, val_env, test_env = environments['train'], environments['val'], environments['test']
 
         # Get observation shape
@@ -388,7 +388,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         # Final evaluation & backtest
         logger.info("Running final evaluation and backtest...")
         test_results = evaluate(test_env, policy, encoder, cfg, "test", cfg.test_episodes)
-        backtest_results = run_sequential_backtest(split_tensors, policy, encoder, cfg, split='test')
+        backtest_results = run_sequential_backtest(datasets, policy, encoder, cfg, split='test')
 
         mlflow_integration.log_validation_results(episodes_trained, test_results)
         mlflow_integration.log_backtest_results(backtest_results)
