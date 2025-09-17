@@ -402,7 +402,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
             "episodes_trained": episodes_trained,
             "best_val_reward": best_val_reward,
             "final_test_reward": test_results['avg_reward'],
-            "backtest_sharpe": backtest_results['sharpe_ratio'],
+            "backtest_sharpe": backtest_results['backtest_sharpe'],
             "backtest_return": backtest_results['total_return'],
             "backtest_max_drawdown": backtest_results['max_drawdown'],
             "training_completed": True,
