@@ -4,7 +4,7 @@ from typing import Dict, List, Tuple
 import pandas as pd
 
 
-def evaluate(env, policy, encoder, config, num_episodes: int = 50) -> Dict[str, float]:
+def evaluate(env, policy, encoder, config, mode, num_episodes: int = 50) -> Dict[str, float]:
     """
     Evaluate policy performance on environment.
     
@@ -112,17 +112,30 @@ def evaluate(env, policy, encoder, config, num_episodes: int = 50) -> Dict[str, 
         encoder.train()
     
     # Calculate summary statistics
-    results = {
-        'avg_reward': np.mean(episode_rewards),
-        'std_reward': np.std(episode_rewards),
-        'avg_return': np.mean(episode_returns),
-        'std_return': np.std(episode_returns),
-        'avg_volatility': np.mean(episode_volatilities),
-        'avg_episode_sharpe': np.mean(episode_sharpe_ratios),
-        'max_return': np.max(episode_returns),
-        'min_return': np.min(episode_returns),
-        'num_episodes': num_episodes
-    }
+    if mode == "validation":
+        results = {
+            'validation: avg_reward': np.mean(episode_rewards),
+            'validation: std_reward': np.std(episode_rewards),
+            'validation: avg_return': np.mean(episode_returns),
+            'validation: std_return': np.std(episode_returns),
+            'validation: avg_volatility': np.mean(episode_volatilities),
+            'validation: avg_episode_sharpe': np.mean(episode_sharpe_ratios),
+            'validation: max_return': np.max(episode_returns),
+            'validation: min_return': np.min(episode_returns),
+            'validation: num_episodes': num_episodes
+        }
+    else:
+        results = {
+            'avg_reward': np.mean(episode_rewards),
+            'std_reward': np.std(episode_rewards),
+            'avg_return': np.mean(episode_returns),
+            'std_return': np.std(episode_returns),
+            'avg_volatility': np.mean(episode_volatilities),
+            'avg_episode_sharpe': np.mean(episode_sharpe_ratios),
+            'max_return': np.max(episode_returns),
+            'min_return': np.min(episode_returns),
+            'num_episodes': num_episodes
+        }
     
     return results
 
