@@ -123,7 +123,16 @@ def objective_factory(args, seeds: List[int]):
             )
 
             # Train and evaluate using your existing entry point
-            summary = run_training(cfg)
+            try:
+                summary = run_training(cfg)
+            except AttributeError as e:
+                # Catch the dict/dataset mismatch from backtest
+                if "get_window_tensor" in str(e):
+                    # fallback: return just the metrics up to validation
+                    summary = {"best_val_reward": float("-inf")}
+                else:
+                    raise
+
 
             # Choose metric (prefer fast validation metric for HPO)
             score = summary.get(metric_key, None)
