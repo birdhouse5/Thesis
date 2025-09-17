@@ -378,7 +378,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
 
                     # Validation
                     if episodes_trained % cfg.val_interval == 0:
-                        val_results = evaluate(val_env, policy, encoder, cfg, cfg.val_episodes)
+                        val_results = evaluate(val_env, policy, encoder, cfg, mode="validation", cfg.val_episodes)
                         mlflow_integration.log_validation_results(episodes_trained, val_results)
 
                         current_val_reward = val_results.get("avg_reward", -1e9)
@@ -387,7 +387,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
 
         # Final evaluation & backtest
         logger.info("Running final evaluation and backtest...")
-        test_results = evaluate(test_env, policy, encoder, cfg, cfg.test_episodes)
+        test_results = evaluate(test_env, policy, encoder, cfg, mode="test", cfg.test_episodes)
         backtest_results = run_sequential_backtest(split_tensors, policy, encoder, cfg, split='test')
 
         mlflow_integration.log_validation_results(episodes_trained, test_results)
