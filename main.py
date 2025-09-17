@@ -387,7 +387,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
 
         # Final evaluation & backtest
         logger.info("Running final evaluation and backtest...")
-        test_results = evaluate(test_env, policy, encoder, cfg, mode="test", cfg.test_episodes)
+        test_results = evaluate(test_env, policy, encoder, cfg, test", cfg.test_episodes)
         backtest_results = run_sequential_backtest(split_tensors, policy, encoder, cfg, split='test')
 
         mlflow_integration.log_validation_results(episodes_trained, test_results)
