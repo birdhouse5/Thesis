@@ -2,7 +2,6 @@
 import argparse
 from datetime import datetime
 import json
-import os
 import sys
 from typing import List
 
@@ -124,7 +123,8 @@ def objective_factory(args, seeds: List[int]):
 
             # Train and evaluate using your existing entry point
             try:
-                summary = run_training(cfg)
+                with mlflow.start_run(nested=True):
+                    summary = run_training(cfg)
             except AttributeError as e:
                 # Catch the dict/dataset mismatch from backtest
                 if "get_window_tensor" in str(e):
