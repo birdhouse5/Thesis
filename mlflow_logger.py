@@ -23,14 +23,17 @@ class MLflowIntegration:
         self.backend_type = None
 
     def setup_mlflow(self):
-        """
-        Setup MLflow with remote tracking server (from MLFLOW_TRACKING_URI),
-        or fallback to local ./mlruns.
-        """
-        
         if os.getenv("DISABLE_MLFLOW", "false").lower() == "true":
             logger.info("🚫 MLflow disabled by DISABLE_MLFLOW")
             self.backend_type = "disabled"
+
+            # Monkey-patch mlflow to no-ops so callers don’t crash
+            mlflow.start_run = contextlib.nullcontext
+            mlflow.active_run = lambda: None
+            mlflow.log_param = lambda *a, **k: None
+            mlflow.log_metric = lambda *a, **k: None
+            mlflow.set_tracking_uri = lambda *a, **k: None
+            mlflow.pytorch.log_model = lambda *a, **k: None
             return "disabled"
 
         tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
@@ -70,6 +73,7 @@ class MLflowIntegration:
 
     def log_config(self, config: Dict[str, Any] = None):
         """Log all configuration parameters."""
+        if self.backend_type == "disabled": return
         config_to_log = config or self.config
         for key, value in config_to_log.items():
             if isinstance(value, (str, int, float, bool)):
@@ -79,6 +83,7 @@ class MLflowIntegration:
 
     def log_training_episode(self, episode: int, metrics: Dict[str, Any]):
         """Log training metrics."""
+        if self.backend_type == "disabled": return
         self.episode_count = episode
         for key, value in metrics.items():
             if isinstance(value, (int, float, np.floating)):
@@ -86,6 +91,7 @@ class MLflowIntegration:
 
     def log_portfolio_episode(self, episode: int, portfolio_data: Dict[str, Any]):
         """Log portfolio metrics + derived exposures."""
+        if self.backend_type == "disabled": return
         for key, value in portfolio_data.items():
             if isinstance(value, (int, float, np.floating)):
                 mlflow.log_metric(key, float(value), step=episode)
@@ -100,12 +106,14 @@ class MLflowIntegration:
             mlflow.log_metric("portfolio_gross_exposure", float(np.sum(np.abs(weights))), step=episode)
 
     def log_validation_results(self, episode: int, val_results: Dict[str, float]):
+        if self.backend_type == "disabled": return
         core_metrics = ["avg_reward", "std_reward", "avg_return", "std_return", "avg_volatility", "avg_sharpe"]
         for metric in core_metrics:
             if metric in val_results:
                 mlflow.log_metric(f"val_{metric}", val_results[metric], step=episode)
 
     def log_backtest_results(self, backtest_results: Dict[str, Any]):
+        if self.backend_type == "disabled": return
         core_metrics = [
             "total_return", "annual_return", "annual_volatility", "sharpe_ratio",
             "sortino_ratio", "calmar_ratio", "max_drawdown", "win_rate", "var_95"
@@ -121,6 +129,7 @@ class MLflowIntegration:
             mlflow.log_artifact(returns_file)
 
     def log_final_models(self, policy, encoder=None, experiment_name: str = None):
+        if self.backend_type == "disabled": return
         """Log final trained models."""
         exp_name = experiment_name or self.run_name or "portfolio_model"
         mlflow.pytorch.log_model(policy, "policy_model", registered_model_name=f"{exp_name}_policy")
@@ -130,6 +139,7 @@ class MLflowIntegration:
             logger.info(f"✅ Encoder model logged to {self.backend_type} backend")
 
     def log_essential_artifacts(self, model_dict: Dict[str, torch.nn.Module], config_dict: Dict[str, Any], experiment_name: str):
+        if self.backend_type == "disabled": return
         self.log_final_models(model_dict.get("policy"), model_dict.get("encoder"), experiment_name)
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(config_dict, f, indent=2, default=str)
@@ -139,6 +149,7 @@ class MLflowIntegration:
         logger.info(f"✅ Configuration logged to {self.backend_type} backend")
 
     def log_final_summary(self, success: bool, episodes_completed: int, error_msg: str = None):
+        if self.backend_type == "disabled": return
         mlflow.log_metric("experiment_success", 1 if success else 0)
         mlflow.log_metric("episodes_completed", episodes_completed)
         if self.config.get("max_episodes"):
@@ -149,6 +160,7 @@ class MLflowIntegration:
 
     
     def log_system_info(self, initial_memory: float, gpu: bool = True):
+        if self.backend_type == "disabled": return
         import psutil, torch
         mlflow.log_param("system_cpu_count", psutil.cpu_count())
         mlflow.log_param("system_memory_gb", psutil.virtual_memory().total / 1024**3)
@@ -159,6 +171,7 @@ class MLflowIntegration:
             mlflow.log_param("gpu_memory_gb", torch.cuda.get_device_properties(0).total_memory / 1024**3)
 
     def log_final_system_metrics(self, final_memory: float, training_time: float, initial_memory: float):
+        if self.backend_type == "disabled": return
         mlflow.log_metric("memory_peak_mb", final_memory)
         mlflow.log_metric("memory_increase_mb", final_memory - initial_memory)
         mlflow.log_metric("wall_time_minutes", training_time / 60)
