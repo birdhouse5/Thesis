@@ -27,14 +27,19 @@ class MLflowIntegration:
             logger.info("🚫 MLflow disabled by DISABLE_MLFLOW")
             self.backend_type = "disabled"
 
-            # Monkey-patch mlflow to no-ops so callers don’t crash
-            mlflow.start_run = contextlib.nullcontext
+            class _DummyRun:
+                def __enter__(self, *a, **kw): return self
+                def __exit__(self, *a, **kw): return False
+
+            # Monkey-patch mlflow to no-ops
+            mlflow.start_run = lambda *a, **kw: _DummyRun()
             mlflow.active_run = lambda: None
             mlflow.log_param = lambda *a, **k: None
             mlflow.log_metric = lambda *a, **k: None
             mlflow.set_tracking_uri = lambda *a, **k: None
             mlflow.pytorch.log_model = lambda *a, **k: None
             return "disabled"
+
 
         tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
         if tracking_uri:
