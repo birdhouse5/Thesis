@@ -27,6 +27,12 @@ class MLflowIntegration:
         Setup MLflow with remote tracking server (from MLFLOW_TRACKING_URI),
         or fallback to local ./mlruns.
         """
+        
+        if os.getenv("DISABLE_MLFLOW", "false").lower() == "true":
+            logger.info("🚫 MLflow disabled by DISABLE_MLFLOW")
+            self.backend_type = "disabled"
+            return "disabled"
+
         tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
         if tracking_uri:
             mlflow.set_tracking_uri(tracking_uri)
