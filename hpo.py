@@ -1,4 +1,12 @@
 # hpo.py
+if os.getenv("DISABLE_MLFLOW", "false").lower() == "true":
+    import mlflow
+    mlflow.start_run = lambda *a, **kw: open("/dev/null","w")  # dummy context
+    mlflow.log_param = lambda *a, **kw: None
+    mlflow.log_metric = lambda *a, **kw: None
+    mlflow.set_tracking_uri = lambda *a, **kw: None
+
+
 import argparse
 from datetime import datetime
 import json
