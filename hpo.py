@@ -1,4 +1,5 @@
 # hpo.py
+import os
 if os.getenv("DISABLE_MLFLOW", "false").lower() == "true":
     import mlflow
     mlflow.start_run = lambda *a, **kw: open("/dev/null","w")  # dummy context
@@ -12,7 +13,7 @@ from datetime import datetime
 import json
 import sys
 from typing import List
-import os
+
 import optuna
 import mlflow
 
