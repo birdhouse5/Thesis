@@ -39,10 +39,11 @@ def save_checkpoint(ckpt_dir: Path, state: dict):
     path = ckpt_dir / f"checkpoint_ep{state['episodes_trained']}.pt"
     torch.save(state, path)
 
-    # Save run_id for MLflow resumption
-    run_info = {"run_id": mlflow.active_run().info.run_id}
-    with open(ckpt_dir / "run_info.json", "w") as f:
-        json.dump(run_info, f)
+    run = mlflow.active_run()
+    if run is not None:  # only if MLflow is active
+        run_info = {"run_id": run.info.run_id}
+        with open(ckpt_dir / "run_info.json", "w") as f:
+            json.dump(run_info, f)
 
     logger.info(f"💾 Saved checkpoint: {path}")
 
