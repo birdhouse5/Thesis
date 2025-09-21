@@ -2,7 +2,8 @@ import torch
 import numpy as np
 from typing import Dict, List, Tuple
 import pandas as pd
-
+import logging
+logger = logging.getLogger(__name__)
 
 def evaluate(env, policy, encoder, config, mode, num_episodes: int = 50) -> Dict[str, float]:
     """
