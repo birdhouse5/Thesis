@@ -84,6 +84,10 @@ def evaluate(env, policy, encoder, config, mode, num_episodes: int = 50) -> Dict
                 next_obs, reward, done, info = env.step(action.squeeze(0))
                 
                 episode_reward += reward
+                if episode_reward < -100:  # Catch when it goes crazy
+                    print(f"EPISODE REWARD EXPLODED: {episode_reward}, last reward: {reward}")
+                    print(f"Step: {env.current_step}, done: {done}")
+                    break
                 weights_np = info['weights'].detach().cpu().numpy().copy() if torch.is_tensor(info['weights']) else np.array(info['weights'], dtype=float)
                 episode_weights.append(weights_np)
                 
