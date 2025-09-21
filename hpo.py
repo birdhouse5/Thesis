@@ -52,7 +52,7 @@ def parse_args():
     return p.parse_args()
 
 
-def suggest_params(trial, asset_class: str, encoder: str):
+def suggest_params(trial, asset_class: str, encoder: str, args):
     """Top-impact knobs only."""
     params = {
         # PPO
@@ -62,11 +62,14 @@ def suggest_params(trial, asset_class: str, encoder: str):
 
         # Width shared by policy & encoder in your factory
         "hidden_dim": trial.suggest_categorical("hidden_dim", [256, 512, 768, 1024]),
-
-        # Reward function parameters
-        "reward_type": trial.suggest_categorical("reward_type", ["dsr", "sharpe", "drawdown"]),
-        "reward_lookback": trial.suggest_int("reward_lookback", 10, 50),
     }
+
+    # Only suggest reward params if not fixed by CLI
+    if args.reward_type is None:
+        params["reward_type"] = trial.suggest_categorical("reward_type", ["dsr", "sharpe", "drawdown"])
+    
+    if args.reward_lookback is None:
+        params["reward_lookback"] = trial.suggest_int("reward_lookback", 10, 50)
 
     # Reward shaping: DSR decay eta depends on asset class
     if asset_class == "crypto":
@@ -112,11 +115,14 @@ def objective_factory(args, seeds: List[int]):
     metric_key = args.metric
 
     def objective(trial: optuna.trial.Trial):
-        # Sample high-impact knobs
-        sampled = suggest_params(
-            trial, 
-            args.asset_class, 
-            args.encoder)
+        # Sample high-impact knobs - pass args to respect CLI flags
+        sampled = suggest_params(trial, args.asset_class, args.encoder, args)
+
+        # Apply CLI overrides for fixed values
+        if args.reward_type is not None:
+            sampled["reward_type"] = args.reward_type
+        if args.reward_lookback is not None:
+            sampled["reward_lookback"] = args.reward_lookback
 
         # Common, non-sampled HPO runtime tweaks
         sampled["device"] = args.device
