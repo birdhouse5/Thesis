@@ -136,12 +136,15 @@ def objective_factory(args, seeds: List[int]):
                 with mlflow.start_run(nested=True):
                     summary = run_training(cfg)
             except AttributeError as e:
-                # Catch the dict/dataset mismatch from backtest
-                if "get_window_tensor" in str(e):
-                    # fallback: return just the metrics up to validation
-                    summary = {"best_val_reward": float("-inf")}
-                else:
-                    raise
+                logger.error(f"AttributeError in trial: {str(e)}")
+                logger.error(f"Full traceback: {traceback.format_exc()}")
+                # Don't mask the error - let it bubble up or return a clear failure
+                return float("-inf")  # or raise e
+                # if "get_window_tensor" in str(e):
+                #     # fallback: return just the metrics up to validation
+                #     summary = {"best_val_reward": float("-inf")}
+                # else:
+                #     raise
 
 
             # Choose metric (prefer fast validation metric for HPO)
