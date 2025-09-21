@@ -377,7 +377,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                             "numpy_rng": np.random.get_state(),
                             "py_rng": __import__("random").getstate(),
                         }
-                        save_checkpoint(ckpt_dir, checkpoint_state)
+                        #save_checkpoint(ckpt_dir, checkpoint_state) #TODO enable for full run
 
                     # Validation
                     if episodes_trained % cfg.val_interval == 0:
