@@ -235,7 +235,7 @@ class MetaEnv:
         
         if self.reward_type == "dsr":
             reward, *rest = self._compute_dsr_reward(portfolio_weights)
-            print(f"DEBUG: DSR reward = {reward}")
+            #print(f"DEBUG: DSR reward = {reward}")
             return reward, *rest
         elif self.reward_type == "sharpe":
             return self._compute_sharpe_reward(portfolio_weights)
