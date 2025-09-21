@@ -75,6 +75,8 @@ class MetaEnv:
         self.alpha, self.beta = 0.0, 0.0
         self.capital_history = []
         self.episode_count = 0
+
+        self.reward_type = reward_type
         self.portfolio_values = []  # For drawdown calculation
         self.recent_returns = []    # For Sharpe calculation
 
