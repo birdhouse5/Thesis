@@ -12,6 +12,8 @@ class ExperimentConfig:
     max_horizon: int = 200
     exp_name: Optional[str] = None
     force_recreate: bool = False
+    transaction_cost_rate: Optional[float] = None
+    inflation_rate: Optional[float] = None    
 
 
 # --- 2. Generator for all 60 configs ---
@@ -154,7 +156,8 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         max_horizon=exp.max_horizon,
         eta=eta,
         rf_rate=0.02,
-        transaction_cost_rate=0.001,
+        transaction_cost_rate=exp.transaction_cost_rate if exp.transaction_cost_rate is not None else 0.001,
         reward_type=exp.reward_type if hasattr(exp, 'reward_type') else "dsr",
         reward_lookback=getattr(exp, 'reward_lookback', 20),
+        inflation_rate=exp.inflation_rate if exp.inflation_rate is not None else 0.1,
     )

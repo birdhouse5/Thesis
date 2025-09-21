@@ -459,6 +459,14 @@ def main():
                     default="dsr", help="Reward function type")
     parser.add_argument("--reward_lookback", type=int, default=20, 
                     help="Lookback window for Sharpe/Drawdown calculation")
+    parser.add_argument("--disable_transaction_costs", action="store_true", 
+                    help="Disable transaction costs (set to 0)")
+    parser.add_argument("--transaction_cost_rate", type=float, default=None,
+                    help="Override transaction cost rate (default: 0.001)")
+    parser.add_argument("--disable_inflation", action="store_true",
+                    help="Disable inflation penalty (set to 0)")
+    parser.add_argument("--inflation_rate", type=float, default=None,
+                    help="Override inflation rate (default: 0.1)")                    
 
     args = parser.parse_args()
 
@@ -469,12 +477,23 @@ def main():
     
     # Generate all experiment configurations
     experiments = generate_experiment_configs(num_seeds=10)
-    if args.exp_name:
-        for exp in experiments:
+    # Apply CLI overrides
+    for exp in experiments:
+        if args.exp_name:
             exp.exp_name = args.exp_name
-    if args.force_recreate:
-        for exp in experiments:
+        if args.force_recreate:
             exp.force_recreate = True
+        
+        # NEW: Add cost/inflation overrides to experiment config
+        if args.disable_transaction_costs:
+            exp.transaction_cost_rate = 0.0
+        elif args.transaction_cost_rate is not None:
+            exp.transaction_cost_rate = args.transaction_cost_rate
+            
+        if args.disable_inflation:
+            exp.inflation_rate = 0.0
+        elif args.inflation_rate is not None:
+            exp.inflation_rate = args.inflation_rate
     if args.encoder:
         experiments = [exp for exp in experiments if exp.encoder == args.encoder]
     if args.datatype:
