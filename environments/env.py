@@ -33,6 +33,7 @@ class MetaEnv:
                  min_horizon: int = 45, max_horizon: int = 60, rf_rate=0.02, 
                  steps_per_year: int = 252, eta: float = 0.05, eps: float = 1e-12, 
                  transaction_cost_rate: float = 0.001, inflation_rate: float = 0.0,
+                 reward_type: str = "dsr", reward_lookback: int = 20,
                  device: str = "cpu", eval_mode: bool = False):
         """
         dataset: Dict with 'features' and 'raw_prices' tensors
@@ -74,6 +75,8 @@ class MetaEnv:
         self.alpha, self.beta = 0.0, 0.0
         self.capital_history = []
         self.episode_count = 0
+        self.portfolio_values = []  # For drawdown calculation
+        self.recent_returns = []    # For Sharpe calculation
 
         self.eval_mode = eval_mode
 
@@ -225,6 +228,17 @@ class MetaEnv:
         return next_state, reward, self.done, info
     
     def compute_reward_with_capital(self, portfolio_weights):
+        """Compute reward based on configured reward type."""
+        if self.reward_type == "dsr":
+            return self._compute_dsr_reward(portfolio_weights)
+        elif self.reward_type == "sharpe":
+            return self._compute_sharpe_reward(portfolio_weights)
+        elif self.reward_type == "drawdown":
+            return self._compute_drawdown_reward(portfolio_weights)
+        else:
+            raise ValueError(f"Unknown reward type: {self.reward_type}")
+
+    def _compute_dsr_reward(self, portfolio_weights):
         """
         Differential Sharpe Ratio (DSR) reward using portfolio EXCESS LOG-returns.
         - Uses EWMA of first/second moments (alpha, beta) with decay eta.
@@ -306,6 +320,143 @@ class MetaEnv:
             dsr_t = torch.tensor(0.0, dtype=torch.float32, device=self.device)
         
         return float(dsr_t.item()), weights, float(w_cash_scalar_t.item()), float(turnover_t.item()), float(cost_t.item()), float(equal_weight_log_return.item()), float(relative_excess_log_return_t.item())
+    
+    def _compute_sharpe_reward(self, portfolio_weights):
+        """Simple rolling Sharpe ratio reward."""
+        # === Input validation ===
+        if self.current_step >= len(self.current_task['raw_prices']) - 1:
+            if torch.is_tensor(portfolio_weights):
+                weights = torch.zeros_like(portfolio_weights, dtype=torch.float32, device=self.device)
+            else:
+                weights = torch.zeros(len(portfolio_weights), dtype=torch.float32, device=self.device)
+            w_cash = 1.0
+            return 0.0, weights, float(w_cash), 0.0, 0.0, 0.0, 0.0
+
+        # === Asset returns ===
+        current_prices = self.current_task['raw_prices'][self.current_step].to(self.device).to(torch.float32)
+        next_prices = self.current_task['raw_prices'][self.current_step + 1].to(self.device).to(torch.float32)
+        current_prices = torch.clamp(current_prices, min=self.eps)
+        next_prices = torch.clamp(next_prices, min=self.eps)
+        asset_log_returns = torch.log(next_prices) - torch.log(current_prices)
+        equal_weight_log_return = torch.mean(asset_log_returns)
+
+        # === Weight normalization ===
+        if torch.is_tensor(portfolio_weights):
+            weights = portfolio_weights.to(self.device, dtype=torch.float32)
+            gross = torch.sum(torch.abs(weights))
+            w_cash_scalar_t = 1.0 / (gross + 1.0 + self.eps)
+        else:
+            weights, w_cash = normalize_with_budget_constraint(portfolio_weights, self.eps)
+            weights = torch.as_tensor(weights, dtype=torch.float32, device=self.device)
+            w_cash_scalar_t = w_cash if torch.is_tensor(w_cash) else torch.tensor(w_cash, dtype=torch.float32, device=self.device)
+
+        # === Transaction costs ===
+        if self.prev_weights is None:
+            turnover_t = torch.sum(torch.abs(weights))
+        else:
+            turnover_t = torch.sum(torch.abs(weights - self.prev_weights))
+        cost_t = torch.as_tensor(self.transaction_cost_rate, dtype=torch.float32, device=self.device) * turnover_t
+
+        # === Portfolio returns ===
+        assets_excess = asset_log_returns - self.rf_step_log
+        equal_weight_excess = equal_weight_log_return - self.rf_step_log
+        agent_excess_t = torch.dot(weights, assets_excess) - cost_t
+        excess_log_return_t = torch.dot(weights, assets_excess) - cost_t
+        total_log_return_t = torch.as_tensor(self.rf_step_log, dtype=torch.float32, device=self.device) + excess_log_return_t
+        relative_excess_log_return_t = agent_excess_t - equal_weight_excess
+        self.prev_weights = weights
+
+        # === Update tracking ===
+        self.current_capital *= float(torch.exp(total_log_return_t).item())
+        self.capital_history.append(self.current_capital)
+        self.log_returns.append(float(total_log_return_t.item()))
+        self.excess_log_returns.append(float(excess_log_return_t.item()))
+        self.relative_excess_log_returns.append(float(relative_excess_log_return_t.item()))
+
+        # === Sharpe-specific reward calculation ===
+        self.recent_returns.append(float(excess_log_return_t.item()))
+        if len(self.recent_returns) > self.reward_lookback:
+            self.recent_returns.pop(0)
+
+        if len(self.recent_returns) >= 10:
+            returns_array = np.array(self.recent_returns)
+            mean_return = np.mean(returns_array)
+            std_return = np.std(returns_array)
+            sharpe_reward = mean_return / (std_return + 1e-8)
+        else:
+            sharpe_reward = 0.0
+
+        return float(sharpe_reward), weights, float(w_cash_scalar_t.item() if torch.is_tensor(w_cash_scalar_t) else w_cash_scalar_t), float(turnover_t.item()), float(cost_t.item()), float(equal_weight_log_return.item()), float(relative_excess_log_return_t.item())
+
+
+    def _compute_drawdown_reward(self, portfolio_weights):
+        """Maximum drawdown-based reward."""
+        # === Input validation ===
+        if self.current_step >= len(self.current_task['raw_prices']) - 1:
+            if torch.is_tensor(portfolio_weights):
+                weights = torch.zeros_like(portfolio_weights, dtype=torch.float32, device=self.device)
+            else:
+                weights = torch.zeros(len(portfolio_weights), dtype=torch.float32, device=self.device)
+            w_cash = 1.0
+            return 0.0, weights, float(w_cash), 0.0, 0.0, 0.0, 0.0
+
+        # === Asset returns ===
+        current_prices = self.current_task['raw_prices'][self.current_step].to(self.device).to(torch.float32)
+        next_prices = self.current_task['raw_prices'][self.current_step + 1].to(self.device).to(torch.float32)
+        current_prices = torch.clamp(current_prices, min=self.eps)
+        next_prices = torch.clamp(next_prices, min=self.eps)
+        asset_log_returns = torch.log(next_prices) - torch.log(current_prices)
+        equal_weight_log_return = torch.mean(asset_log_returns)
+
+        # === Weight normalization ===
+        if torch.is_tensor(portfolio_weights):
+            weights = portfolio_weights.to(self.device, dtype=torch.float32)
+            gross = torch.sum(torch.abs(weights))
+            w_cash_scalar_t = 1.0 / (gross + 1.0 + self.eps)
+        else:
+            weights, w_cash = normalize_with_budget_constraint(portfolio_weights, self.eps)
+            weights = torch.as_tensor(weights, dtype=torch.float32, device=self.device)
+            w_cash_scalar_t = w_cash if torch.is_tensor(w_cash) else torch.tensor(w_cash, dtype=torch.float32, device=self.device)
+
+        # === Transaction costs ===
+        if self.prev_weights is None:
+            turnover_t = torch.sum(torch.abs(weights))
+        else:
+            turnover_t = torch.sum(torch.abs(weights - self.prev_weights))
+        cost_t = torch.as_tensor(self.transaction_cost_rate, dtype=torch.float32, device=self.device) * turnover_t
+
+        # === Portfolio returns ===
+        assets_excess = asset_log_returns - self.rf_step_log
+        equal_weight_excess = equal_weight_log_return - self.rf_step_log
+        agent_excess_t = torch.dot(weights, assets_excess) - cost_t
+        excess_log_return_t = torch.dot(weights, assets_excess) - cost_t
+        total_log_return_t = torch.as_tensor(self.rf_step_log, dtype=torch.float32, device=self.device) + excess_log_return_t
+        relative_excess_log_return_t = agent_excess_t - equal_weight_excess
+        self.prev_weights = weights
+
+        # === Update capital and tracking ===
+        self.current_capital *= float(torch.exp(total_log_return_t).item())
+        self.capital_history.append(self.current_capital)
+        self.log_returns.append(float(total_log_return_t.item()))
+        self.excess_log_returns.append(float(excess_log_return_t.item()))
+        self.relative_excess_log_returns.append(float(relative_excess_log_return_t.item()))
+
+        # === Drawdown-specific reward calculation ===
+        self.portfolio_values.append(self.current_capital)
+        if len(self.portfolio_values) > self.reward_lookback:
+            self.portfolio_values.pop(0)
+
+        if len(self.portfolio_values) >= 10:
+            values_array = np.array(self.portfolio_values)
+            peak = np.maximum.accumulate(values_array)
+            drawdown = (values_array - peak) / peak
+            max_drawdown = np.min(drawdown)
+            # Reward is negative of max drawdown (less negative is better)
+            drawdown_reward = -max_drawdown
+        else:
+            drawdown_reward = 0.0
+
+        return float(drawdown_reward), weights, float(w_cash_scalar_t.item() if torch.is_tensor(w_cash_scalar_t) else w_cash_scalar_t), float(turnover_t.item()), float(cost_t.item()), float(equal_weight_log_return.item()), float(relative_excess_log_return_t.item())
 
 
     def rollout_episode(self, policy, encoder):

@@ -81,7 +81,8 @@ class TrainingConfig:
     transaction_cost_rate: float = 0.001
     force_recreate: bool = False
     inflation_rate: float = 0.1
-
+    reward_type: str = "dsr"
+    reward_lookback: int = 20
 
 def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
     # dataset paths
@@ -153,5 +154,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         max_horizon=exp.max_horizon,
         eta=eta,
         rf_rate=0.02,
-        transaction_cost_rate=0.001
+        transaction_cost_rate=0.001,
+        reward_type=exp.reward_type if hasattr(exp, 'reward_type') else "dsr",
+        reward_lookback=getattr(exp, 'reward_lookback', 20),
     )
