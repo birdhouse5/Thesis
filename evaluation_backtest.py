@@ -160,6 +160,13 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
 
     # Select dataset split first
     dataset = datasets[split]
+    # In evaluation_backtest.py, add at the start of run_sequential_backtest:
+    logger.info(f"Dataset type: {type(dataset)}")
+    logger.info(f"Dataset attributes: {dir(dataset)}")
+    if hasattr(dataset, 'get_window_tensor'):
+        logger.info("✓ get_window_tensor method exists")
+    else:
+        logger.error("✗ get_window_tensor method missing")
 
     # Print info after dataset is defined
     print(f"Running sequential backtest on {split} split:")
