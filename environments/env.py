@@ -231,9 +231,12 @@ class MetaEnv:
         return next_state, reward, self.done, info
     
     def compute_reward_with_capital(self, portfolio_weights):
-        """Compute reward based on configured reward type."""
+        print(f"DEBUG: Step {self.current_step}, weights: {portfolio_weights[:3]}...")
+        
         if self.reward_type == "dsr":
-            return self._compute_dsr_reward(portfolio_weights)
+            reward, *rest = self._compute_dsr_reward(portfolio_weights)
+            print(f"DEBUG: DSR reward = {reward}")
+            return reward, *rest
         elif self.reward_type == "sharpe":
             return self._compute_sharpe_reward(portfolio_weights)
         elif self.reward_type == "drawdown":
@@ -251,6 +254,7 @@ class MetaEnv:
             tuple: (reward, weights, w_cash, turnover, cost)
         """
         if self.current_step >= len(self.current_task['raw_prices']) - 1:
+            print(f"DEBUG: Early exit - step {self.current_step} >= {len(self.current_task['raw_prices']) - 1}")
             if torch.is_tensor(portfolio_weights):
                 weights = torch.zeros_like(portfolio_weights, dtype=torch.float32, device=self.device)
             else:
@@ -261,6 +265,9 @@ class MetaEnv:
         # --- 1) Compute asset LOG-returns for the step t -> t+1
         current_prices = self.current_task['raw_prices'][self.current_step].to(self.device).to(torch.float32)
         next_prices    = self.current_task['raw_prices'][self.current_step + 1].to(self.device).to(torch.float32)
+
+        print(f"DEBUG: current_prices: {current_prices[:3]}, next_prices: {next_prices[:3]}")
+
         current_prices = torch.clamp(current_prices, min=self.eps)
         next_prices    = torch.clamp(next_prices,    min=self.eps)
         asset_log_returns = torch.log(next_prices) - torch.log(current_prices)  # [N]
@@ -321,6 +328,8 @@ class MetaEnv:
 
         if self.current_step < 2:  # gate very-early steps
             dsr_t = torch.tensor(0.0, dtype=torch.float32, device=self.device)
+
+        print(f"DEBUG: Final DSR = {float(dsr_t.item())}, capital = {self.current_capital}")
         
         return float(dsr_t.item()), weights, float(w_cash_scalar_t.item()), float(turnover_t.item()), float(cost_t.item()), float(equal_weight_log_return.item()), float(relative_excess_log_return_t.item())
     

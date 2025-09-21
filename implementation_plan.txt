@@ -5,3 +5,4 @@
         sharpe
 
 -> debug -inf validation performance
+-> fix crypto
