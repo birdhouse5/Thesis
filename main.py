@@ -382,6 +382,9 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                     # Validation
                     if episodes_trained % cfg.val_interval == 0:
                         val_results = evaluate(val_env, policy, encoder, cfg, "validation", cfg.val_episodes)
+                        print(f"DEBUG: val_results keys: {list(val_results.keys())}")
+                        print(f"DEBUG: val_results: {val_results}")
+                        mlflow_integration.log_validation_results(episodes_trained, val_results)
                         mlflow_integration.log_validation_results(episodes_trained, val_results)
 
                         current_val_reward = val_results.get("avg_reward", -1e9)
