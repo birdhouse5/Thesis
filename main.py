@@ -225,7 +225,9 @@ def prepare_environments(cfg: TrainingConfig):
             rf_rate=cfg.rf_rate,
             transaction_cost_rate=cfg.transaction_cost_rate,
             steps_per_year=steps_per_year,
-            inflation_rate=cfg.inflation_rate
+            inflation_rate=cfg.inflation_rate,
+            reward_type=cfg.reward_type,
+            reward_lookback=cfg.reward_lookback,
         )
     
     return environments, split_tensors, datasets
@@ -453,6 +455,10 @@ def main():
     parser.add_argument("--force_recreate", action="store_true", help="Force dataset and MLflow overwrite")
     parser.add_argument("--encoder", type=str, choices=["vae", "hmm", "none"], help="Encoder type to run")
     parser.add_argument("--datatype", type=str, choices=["sp500", "crypto"], help="Dataset type to run")
+    parser.add_argument("--reward_type", type=str, choices=["dsr", "sharpe", "drawdown"], 
+                    default="dsr", help="Reward function type")
+    parser.add_argument("--reward_lookback", type=int, default=20, 
+                    help="Lookback window for Sharpe/Drawdown calculation")
 
     args = parser.parse_args()
 

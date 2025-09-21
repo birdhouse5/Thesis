@@ -1,5 +1,4 @@
-Great — I went through your codebase carefully. Here’s my review as a senior ML engineer specialized in RL for portfolio optimization. I’ll first outline critical issues/bugs, then structural/code quality issues, and finally improvements/opportunities:
-
-🔴 Critical Issues & Bugs
-
-Optimizer setup in PPOTrainer
+-> run HPO successfully
+-> clear up performance issues related to transaction cost and inflation
+-> try different reward functions:
+        Maximum Drawdown (MDD)
