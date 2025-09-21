@@ -77,6 +77,7 @@ class MetaEnv:
         self.episode_count = 0
 
         self.reward_type = reward_type
+        self.reward_looback = reward_lookback
         self.portfolio_values = []  # For drawdown calculation
         self.recent_returns = []    # For Sharpe calculation
 
