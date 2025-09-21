@@ -2,3 +2,6 @@
 -> clear up performance issues related to transaction cost and inflation
 -> try different reward functions:
         Maximum Drawdown (MDD)
+        sharpe
+
+-> debug -inf validation performance
