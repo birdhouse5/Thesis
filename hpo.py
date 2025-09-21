@@ -41,6 +41,14 @@ def parse_args():
                    default=None, help="Fix reward type (skip HPO search)")
     p.add_argument("--reward-lookback", type=int, default=None,
                    help="Fix reward lookback (skip HPO search)")
+    p.add_argument("--disable-transaction-costs", action="store_true",
+                   help="Disable transaction costs (set to 0)")
+    p.add_argument("--transaction-cost-rate", type=float, default=None,
+                   help="Fix transaction cost rate (skip HPO search)")
+    p.add_argument("--disable-inflation", action="store_true",
+                   help="Disable inflation penalty (set to 0)")
+    p.add_argument("--inflation-rate", type=float, default=None,
+                   help="Fix inflation rate (skip HPO search)")                   
     return p.parse_args()
 
 
@@ -115,6 +123,16 @@ def objective_factory(args, seeds: List[int]):
         sampled["max_episodes"] = args.max_episodes
         sampled["val_episodes"] = args.val_episodes
         sampled["test_episodes"] = args.test_episodes
+
+        if args.disable_transaction_costs:
+            sampled["transaction_cost_rate"] = 0.0
+        elif args.transaction_cost_rate is not None:
+            sampled["transaction_cost_rate"] = args.transaction_cost_rate
+            
+        if args.disable_inflation:
+            sampled["inflation_rate"] = 0.0
+        elif args.inflation_rate is not None:
+            sampled["inflation_rate"] = args.inflation_rate
 
         # Build base experiment (seed will be set per run)
         base_exp = ExperimentConfig(
