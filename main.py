@@ -387,7 +387,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                         mlflow_integration.log_validation_results(episodes_trained, val_results)
                         mlflow_integration.log_validation_results(episodes_trained, val_results)
 
-                        current_val_reward = val_results.get("avg_reward", -1e9)
+                        current_val_reward = val_results.get("validation: avg_reward", -1e9)
                         logger.info(f"Validation at ep {episodes_trained}: {current_val_reward}")
                         if current_val_reward > best_val_reward:
                             best_val_reward = current_val_reward
