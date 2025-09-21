@@ -49,20 +49,32 @@ def evaluate(env, policy, encoder, config, mode, num_episodes: int = 50) -> Dict
                 # Get latent encoding
                 if encoder is None or getattr(config, 'disable_vae', False):
                     latent = torch.zeros(1, config.latent_dim, device=device)
-                elif len(trajectory_context['observations']) == 0:
-                    latent = torch.zeros(1, config.latent_dim, device=device)
                 else:
-                    obs_seq = torch.stack(trajectory_context['observations']).unsqueeze(0)
-                    action_seq = torch.stack(trajectory_context['actions']).unsqueeze(0)
-                    reward_seq = torch.stack(trajectory_context['rewards']).unsqueeze(0).unsqueeze(-1)
-                    
-                    if hasattr(encoder, 'encode'):
-                        if config.encoder == "hmm":
-                            latent = encoder.encode(obs_seq, action_seq, reward_seq)
-                        else:  # VAE
-                            mu, logvar, _ = encoder.encode(obs_seq, action_seq, reward_seq)
-                            latent = encoder.reparameterize(mu, logvar)
+                    # NEW: Handle empty context better
+                    if len(trajectory_context['observations']) == 0:
+                        # Use current observation as minimal context
+                        dummy_action = torch.zeros(config.num_assets, device=device)
+                        dummy_reward = torch.tensor(0.0, device=device)
+                        
+                        obs_seq = obs_tensor.unsqueeze(0)  # [1, 1, N, F]
+                        action_seq = dummy_action.unsqueeze(0).unsqueeze(0)  # [1, 1, N]
+                        reward_seq = dummy_reward.unsqueeze(0).unsqueeze(0).unsqueeze(-1)  # [1, 1, 1]
                     else:
+                        obs_seq = torch.stack(trajectory_context['observations']).unsqueeze(0)
+                        action_seq = torch.stack(trajectory_context['actions']).unsqueeze(0)
+                        reward_seq = torch.stack(trajectory_context['rewards']).unsqueeze(0).unsqueeze(-1)
+                    
+                    try:
+                        if hasattr(encoder, 'encode'):
+                            if config.encoder == "hmm":
+                                latent = encoder.encode(obs_seq, action_seq, reward_seq)
+                            else:  # VAE
+                                mu, logvar, _ = encoder.encode(obs_seq, action_seq, reward_seq)
+                                latent = encoder.reparameterize(mu, logvar)
+                        else:
+                            latent = torch.zeros(1, config.latent_dim, device=device)
+                    except Exception as e:
+                        print(f"Encoder failed: {e}")
                         latent = torch.zeros(1, config.latent_dim, device=device)
                 
                 # Get action from policy
