@@ -37,7 +37,12 @@ def parse_args():
     p.add_argument("--metric", type=str, default="best_val_reward",
                    choices=["best_val_reward", "backtest_sharpe", "final_test_reward"])
     p.add_argument("--direction", type=str, default="maximize", choices=["maximize", "minimize"])
+    p.add_argument("--reward-type", type=str, choices=["dsr", "sharpe", "drawdown"], 
+                   default=None, help="Fix reward type (skip HPO search)")
+    p.add_argument("--reward-lookback", type=int, default=None,
+                   help="Fix reward lookback (skip HPO search)")
     return p.parse_args()
+
 
 def suggest_params(trial, asset_class: str, encoder: str):
     """Top-impact knobs only."""
@@ -49,6 +54,10 @@ def suggest_params(trial, asset_class: str, encoder: str):
 
         # Width shared by policy & encoder in your factory
         "hidden_dim": trial.suggest_categorical("hidden_dim", [256, 512, 768, 1024]),
+
+        # Reward function parameters
+        "reward_type": trial.suggest_categorical("reward_type", ["dsr", "sharpe", "drawdown"]),
+        "reward_lookback": trial.suggest_int("reward_lookback", 10, 50),
     }
 
     # Reward shaping: DSR decay eta depends on asset class
@@ -96,7 +105,10 @@ def objective_factory(args, seeds: List[int]):
 
     def objective(trial: optuna.trial.Trial):
         # Sample high-impact knobs
-        sampled = suggest_params(trial, args.asset_class, args.encoder)
+        sampled = suggest_params(
+            trial, 
+            args.asset_class, 
+            args.encoder)
 
         # Common, non-sampled HPO runtime tweaks
         sampled["device"] = args.device
