@@ -1,5 +1,5 @@
-import mlflow
-import mlflow.pytorch
+#import mlflow
+#import mlflow.pytorch
 from pathlib import Path
 from datetime import datetime
 import torch
@@ -27,8 +27,9 @@ from environments.env import MetaEnv
 from models.policy import PortfolioPolicy
 from models.vae import VAE
 from models.hmm_encoder import HMMEncoder  # New stub
+from algorithms.pretrain_hmm import pretrain_hmm
 from algorithms.trainer import PPOTrainer
-
+from csv_logger import CSVLogger
 # Import evaluation functions
 from evaluation_backtest import evaluate, run_sequential_backtest
 import shutil
@@ -39,14 +40,17 @@ def save_checkpoint(ckpt_dir: Path, state: dict):
     path = ckpt_dir / f"checkpoint_ep{state['episodes_trained']}.pt"
     torch.save(state, path)
 
-    run = mlflow.active_run()
-    if run is not None:  # only if MLflow is active
-        run_info = {"run_id": run.info.run_id}
-        with open(ckpt_dir / "run_info.json", "w") as f:
-            json.dump(run_info, f)
+    # Remove MLflow-specific checkpoint info
+    # Just save a simple metadata file
+    metadata = {
+        "episodes_trained": state['episodes_trained'],
+        "checkpoint_path": str(path),
+        "timestamp": datetime.now().isoformat()
+    }
+    with open(ckpt_dir / "checkpoint_info.json", "w") as f:
+        json.dump(metadata, f, indent=2)
 
     logger.info(f"💾 Saved checkpoint: {path}")
-
 
 class NpEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -232,7 +236,7 @@ def prepare_environments(cfg: TrainingConfig):
     
     return environments, split_tensors, datasets
 
-from algorithms.pretrain_hmm import pretrain_hmm
+
 
 def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
     """Create encoder and policy models based on configuration."""
@@ -246,24 +250,19 @@ def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
             latent_dim=cfg.latent_dim,
             hidden_dim=cfg.hidden_dim
         ).to(device)
+        logger.info(f"✅ Created VAE encoder with latent_dim={cfg.latent_dim}")
     
     elif cfg.encoder == "hmm":
-        import mlflow.pytorch
-        model_name = f"{cfg.asset_class}_hmm_encoder"
-        try:
-            encoder = mlflow.pytorch.load_model(f"models:/{model_name}/latest").to(device)
-            logger.info(f"✅ Loaded pretrained HMM encoder from MinIO: {model_name}")
-        except Exception as e:
-            logger.warning(f"HMM encoder not found in registry: {e}")
-            logger.info(f"⚡ Triggering on-the-fly pretraining for {model_name}...")
-            
-            success = pretrain_hmm(asset_class=cfg.asset_class, seed=cfg.seed)
-            if not success:
-                raise RuntimeError(f"Failed to pretrain HMM encoder for {cfg.asset_class}")
-            
-            # Try loading again after pretraining
-            encoder = mlflow.pytorch.load_model(f"models:/{model_name}/latest").to(device)
-            logger.info(f"✅ Successfully pretrained and loaded HMM encoder: {model_name}")
+        # Create fresh HMM encoder (no pre-training in CSV mode for simplicity)
+        encoder = HMMEncoder(
+            obs_dim=obs_shape,
+            num_assets=cfg.num_assets,
+            latent_dim=cfg.latent_dim,  # Should be 4 for HMM states
+            hidden_dim=cfg.hidden_dim
+        ).to(device)
+        logger.info(f"✅ Created HMM encoder with {cfg.latent_dim} states")
+    else:
+        logger.info("✅ No encoder (encoder=none)")
     
     # Create policy
     policy = PortfolioPolicy(
@@ -274,6 +273,8 @@ def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
         noise_factor=cfg.noise_factor,
         random_policy=cfg.random_policy
     ).to(device)
+    
+    logger.info(f"✅ Created policy with obs_shape={obs_shape}, latent_dim={cfg.latent_dim}")
     
     return encoder, policy
 
@@ -297,12 +298,16 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
     resume_state = None
     episodes_trained = 0
     best_val_reward = float("-inf")
+    patience_counter = 0
 
     # === NEW: Initialize MLflow integration ===
-    from mlflow_logger import MLflowIntegration
-    mlflow_integration = MLflowIntegration(run_name=cfg.exp_name, config=vars(cfg))
-    mlflow_integration.setup_mlflow()
-    mlflow_integration.log_config()
+    # from mlflow_logger import MLflowIntegration
+    # mlflow_integration = MLflowIntegration(run_name=cfg.exp_name, config=vars(cfg))
+    # mlflow_integration.setup_mlflow()
+    # mlflow_integration.log_config()
+    csv_logger = CSVLogger(run_name=cfg.exp_name, config=vars(cfg))
+    csv_logger.setup_mlflow()
+    csv_logger.log_config()
 
     try:
         # Setup
@@ -362,8 +367,10 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                     pbar.update(1)
 
                     # === LOGGING (via mlflow_integration) ===
-                    mlflow_integration.log_training_episode(episodes_trained, result)
-                    mlflow_integration.log_portfolio_episode(episodes_trained, result)
+                    # mlflow_integration.log_training_episode(episodes_trained, result)
+                    # mlflow_integration.log_portfolio_episode(episodes_trained, result)
+                    csv_logger.log_training_episode(episodes_trained, result)
+                    csv_logger.log_portfolio_episode(episodes_trained, result)
 
                     # Save checkpoint every 50 episodes
                     if episodes_trained % 50 == 0:
@@ -384,26 +391,39 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                         val_results = evaluate(val_env, policy, encoder, cfg, "validation", cfg.val_episodes)
                         print(f"DEBUG: val_results keys: {list(val_results.keys())}")
                         print(f"DEBUG: val_results: {val_results}")
-                        mlflow_integration.log_validation_results(episodes_trained, val_results)
-                        mlflow_integration.log_validation_results(episodes_trained, val_results)
+                        #mlflow_integration.log_validation_results(episodes_trained, val_results)
+                        csv_logger.log_validation_results(episodes_trained, val_results)
 
                         current_val_reward = val_results.get("validation: avg_reward", -1e9)
                         logger.info(f"Validation at ep {episodes_trained}: {current_val_reward}")
                         if current_val_reward > best_val_reward:
                             best_val_reward = current_val_reward
+                            patience_counter = 0
+                        else:
+                            patience_counter += 1
+                            
+                        if (episodes_trained >= cfg.min_episodes_before_stopping and 
+                            patience_counter >= cfg.early_stopping_patience):
+                            logger.info(f"Early stopping triggered at episode {episodes_trained}")
+                            break
 
         # Final evaluation & backtest
         logger.info("Running final evaluation and backtest...")
         test_results = evaluate(test_env, policy, encoder, cfg, "test", cfg.test_episodes)
         backtest_results = run_sequential_backtest(datasets, policy, encoder, cfg, split='test')
 
-        mlflow_integration.log_validation_results(episodes_trained, test_results)
-        mlflow_integration.log_backtest_results(backtest_results)
+        #mlflow_integration.log_validation_results(episodes_trained, test_results)
+        #mlflow_integration.log_backtest_results(backtest_results)
 
         # Save final models + config
         model_dict = {"policy": policy, "encoder": encoder}
-        mlflow_integration.log_essential_artifacts(model_dict, vars(cfg), cfg.exp_name)
-        mlflow_integration.log_final_summary(True, episodes_trained)
+        #mlflow_integration.log_essential_artifacts(model_dict, vars(cfg), cfg.exp_name)
+        #mlflow_integration.log_final_summary(True, episodes_trained)
+
+        csv_logger.log_validation_results(episodes_trained, test_results)
+        csv_logger.log_backtest_results(backtest_results)
+        csv_logger.log_essential_artifacts(model_dict, vars(cfg), cfg.exp_name)
+        csv_logger.log_final_summary(True, episodes_trained)        
 
         final_results = {
             "episodes_trained": episodes_trained,
@@ -421,7 +441,8 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Training failed for {cfg.exp_name}: {str(e)}")
         logger.error(traceback.format_exc())
-        mlflow_integration.log_final_summary(False, episodes_trained, error_msg=str(e))
+        #mlflow_integration.log_final_summary(False, episodes_trained, error_msg=str(e))
+        csv_logger.log_final_summary(False, episodes_trained, error_msg=str(e))
         return {
             "training_completed": False,
             "error": str(e),
@@ -445,10 +466,10 @@ def run_experiment_batch(experiments, experiment_name: str = "test_001", force_r
     return manager.run_all_experiments(experiment_name)
 
 
-def ensure_mlflow_setup():
-    """Ensure MLflow is properly configured."""
-    from mlflow_logger import setup_mlflow
-    return setup_mlflow()
+# def ensure_mlflow_setup():
+#     """Ensure MLflow is properly configured."""
+#     from mlflow_logger import setup_mlflow
+#     return setup_mlflow()
 
 def main():
     """Main experiment runner."""
@@ -474,10 +495,11 @@ def main():
     args = parser.parse_args()
 
     # Setup MLflow before anything else
-    logger.info("Setting up MLflow configuration...")
-    backend = ensure_mlflow_setup()
-    logger.info(f"MLflow configured with {backend} backend")
-    
+    # logger.info("Setting up MLflow configuration...")
+    # backend = ensure_mlflow_setup()
+    # logger.info(f"MLflow configured with {backend} backend")
+    logger.info("Using CSV logging backend")
+
     # Generate all experiment configurations
     experiments = generate_experiment_configs(num_seeds=10)
     # Apply CLI overrides

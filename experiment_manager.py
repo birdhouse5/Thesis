@@ -10,7 +10,7 @@ import torch
 import gc
 
 from config import ExperimentConfig, experiment_to_training_config
-from mlflow_logger import MLflowIntegration
+#from mlflow_logger import MLflowIntegration
 
 
 logger = logging.getLogger(__name__)
@@ -94,13 +94,17 @@ class ExperimentManager:
     def run_single_experiment(self, exp_config: ExperimentConfig) -> Dict[str, Any]:
         """Run a single experiment with comprehensive error handling."""
         from main import run_training
-        import mlflow
+        #import mlflow
+        from csv_logger import CSVLogger
         
         cfg = experiment_to_training_config(exp_config)
         exp_name = cfg.exp_name
         
-        mlflow_integration = MLflowIntegration(run_name=cfg.exp_name, config=vars(cfg))
-        mlflow_integration.setup_mlflow() 
+        #mlflow_integration = MLflowIntegration(run_name=cfg.exp_name, config=vars(cfg))
+        #mlflow_integration.setup_mlflow()
+        
+        csv_logger = CSVLogger(run_name=cfg.exp_name, config=vars(cfg))
+        csv_logger.setup_mlflow()
         
         logger.info(f"Starting experiment: {exp_name}")
         
@@ -110,29 +114,32 @@ class ExperimentManager:
         start_time = time.time()
         
         try:
-            with mlflow.start_run(run_name=exp_name):
+        #with mlflow.start_run(run_name=exp_name):
 
-                mlflow_integration.log_config()    
-                
-                # Log system info
-                mlflow_integration.log_system_info(initial_memory)
+            #mlflow_integration.log_config()    
+            
+            # Log system info
+            #mlflow_integration.log_system_info(initial_memory)
+            csv_logger.log_config()
+            csv_logger.log_system_info(initial_memory)
 
-                # Run training
-                results = run_training(cfg)
+            # Run training
+            results = run_training(cfg)
 
-                # Final system metrics
-                final_memory = process.memory_info().rss / 1024 / 1024
-                training_time = time.time() - start_time
-                mlflow_integration.log_final_system_metrics(final_memory, training_time, initial_memory)
-                
-                # Success
-                results['wall_time_seconds'] = training_time
-                results['memory_peak_mb'] = final_memory
-                results['experiment_name'] = exp_name
-                results['success'] = True
-                
-                logger.info(f"✅ Completed: {exp_name}")
-                return results
+            # Final system metrics
+            final_memory = process.memory_info().rss / 1024 / 1024
+            training_time = time.time() - start_time
+            #mlflow_integration.log_final_system_metrics(final_memory, training_time, initial_memory)
+            csv_logger.log_final_system_metrics(final_memory, training_time, initial_memory)
+            
+            # Success
+            results['wall_time_seconds'] = training_time
+            results['memory_peak_mb'] = final_memory
+            results['experiment_name'] = exp_name
+            results['success'] = True
+            
+            logger.info(f"✅ Completed: {exp_name}")
+            return results
                 
         except torch.cuda.OutOfMemoryError as e:
             logger.error(f"CUDA OOM: {exp_name}")
@@ -211,14 +218,15 @@ class ExperimentManager:
                           save_progress_every: int = 5) -> Dict[str, Any]:
         """Run all pending experiments with progress tracking."""
         
-        import mlflow
-        mlflow.set_experiment(experiment_name)
+        #import mlflow
+        #mlflow.set_experiment(experiment_name)
         
+        logger.info(f"Starting experiment batch: {experiment_name}")
         pending_experiments = self.get_pending_experiments()
         total_experiments = len(self.experiments)
         completed_at_start = len(self.results)
         
-        logger.info(f"Experiment Batch Starting:")
+        
         logger.info(f"  Total experiments: {total_experiments}")
         logger.info(f"  Already completed: {completed_at_start}")  
         logger.info(f"  Already failed: {len(self.failed_experiments)}")
