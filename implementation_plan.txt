@@ -1,8 +1,14 @@
--> run HPO successfully
--> clear up performance issues related to transaction cost and inflation
+
+-> re-introduce early-stopping
+-> build comprehensive .csv-logging (one row per episode?)
+
 -> try different reward functions:
         Maximum Drawdown (MDD)
         sharpe
-
--> debug -inf validation performance
 -> fix crypto
+-> remove checkpoints?
+-> run hmm study
+-> debug -inf validation performance [done]
+-> run HPO successfully [done]
+-> clear up performance issues related to transaction cost and inflation [done]
+

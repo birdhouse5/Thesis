@@ -121,20 +121,20 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         data_path=data_paths[exp.asset_class],
         encoder=exp.encoder,
         disable_vae=disable_vae,
-        latent_dim=latent_dim,
-        hidden_dim=1024,
-        vae_lr=0.0010748206602172,
-        policy_lr=0.0005, #policy_lr=0.0020289998766945,
+        latent_dim=32, # optuna result
+        hidden_dim=768, # optuna result
+        vae_lr=0.00004409096982106036, #optuna result
+        policy_lr=0.00002329493575648219, #optuna result
         noise_factor=0.05, #TODO
         random_policy=False,
-        vae_beta=0.05, # TODO was 0.0125762666385515,
+        vae_beta=0.0007435972826570025, # optuna result
         vae_update_freq=5,
         seq_len=200,
         episodes_per_task=3,
         batch_size=8192,
         vae_batch_size=1024,
         ppo_epochs=8,
-        entropy_coef=0.0013141391952945,
+        entropy_coef=0.0009083214087882104, # optuna result
         joint_loss_lambda=1.0,
         max_episodes=6000,
         early_stopping_patience=10,
@@ -147,17 +147,17 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         device="cuda",
         val_episodes=50,
         test_episodes=100, #-> we do final test on these number of episodes
-        ppo_clip_ratio=0.15, # ppo_clip_ratio=0.2,
+        ppo_clip_ratio=0.19086925122925438, # optuna result
         value_loss_coef=0.5,
         max_grad_norm=0.5,
         gae_lambda=0.95,
         discount_factor=0.99,
         min_horizon=exp.min_horizon,
         max_horizon=exp.max_horizon,
-        eta=eta,
+        eta=0.026057381475720114, # optuna result
         rf_rate=0.02,
         transaction_cost_rate=exp.transaction_cost_rate if exp.transaction_cost_rate is not None else 0.001,
         reward_type=exp.reward_type if hasattr(exp, 'reward_type') else "dsr",
-        reward_lookback=getattr(exp, 'reward_lookback', 20),
+        reward_lookback=39, # optuna result
         inflation_rate=exp.inflation_rate if exp.inflation_rate is not None else 0.1,
     )

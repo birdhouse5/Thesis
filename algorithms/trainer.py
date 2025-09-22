@@ -106,7 +106,7 @@ class PPOTrainer:
 
     def train_episode(self) -> Dict[str, float]:
         """
-        Train for one episode and return metrics for MLflow logging.
+        Train for one episode and return metrics.
         """
         diag = PerformanceDiagnostic()
 
