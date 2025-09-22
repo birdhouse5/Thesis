@@ -113,24 +113,26 @@ def pretrain_hmm(asset_class: str, seed: int = 0, config=None):
             cfg.proportions = (0.7, 0.2, 0.1)
             logger.info(f"Using proportional splits for crypto: {cfg.proportions}")
                     
-        # Load training dataset only (HMM pretraining uses train split)
-        dataset = PortfolioDataset(
+        # Load full dataset and get training split
+        full_dataset = PortfolioDataset(
             asset_class=cfg.asset_class,
             data_path=cfg.data_path,
-            split="train",
             train_end=cfg.train_end,
             val_end=cfg.val_end,
             proportional=getattr(cfg, 'proportional', False),
             proportions=getattr(cfg, 'proportions', (0.7, 0.2, 0.1))
         )
         
+        # Get the training split
+        train_split = full_dataset.get_split("train")
+        
         # Get features in same format as main pipeline
-        features = dataset.data[dataset.feature_cols].values.reshape(
-            len(dataset), dataset.num_assets, dataset.num_features
+        features = train_split.data[train_split.feature_cols].values.reshape(
+            len(train_split), train_split.num_assets, train_split.num_features
         )
         
         # Flatten for HMM training
-        X = features.reshape(-1, dataset.num_features)
+        X = features.reshape(-1, train_split.num_features)
         logger.info(f"HMM training data shape: {X.shape}")
         csv_logger.log_metric("training_samples", X.shape[0])
 
@@ -155,7 +157,7 @@ def pretrain_hmm(asset_class: str, seed: int = 0, config=None):
         
         # Get posteriors
         _, posteriors = hmm.score_samples(X)
-        posteriors = posteriors.reshape(len(dataset), dataset.num_assets, cfg.latent_dim)
+        posteriors = posteriors.reshape(len(train_split), train_split.num_assets, cfg.latent_dim)
         
         logger.info("HMM fitting completed successfully")
         csv_logger.log_metric("hmm_converged", int(converged))
@@ -163,8 +165,8 @@ def pretrain_hmm(asset_class: str, seed: int = 0, config=None):
 
         # --- Prepare PyTorch dataset for distillation ---
         obs_tensor = torch.tensor(features, dtype=torch.float32)
-        actions = torch.zeros((len(dataset), dataset.num_assets))  # placeholder
-        rewards = torch.zeros((len(dataset), 1))  # placeholder
+        actions = torch.zeros((len(train_split), train_split.num_assets))  # placeholder
+        rewards = torch.zeros((len(train_split), 1))  # placeholder
         targets = torch.tensor(posteriors.mean(axis=1), dtype=torch.float32)  # avg regime probs
 
         full_ds = TensorDataset(obs_tensor, actions, rewards, targets)
@@ -181,8 +183,8 @@ def pretrain_hmm(asset_class: str, seed: int = 0, config=None):
 
         # --- Initialize encoder with correct dimensions ---
         encoder = HMMEncoder(
-            obs_dim=(dataset.num_assets, dataset.num_features),
-            num_assets=dataset.num_assets,
+            obs_dim=(train_split.num_assets, train_split.num_features),
+            num_assets=train_split.num_assets,
             latent_dim=cfg.latent_dim,  # 4 states
             hidden_dim=cfg.hidden_dim
         ).to(device)

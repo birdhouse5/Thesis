@@ -76,24 +76,26 @@ def test_dataset_loading(cfg):
         
         from environments.data import PortfolioDataset
         
-        # Try to load dataset
-        dataset = PortfolioDataset(
+        # Load full dataset (no split parameter)
+        full_dataset = PortfolioDataset(
             asset_class=cfg.asset_class,
             data_path=cfg.data_path,
-            split="train",
             train_end=cfg.train_end,
             val_end=cfg.val_end,
             proportional=getattr(cfg, 'proportional', False),
             proportions=getattr(cfg, 'proportions', (0.7, 0.2, 0.1))
         )
         
-        logger.info(f"✅ Dataset loaded: {len(dataset.data)} rows, {dataset.num_assets} assets")
+        # Get the training split
+        train_split = full_dataset.get_split("train")
+        
+        logger.info(f"✅ Dataset loaded: {len(train_split.data)} rows, {train_split.num_assets} assets")
         
         # Test feature extraction
-        features = dataset.data[dataset.feature_cols].values.reshape(
-            len(dataset), dataset.num_assets, dataset.num_features
+        features = train_split.data[train_split.feature_cols].values.reshape(
+            len(train_split), train_split.num_assets, train_split.num_features
         )
-        X = features.reshape(-1, dataset.num_features)
+        X = features.reshape(-1, train_split.num_features)
         
         logger.info(f"✅ Features extracted: {X.shape} (samples, features)")
         
@@ -101,7 +103,7 @@ def test_dataset_loading(cfg):
             logger.error("❌ No training data found!")
             return False, None, None
             
-        return True, dataset, X
+        return True, train_split, X
         
     except Exception as e:
         logger.error(f"❌ Dataset loading failed: {str(e)}")
