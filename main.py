@@ -253,14 +253,41 @@ def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
         logger.info(f"✅ Created VAE encoder with latent_dim={cfg.latent_dim}")
     
     elif cfg.encoder == "hmm":
-        # Create fresh HMM encoder (no pre-training in CSV mode for simplicity)
+        from algorithms.pretrain_hmm import pretrain_hmm
+        
+        logger.info("🔄 Running HMM pre-training...")
+        
+        # Pass the full config to pre-training for consistency
+        success, encoder_path = pretrain_hmm(
+            asset_class=cfg.asset_class, 
+            seed=cfg.seed,
+            config=cfg  # Pass full config for parameter consistency
+        )
+        
+        if not success:
+            logger.error("❌ HMM pre-training failed")
+            raise RuntimeError("HMM pre-training failed")
+        
+        # Create encoder with correct dimensions (4 states for HMM)
+        hmm_latent_dim = 4  # Override config for HMM
         encoder = HMMEncoder(
             obs_dim=obs_shape,
             num_assets=cfg.num_assets,
-            latent_dim=cfg.latent_dim,  # Should be 4 for HMM states
+            latent_dim=hmm_latent_dim,
             hidden_dim=cfg.hidden_dim
         ).to(device)
-        logger.info(f"✅ Created HMM encoder with {cfg.latent_dim} states")
+        
+        # Load pre-trained weights
+        if encoder_path and Path(encoder_path).exists():
+            encoder.load_state_dict(torch.load(encoder_path, map_location=device))
+            logger.info(f"📥 Loaded pre-trained HMM weights from {encoder_path}")
+        else:
+            logger.warning(f"⚠️ Pre-trained weights not found, using random weights")
+        
+        # Update cfg.latent_dim to match HMM for policy creation
+        cfg.latent_dim = hmm_latent_dim
+        
+        logger.info(f"✅ Created HMM encoder with {hmm_latent_dim} states (pre-trained)")
     else:
         logger.info("✅ No encoder (encoder=none)")
     

@@ -104,7 +104,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
     # encoder handling
     if exp.encoder == "vae":
         disable_vae = False
-        latent_dim = 512
+        latent_dim = 32
     elif exp.encoder == "hmm":
         disable_vae = True
         latent_dim = 4   # number of HMM states
@@ -121,7 +121,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         data_path=data_paths[exp.asset_class],
         encoder=exp.encoder,
         disable_vae=disable_vae,
-        latent_dim=32, # optuna result
+        latent_dim=latent_dim, # optuna result
         hidden_dim=768, # optuna result
         vae_lr=0.00004409096982106036, #optuna result
         policy_lr=0.00002329493575648219, #optuna result
