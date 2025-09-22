@@ -346,10 +346,11 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         logger.info(f"Starting training: {cfg.exp_name}")
         logger.info(f"Asset class: {cfg.asset_class}, Encoder: {cfg.encoder}, Seed: {cfg.seed}")
 
+        early_stopped = False
         # === Training loop ===
         with tqdm(total=cfg.max_episodes, initial=episodes_trained,
                   desc=f"Training Progress (total episodes: {cfg.max_episodes})") as pbar:
-            while episodes_trained < cfg.max_episodes:
+            while episodes_trained < cfg.max_episodes and not early_stopped:
                 task_idx = int(episodes_trained // cfg.episodes_per_task) + 1
                 total_tasks = cfg.max_episodes // cfg.episodes_per_task
                 pbar.set_postfix(task=f"{task_idx}/{total_tasks}")
@@ -405,6 +406,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                         if (episodes_trained >= cfg.min_episodes_before_stopping and 
                             patience_counter >= cfg.early_stopping_patience):
                             logger.info(f"Early stopping triggered at episode {episodes_trained}")
+                            early_stopped = True
                             break
 
         # Final evaluation & backtest

@@ -12,3 +12,6 @@
 -> run HPO successfully [done]
 -> clear up performance issues related to transaction cost and inflation [done]
 
+debug
+
+-> early stopping does not kill the run

@@ -1,19 +1,19 @@
-"""
-Unified Data Module for VariBAD Portfolio Optimization
-Consolidated from data.py and data_pipeline.py - single source of truth
-"""
+# """
+# Unified Data Module for VariBAD Portfolio Optimization
+# Consolidated from data.py and data_pipeline.py - single source of truth
+# """
 
-import pandas as pd
-import numpy as np
-import yfinance as yf
-import logging
-from pathlib import Path
-from typing import List, Optional, Dict
-from datetime import datetime, timedelta
-import random
-import requests
+# import pandas as pd
+# import numpy as np
+# import yfinance as yf
+# import logging
+# from pathlib import Path
+# from typing import List, Optional, Dict
+# from datetime import datetime, timedelta
+# import random
+# import requests
 
-logger = logging.getLogger(__name__)
+# logger = logging.getLogger(__name__)
 
 # # S&P 500 constituents for the study (30 companies)
 # SP500_TICKERS = [
