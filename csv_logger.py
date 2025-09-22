@@ -18,12 +18,14 @@ class CSVLogger:
         self.output_dir = Path("experiment_logs")
         self.output_dir.mkdir(exist_ok=True)
         
+        seed = config.get('seed', 0)
+
         # File paths
-        self.csv_path = self.output_dir / f"{run_name}_metrics.csv"
+        self.csv_path = self.output_dir / f"seed_{seed}_metrics.csv"
         self.config_path = self.output_dir / f"{run_name}_config.json"
         
         # State tracking
-        self.headers_written = False
+        self.headers_written = self.csv_path.exists()
         self.episode_buffer = {}  # Buffer metrics within same episode
         
         # Save config once at initialization
@@ -87,17 +89,30 @@ class CSVLogger:
             # Merge with any buffered metrics for this episode
             if episode in self.episode_buffer:
                 self.episode_buffer[episode].update(flattened)
-                row_data = {'episode': episode, **self.episode_buffer[episode]}
+                row_data = {
+                    'experiment_name': self.run_name,
+                    'seed': self.config.get('seed', 0),
+                    'asset_class': self.config.get('asset_class', 'unknown'),
+                    'encoder': self.config.get('encoder', 'unknown'),
+                    'episode': episode, 
+                    **self.episode_buffer[episode]
+                }
                 del self.episode_buffer[episode]  # Clear buffer after writing
             else:
-                row_data = {'episode': episode, **flattened}
-                row_data['seed'] = self.config.get('seed', 0)
+                row_data = {
+                    'experiment_name': self.run_name,
+                    'seed': self.config.get('seed', 0),
+                    'asset_class': self.config.get('asset_class', 'unknown'),
+                    'encoder': self.config.get('encoder', 'unknown'),
+                    'episode': episode, 
+                    **flattened
+                }
             
             # Convert to DataFrame for easy CSV handling
             df_row = pd.DataFrame([row_data])
             
-            # Write to CSV (header only on first write)
-            mode = 'w' if not self.headers_written else 'a'
+            # Always append mode, write headers only if file doesn't exist
+            mode = 'a'
             header = not self.headers_written
             
             df_row.to_csv(self.csv_path, index=False, mode=mode, header=header)
