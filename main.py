@@ -481,8 +481,8 @@ def main():
     parser.add_argument("--datatype", type=str, choices=["sp500", "crypto"], help="Dataset type to run")
     parser.add_argument("--reward_type", type=str, choices=["dsr", "sharpe", "drawdown"], 
                     default="dsr", help="Reward function type")
-    parser.add_argument("--reward_lookback", type=int, default=20, 
-                    help="Lookback window for Sharpe/Drawdown calculation")
+    #parser.add_argument("--reward_lookback", type=int, default=20, 
+                    #help="Lookback window for Sharpe/Drawdown calculation")
     parser.add_argument("--disable_transaction_costs", action="store_true", 
                     help="Disable transaction costs (set to 0)")
     parser.add_argument("--transaction_cost_rate", type=float, default=None,
