@@ -118,7 +118,7 @@ def evaluate(env, policy, encoder, config, mode, num_episodes: int = 50) -> Dict
 
             
             episode_rewards.append(episode_reward)
-            print(f"Final episode reward: {episode_reward}")
+            #print(f"Final episode reward: {episode_reward}")
             episode_returns.append(total_return)
             episode_volatilities.append(volatility)
             episode_sharpe_ratios.append(sharpe)
