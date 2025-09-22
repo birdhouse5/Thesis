@@ -91,6 +91,7 @@ class CSVLogger:
                 del self.episode_buffer[episode]  # Clear buffer after writing
             else:
                 row_data = {'episode': episode, **flattened}
+                row_data['seed'] = self.config.get('seed', 0)
             
             # Convert to DataFrame for easy CSV handling
             df_row = pd.DataFrame([row_data])
