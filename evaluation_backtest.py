@@ -5,6 +5,7 @@ import pandas as pd
 import logging
 logger = logging.getLogger(__name__)
 from csv_logger import BacktestCSVLogger
+from environments.env import normalize_with_budget_constraint
 
 def evaluate(env, policy, encoder, config, mode, num_episodes: int = 50) -> Dict[str, float]:
     """
@@ -282,9 +283,13 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
             weights_np = weights.detach().cpu().numpy()
 
             # Calculate exposures using standard definitions
-            long_exp = float(weights[weights > 0].sum().item())
-            short_exp = float(torch.abs(weights[weights < 0]).sum().item()) 
-            cash_pos = float(w_cash)
+            # Ensure proper normalization (defensive programming)
+            weights_normalized, w_cash_normalized = normalize_with_budget_constraint(weights)
+
+            # Calculate exposures using properly normalized weights
+            long_exp = float(weights_normalized[weights_normalized > 0].sum().item())
+            short_exp = float(torch.abs(weights_normalized[weights_normalized < 0]).sum().item()) 
+            cash_pos = float(w_cash_normalized)
             net_exp = long_exp - short_exp
             gross_exp = long_exp + short_exp
             print("DEBUG: -----------")
