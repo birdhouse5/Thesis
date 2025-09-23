@@ -136,7 +136,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         ppo_epochs=8,
         entropy_coef=0.0009083214087882104, # optuna result
         joint_loss_lambda=1.0,
-        max_episodes=6000,
+        max_episodes=400, #TODO
         early_stopping_patience=10,
         early_stopping_min_delta=0.02,
         val_interval=200,
