@@ -13,5 +13,9 @@
 -> clear up performance issues related to transaction cost and inflation [done]
 
 debug
+-> metrics should be more transparent: standalone log file for training, validation and backtest.
+-> make sure that weights are captured
+-> double check the metrics
+-> what are these: recent_avg_episode_reward,recent_std_episode_reward,recent_avg_policy_loss,recent_avg_vae_loss?
 
--> early stopping does not kill the run
+-> early stopping does not kill the run [done]
