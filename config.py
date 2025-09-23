@@ -125,7 +125,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         hidden_dim=768, # optuna result
         vae_lr=0.00004409096982106036, #optuna result
         policy_lr=0.00002329493575648219, #optuna result
-        noise_factor=0.05, #TODO
+        noise_factor=0.05, 
         random_policy=False,
         vae_beta=0.0007435972826570025, # optuna result
         vae_update_freq=5,

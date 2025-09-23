@@ -287,7 +287,12 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
             cash_pos = float(w_cash)
             net_exp = long_exp - short_exp
             gross_exp = long_exp + short_exp
-
+            print("DEBUG: -----------")
+            print("long_exp", long_exp)
+            print("short_exp", short_exp)
+            print("cash_pos", cash_pos)
+            print("net_exp", net_exp)
+            print("gross_exp", gross_exp)
             # Log detailed step data to CSV
             backtest_logger.log_step(
                 step=t, capital=env.current_capital, log_return=log_return, excess_return=excess_return,
