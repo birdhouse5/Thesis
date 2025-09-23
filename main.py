@@ -29,7 +29,7 @@ from models.vae import VAE
 from models.hmm_encoder import HMMEncoder  # New stub
 from algorithms.pretrain_hmm import pretrain_hmm
 from algorithms.trainer import PPOTrainer
-from csv_logger import CSVLogger, TrainingCSVLogger
+from csv_logger import CSVLogger, TrainingCSVLogger, ValidationCSVLogger
 # Import evaluation functions
 from evaluation_backtest import evaluate, run_sequential_backtest
 import shutil
