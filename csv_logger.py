@@ -219,3 +219,179 @@ class CSVLogger:
 def create_csv_logger(run_name: str, config: Dict[str, Any]) -> CSVLogger:
     """Factory function to create CSV logger."""
     return CSVLogger(run_name, config)
+
+
+class TrainingCSVLogger:
+    """Training-specific CSV logger with fixed schema."""
+    
+    def __init__(self, experiment_name: str, seed: int, asset_class: str, encoder: str):
+        self.experiment_name = experiment_name
+        self.seed = seed
+        self.asset_class = asset_class
+        self.encoder = encoder
+        
+        self.output_dir = Path("experiment_logs")
+        self.output_dir.mkdir(exist_ok=True)
+        self.csv_path = self.output_dir / f"{experiment_name}_training.csv"
+        
+        # Write headers if file doesn't exist
+        if not self.csv_path.exists():
+            self._write_headers()
+    
+    def _write_headers(self):
+        headers = [
+            'experiment_name', 'seed', 'asset_class', 'encoder', 'episode',
+            'policy_loss', 'value_loss', 'entropy', 'vae_loss',
+            'vae_recon_obs', 'vae_recon_reward', 'vae_kl', 'vae_total', 
+            'vae_context_len', 'vae_latent_mu_mean', 'vae_latent_logvar_mean',
+            'hmm_converged', 'hmm_log_likelihood', 
+            'hmm_regime_0_prob', 'hmm_regime_1_prob', 'hmm_regime_2_prob', 'hmm_regime_3_prob',
+            'episode_sum_reward', 'episode_final_capital', 'episode_total_return', 
+            'steps_per_episode', 'total_steps', 'episode_count'
+        ]
+        
+        with open(self.csv_path, 'w') as f:
+            f.write(','.join(headers) + '\n')
+    
+    def log_episode(self, episode: int, metrics: Dict[str, Any]):
+        """Log one training episode."""
+        # Extract VAE metrics if present
+        vae_metrics = {k[4:]: v for k, v in metrics.items() if k.startswith('vae_')}
+        
+        # Extract HMM metrics if present (would need to be passed from trainer)
+        hmm_metrics = {k[4:]: v for k, v in metrics.items() if k.startswith('hmm_')}
+        
+        row = [
+            self.experiment_name, self.seed, self.asset_class, self.encoder, episode,
+            metrics.get('policy_loss', 0.0),
+            metrics.get('value_loss', 0.0), 
+            metrics.get('entropy', 0.0),
+            metrics.get('vae_loss', 0.0),
+            vae_metrics.get('recon_obs', 0.0),
+            vae_metrics.get('recon_reward', 0.0),
+            vae_metrics.get('kl', 0.0),
+            vae_metrics.get('total', 0.0),
+            vae_metrics.get('context_len', 0),
+            vae_metrics.get('latent_mu_mean', 0.0),
+            vae_metrics.get('latent_logvar_mean', 0.0),
+            hmm_metrics.get('converged', 0),
+            hmm_metrics.get('log_likelihood', 0.0),
+            hmm_metrics.get('regime_0_prob', 0.0),
+            hmm_metrics.get('regime_1_prob', 0.0), 
+            hmm_metrics.get('regime_2_prob', 0.0),
+            hmm_metrics.get('regime_3_prob', 0.0),
+            metrics.get('episode_sum_reward', 0.0),
+            metrics.get('episode_final_capital', 0.0),
+            metrics.get('episode_total_return', 0.0),
+            metrics.get('steps_per_episode', 0),
+            metrics.get('total_steps', 0),
+            metrics.get('episode_count', 0)
+        ]
+        
+        with open(self.csv_path, 'a') as f:
+            f.write(','.join(map(str, row)) + '\n')
+
+class ValidationCSVLogger:
+    """Validation-specific CSV logger with fixed schema."""
+    
+    def __init__(self, experiment_name: str, seed: int, asset_class: str, encoder: str):
+        self.experiment_name = experiment_name
+        self.seed = seed
+        self.asset_class = asset_class
+        self.encoder = encoder
+        
+        self.output_dir = Path("experiment_logs")
+        self.output_dir.mkdir(exist_ok=True)
+        self.csv_path = self.output_dir / f"{experiment_name}_validation.csv"
+        
+        # Write headers if file doesn't exist
+        if not self.csv_path.exists():
+            self._write_headers()
+    
+    def _write_headers(self):
+        headers = [
+            'experiment_name', 'seed', 'asset_class', 'encoder', 'episode',
+            'avg_reward', 'std_reward', 'avg_return', 'std_return', 
+            'avg_volatility', 'avg_episode_sharpe', 'max_return', 'min_return', 
+            'num_episodes'
+        ]
+        
+        with open(self.csv_path, 'w') as f:
+            f.write(','.join(headers) + '\n')
+    
+    def log_validation(self, episode: int, val_results: Dict[str, Any]):
+        """Log validation results."""
+        # Remove "validation: " prefix from keys
+        clean_results = {}
+        for k, v in val_results.items():
+            clean_key = k.replace('validation: ', '') if k.startswith('validation: ') else k
+            clean_results[clean_key] = v
+        
+        row = [
+            self.experiment_name, self.seed, self.asset_class, self.encoder, episode,
+            clean_results.get('avg_reward', 0.0),
+            clean_results.get('std_reward', 0.0),
+            clean_results.get('avg_return', 0.0),
+            clean_results.get('std_return', 0.0),
+            clean_results.get('avg_volatility', 0.0),
+            clean_results.get('avg_episode_sharpe', 0.0),
+            clean_results.get('max_return', 0.0),
+            clean_results.get('min_return', 0.0),
+            clean_results.get('num_episodes', 0)
+        ]
+        
+        with open(self.csv_path, 'a') as f:
+            f.write(','.join(map(str, row)) + '\n')
+
+
+class BacktestCSVLogger:
+    """Backtest-specific CSV logger - one row per time step."""
+    
+    def __init__(self, experiment_name: str, seed: int, asset_class: str, encoder: str, num_assets: int):
+        self.experiment_name = experiment_name
+        self.seed = seed
+        self.asset_class = asset_class
+        self.encoder = encoder
+        self.num_assets = num_assets
+        
+        self.output_dir = Path("experiment_logs")
+        self.output_dir.mkdir(exist_ok=True)
+        self.csv_path = self.output_dir / f"{experiment_name}_backtest.csv"
+        
+        # Write headers if file doesn't exist
+        if not self.csv_path.exists():
+            self._write_headers()
+    
+    def _write_headers(self):
+        headers = [
+            'experiment_name', 'seed', 'asset_class', 'encoder', 'step',
+            'capital', 'log_return', 'excess_return', 'reward', 
+            'long_exposure', 'short_exposure', 'net_exposure', 'gross_exposure',
+            'turnover', 'transaction_cost'
+        ]
+        
+        # Add weight columns: weight_0, weight_1, ..., weight_N
+        for i in range(self.num_assets):
+            headers.append(f'weight_{i}')
+        
+        with open(self.csv_path, 'w') as f:
+            f.write(','.join(headers) + '\n')
+    
+    def log_step(self, step: int, capital: float, log_return: float, excess_return: float, 
+                 reward: float, weights: np.ndarray, long_exposure: float, short_exposure: float,
+                 net_exposure: float, gross_exposure: float, turnover: float, transaction_cost: float):
+        """Log one backtest time step."""
+        
+        row = [
+            self.experiment_name, self.seed, self.asset_class, self.encoder, step,
+            capital, log_return, excess_return, reward,
+            long_exposure, short_exposure, net_exposure, gross_exposure,
+            turnover, transaction_cost
+        ]
+        
+        # Add individual weights
+        for weight in weights:
+            row.append(weight)
+        
+        with open(self.csv_path, 'a') as f:
+            f.write(','.join(map(str, row)) + '\n')
