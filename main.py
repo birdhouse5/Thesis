@@ -453,7 +453,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         #mlflow_integration.log_essential_artifacts(model_dict, vars(cfg), cfg.exp_name)
         #mlflow_integration.log_final_summary(True, episodes_trained)
 
-        validation_logger.log_validation(episodes_trained, test_results)    
+        #validation_logger.log_validation(episodes_trained, test_results)    
 
         final_results = {
             "episodes_trained": episodes_trained,
