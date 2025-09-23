@@ -29,7 +29,7 @@ from models.vae import VAE
 from models.hmm_encoder import HMMEncoder  # New stub
 from algorithms.pretrain_hmm import pretrain_hmm
 from algorithms.trainer import PPOTrainer
-from csv_logger import CSVLogger
+from csv_logger import CSVLogger, TrainingCSVLogger
 # Import evaluation functions
 from evaluation_backtest import evaluate, run_sequential_backtest
 import shutil
@@ -315,6 +315,10 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
     resume_state = None
     episodes_trained, best_val_reward = 0, float("-inf")
 
+    training_logger = TrainingCSVLogger(cfg.exp_name, cfg.seed, cfg.asset_class, cfg.encoder)
+    validation_logger = ValidationCSVLogger(cfg.exp_name, cfg.seed, cfg.asset_class, cfg.encoder)
+
+
     # === Resume or start fresh ===
     if getattr(cfg, "force_recreate", False):
         if ckpt_dir.exists():
@@ -370,6 +374,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
             random.setstate(tuple(resume_state["py_rng"]))
             logger.info("✅ Restored model, optimizer, and RNG state")
 
+
         logger.info(f"Starting training: {cfg.exp_name}")
         logger.info(f"Asset class: {cfg.asset_class}, Encoder: {cfg.encoder}, Seed: {cfg.seed}")
 
@@ -397,8 +402,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                     # === LOGGING (via mlflow_integration) ===
                     # mlflow_integration.log_training_episode(episodes_trained, result)
                     # mlflow_integration.log_portfolio_episode(episodes_trained, result)
-                    csv_logger.log_training_episode(episodes_trained, result)
-                    csv_logger.log_portfolio_episode(episodes_trained, result)
+                    training_logger.log_episode(episodes_trained, result)
 
                     # Save checkpoint every 50 episodes
                     if episodes_trained % 50 == 0:
@@ -420,7 +424,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                         print(f"DEBUG: val_results keys: {list(val_results.keys())}")
                         print(f"DEBUG: val_results: {val_results}")
                         #mlflow_integration.log_validation_results(episodes_trained, val_results)
-                        csv_logger.log_validation_results(episodes_trained, val_results)
+                        validation_logger.log_validation(episodes_trained, val_results)
 
                         current_val_reward = val_results.get("validation: avg_reward", -1e9)
                         logger.info(f"Validation at ep {episodes_trained}: {current_val_reward}")
@@ -449,10 +453,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         #mlflow_integration.log_essential_artifacts(model_dict, vars(cfg), cfg.exp_name)
         #mlflow_integration.log_final_summary(True, episodes_trained)
 
-        csv_logger.log_validation_results(episodes_trained, test_results)
-        csv_logger.log_backtest_results(backtest_results)
-        csv_logger.log_essential_artifacts(model_dict, vars(cfg), cfg.exp_name)
-        csv_logger.log_final_summary(True, episodes_trained)        
+        validation_logger.log_validation(episodes_trained, test_results)    
 
         final_results = {
             "episodes_trained": episodes_trained,

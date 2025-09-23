@@ -4,6 +4,7 @@ from typing import Dict, List, Tuple
 import pandas as pd
 import logging
 logger = logging.getLogger(__name__)
+from csv_logger import BacktestCSVLogger
 
 def evaluate(env, policy, encoder, config, mode, num_episodes: int = 50) -> Dict[str, float]:
     """
@@ -212,7 +213,9 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
         transaction_cost_rate=getattr(config, 'transaction_cost_rate', 0.001),
         steps_per_year=252 if config.asset_class == 'sp500' else 35040
     )
-    
+
+    backtest_logger = BacktestCSVLogger(config.exp_name, config.seed, config.asset_class, config.encoder, dataset.num_assets)
+
     # Enable sequential mode
     env.set_sequential_mode(True)
     env.config = config  # Ensure config is available for _get_latent_for_step
@@ -228,7 +231,6 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
 
     # Initialize tracking
     daily_returns = []
-    daily_weights = []
     daily_capital = []
     portfolio_values = []
     
@@ -272,11 +274,28 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
 
             # --- Environment reward step ---
             env.current_step = t
-            reward, weights, w_cash, *_ = env.compute_reward_with_capital(action.squeeze(0))
+            reward, weights, w_cash, turnover, cost, equal_weight_return, relative_excess_return = env.compute_reward_with_capital(action.squeeze(0))
 
             # --- Tracking ---
-            daily_returns.append(env.excess_log_returns[-1] if env.excess_log_returns else 0.0)
-            daily_weights.append(weights.detach().cpu().numpy().copy())
+            excess_return = env.excess_log_returns[-1] if env.excess_log_returns else 0.0
+            log_return = env.log_returns[-1] if env.log_returns else 0.0
+            weights_np = weights.detach().cpu().numpy()
+
+            # Calculate exposures
+            long_exp = float(weights[weights > 0].sum().item())
+            short_exp = float(torch.abs(weights[weights < 0]).sum().item()) 
+            net_exp = float(weights.sum().item())
+            gross_exp = float(torch.sum(torch.abs(weights)).item())
+
+            # Log detailed step data to CSV
+            backtest_logger.log_step(
+                step=t, capital=env.current_capital, log_return=log_return, excess_return=excess_return,
+                reward=reward, weights=weights_np, long_exposure=long_exp, short_exposure=short_exp,
+                net_exposure=net_exp, gross_exposure=gross_exp, turnover=turnover, transaction_cost=cost
+            )
+
+            # Keep minimal tracking for summary metrics
+            daily_returns.append(excess_return)
             daily_capital.append(env.current_capital)
             portfolio_values.append(env.current_capital / initial_capital)
 
@@ -334,7 +353,6 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
         # Detailed data for further analysis
         'daily_returns': returns_array.tolist(),
         'daily_capital': capital_array.tolist(),
-        'daily_weights': daily_weights,
         'portfolio_values': portfolio_values
     }
     
