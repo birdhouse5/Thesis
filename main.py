@@ -336,9 +336,9 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
     # mlflow_integration = MLflowIntegration(run_name=cfg.exp_name, config=vars(cfg))
     # mlflow_integration.setup_mlflow()
     # mlflow_integration.log_config()
-    csv_logger = CSVLogger(run_name=cfg.exp_name, config=vars(cfg))
-    csv_logger.setup_mlflow()
-    csv_logger.log_config()
+    # csv_logger = CSVLogger(run_name=cfg.exp_name, config=vars(cfg))
+    # csv_logger.setup_mlflow()
+    # csv_logger.log_config()
 
     try:
         # Setup
@@ -472,7 +472,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         logger.error(f"Training failed for {cfg.exp_name}: {str(e)}")
         logger.error(traceback.format_exc())
         #mlflow_integration.log_final_summary(False, episodes_trained, error_msg=str(e))
-        csv_logger.log_final_summary(False, episodes_trained, error_msg=str(e))
+        #csv_logger.log_final_summary(False, episodes_trained, error_msg=str(e))
         return {
             "training_completed": False,
             "error": str(e),
