@@ -349,7 +349,7 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
         'num_trades': len(returns_array),
         'final_capital': capital_array[-1],
         'initial_capital': initial_capital,
-        'avg_turnover': np.mean([np.sum(np.abs(w)) for w in daily_weights]),
+        'avg_turnover': 0.0,  # Turnover now tracked per-step in CSV
         # Detailed data for further analysis
         'daily_returns': returns_array.tolist(),
         'daily_capital': capital_array.tolist(),
