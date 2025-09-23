@@ -247,7 +247,7 @@ class TrainingCSVLogger:
             'hmm_converged', 'hmm_log_likelihood', 
             'hmm_regime_0_prob', 'hmm_regime_1_prob', 'hmm_regime_2_prob', 'hmm_regime_3_prob',
             'episode_sum_reward', 'episode_final_capital', 'episode_total_return', 
-            'steps_per_episode', 'total_steps', 'episode_count'
+            'steps_per_episode', 'episode_count'
         ]
         
         with open(self.csv_path, 'w') as f:
@@ -284,7 +284,6 @@ class TrainingCSVLogger:
             metrics.get('episode_final_capital', 0.0),
             metrics.get('episode_total_return', 0.0),
             metrics.get('steps_per_episode', 0),
-            metrics.get('total_steps', 0),
             metrics.get('episode_count', 0)
         ]
         
@@ -366,8 +365,8 @@ class BacktestCSVLogger:
         headers = [
             'experiment_name', 'seed', 'asset_class', 'encoder', 'step',
             'capital', 'log_return', 'excess_return', 'reward', 
-            'long_exposure', 'short_exposure', 'net_exposure', 'gross_exposure',
-            'turnover', 'transaction_cost'
+            'long_exposure', 'short_exposure', 'cash_position', 'net_exposure', 
+            'gross_exposure', 'turnover', 'transaction_cost'
         ]
         
         # Add weight columns: weight_0, weight_1, ..., weight_N
@@ -379,13 +378,13 @@ class BacktestCSVLogger:
     
     def log_step(self, step: int, capital: float, log_return: float, excess_return: float, 
                  reward: float, weights: np.ndarray, long_exposure: float, short_exposure: float,
-                 net_exposure: float, gross_exposure: float, turnover: float, transaction_cost: float):
+                 cash_position: float, net_exposure: float, gross_exposure: float, turnover: float, transaction_cost: float):
         """Log one backtest time step."""
         
         row = [
             self.experiment_name, self.seed, self.asset_class, self.encoder, step,
             capital, log_return, excess_return, reward,
-            long_exposure, short_exposure, net_exposure, gross_exposure,
+            long_exposure, short_exposure, cash_position, net_exposure, gross_exposure,
             turnover, transaction_cost
         ]
         

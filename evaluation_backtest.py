@@ -281,17 +281,19 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
             log_return = env.log_returns[-1] if env.log_returns else 0.0
             weights_np = weights.detach().cpu().numpy()
 
-            # Calculate exposures
+            # Calculate exposures using standard definitions
             long_exp = float(weights[weights > 0].sum().item())
             short_exp = float(torch.abs(weights[weights < 0]).sum().item()) 
-            net_exp = float(weights.sum().item())
-            gross_exp = float(torch.sum(torch.abs(weights)).item())
+            cash_pos = float(w_cash)
+            net_exp = long_exp - short_exp
+            gross_exp = long_exp + short_exp
 
             # Log detailed step data to CSV
             backtest_logger.log_step(
                 step=t, capital=env.current_capital, log_return=log_return, excess_return=excess_return,
                 reward=reward, weights=weights_np, long_exposure=long_exp, short_exposure=short_exp,
-                net_exposure=net_exp, gross_exposure=gross_exp, turnover=turnover, transaction_cost=cost
+                cash_position=cash_pos, net_exposure=net_exp, gross_exposure=gross_exp, 
+                turnover=turnover, transaction_cost=cost
             )
 
             # Keep minimal tracking for summary metrics
