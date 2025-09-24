@@ -7,7 +7,8 @@ from torch.distributions import Normal
 
 class PortfolioPolicy(nn.Module):
     def __init__(self, obs_shape, latent_dim, num_assets,
-                 hidden_dim=256, noise_factor=0.0, random_policy=False):
+                 hidden_dim=256, noise_factor=0.0, random_policy=False,
+                 action_scale=1.0):
         super().__init__()
         self.obs_shape = obs_shape
         self.latent_dim = latent_dim
@@ -39,7 +40,10 @@ class PortfolioPolicy(nn.Module):
         )
 
         # Actor: mean + log_std for Gaussian
-        self.actor_mean = nn.Linear(hidden_dim // 2, num_assets)
+        self.actor_mean = nn.Sequential(
+            nn.Linear(hidden_dim // 2, num_assets),
+            nn.Tanh()  # ← bounding outputs to [-1, 1]
+        )
         self.actor_logstd = nn.Parameter(torch.zeros(num_assets))
         # Critic
         self.critic_head = nn.Linear(hidden_dim // 2, 1)           # Value function
@@ -56,7 +60,7 @@ class PortfolioPolicy(nn.Module):
         combined = torch.cat([obs_features, latent_features], dim=-1)
         shared = self.shared_layers(combined)
 
-        mean = self.actor_mean(shared)
+        mean = self.actor_mean(shared) * self.action_scale
         value = self.critic_head(shared)
         return mean, self.actor_logstd.expand_as(mean), value
 

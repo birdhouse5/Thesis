@@ -458,6 +458,11 @@ class PPOTrainer:
 
         # --- Base PPO loss ---
         total_loss = policy_loss + value_loss + entropy_loss
+        
+        if self.config.encoder in ["none", "hmm"]:
+            action_norm = actions.abs().mean()
+            action_penalty = 0.01 * action_norm  # Penalize large actions
+            total_loss = policy_loss + value_loss + entropy_loss + action_penalty
 
         # Prepare metrics dict
         update_info = {
