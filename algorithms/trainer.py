@@ -417,6 +417,7 @@ class PPOTrainer:
                 return x.to(self.device)
             return torch.stack(x).to(self.device)
 
+
         obs = ensure_stacked(traj["observations"])            # (T, ... )
         actions = ensure_stacked(traj["actions"])             # (T, N)
         latents = ensure_stacked(traj["latents"])             # (T, Z)
@@ -431,6 +432,11 @@ class PPOTrainer:
         last_value = traj.get("last_value", 0.0)
         if isinstance(last_value, torch.Tensor):
             last_value = last_value.to(self.device)
+
+        # Initialize first epoch tracking
+        first_epoch_policy_loss = None
+        first_epoch_value_loss = None  
+        first_epoch_entropy = None
 
         # Compute GAE
         advantages, returns = self.compute_gae(rewards, values, dones, last_value)
@@ -456,6 +462,13 @@ class PPOTrainer:
         # Entropy bonus
         entropy_loss = -self.config.entropy_coef * entropy.mean()
 
+        # === CAPTURE FIRST EPOCH VALUES (before optimization) ===
+        if first_epoch_policy_loss is None:
+            first_epoch_policy_loss = float(policy_loss.item())
+            first_epoch_value_loss = float(value_loss.item() / self.config.value_loss_coef)  # unscaled
+            first_epoch_entropy = float(entropy.mean().item())
+
+
         # --- Base PPO loss ---
         total_loss = policy_loss + value_loss + entropy_loss
         
@@ -464,14 +477,14 @@ class PPOTrainer:
             action_penalty = 0.01 * action_norm  # Penalize large actions
             total_loss = policy_loss + value_loss + entropy_loss + action_penalty
 
-        # Prepare metrics dict
         update_info = {
-            "policy_loss": float(policy_loss.item()),
-            "value_loss": float(value_loss.item()),
-            "entropy": float(entropy.mean().item()),
+            "policy_loss": first_epoch_policy_loss,
+            "value_loss": first_epoch_value_loss,
+            "entropy": first_epoch_entropy,
             "advantages_mean": float(advantages.mean().item()),
             "ratio_mean": float(ratio.mean().item()),
         }
+
 
         # --- VAE update (every vae_update_freq episodes) ---
         if self.vae_enabled and (self.episode_count % self.config.vae_update_freq == 0):
