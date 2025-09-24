@@ -325,6 +325,13 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         if ckpt_dir.exists():
             shutil.rmtree(ckpt_dir)
             logger.info(f"🗑️ Removed old checkpoints for {cfg.exp_name}")
+        
+        # Also remove log files
+        log_dir = Path(cfg.encoder) / cfg.asset_class / "experiment_logs"
+        if log_dir.exists():
+            for log_file in log_dir.glob(f"{cfg.exp_name}*"):
+                log_file.unlink()
+            logger.info(f"🗑️ Removed old logs for {cfg.exp_name}")
 
     # Always start fresh
     resume_state = None
