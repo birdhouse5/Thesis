@@ -19,16 +19,25 @@ class ExperimentManager:
     """Manages batch experiment execution with checkpointing and recovery."""
     
     def __init__(self, 
-                 experiments: List[ExperimentConfig],
-                 checkpoint_dir: str = "experiment_checkpoints",
-                 max_retries: int = 0,
-                 force_recreate: bool = False):
+                experiments: List[ExperimentConfig],
+                checkpoint_dir: str = "experiment_checkpoints",
+                max_retries: int = 0,
+                force_recreate: bool = False):
         
         self.experiments = experiments
-        self.checkpoint_dir = Path(checkpoint_dir)
-        self.checkpoint_dir.mkdir(exist_ok=True)
         self.max_retries = max_retries
         self.force_recreate = force_recreate
+        
+        # Create hierarchical checkpoint directory based on experiments
+        if experiments:
+            first_exp = experiments[0]
+            encoder = first_exp.encoder
+            asset_class = first_exp.asset_class
+            self.checkpoint_dir = Path(encoder) / asset_class / "experiment_checkpoints"
+        else:
+            self.checkpoint_dir = Path(checkpoint_dir)
+        
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
         # State tracking
         self.results = {}

@@ -20,6 +20,11 @@ class CSVLogger:
         
         seed = config.get('seed', 0)
 
+        encoder = config.get('encoder', 'unknown')
+        asset_class = config.get('asset_class', 'unknown')
+        self.output_dir = Path(encoder) / asset_class / "experiment_logs"
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
         # File paths
         self.csv_path = self.output_dir / f"seed_{seed}_metrics.csv"
         self.config_path = self.output_dir / f"{run_name}_config.json"
@@ -230,8 +235,8 @@ class TrainingCSVLogger:
         self.asset_class = asset_class
         self.encoder = encoder
         
-        self.output_dir = Path("experiment_logs")
-        self.output_dir.mkdir(exist_ok=True)
+        self.output_dir = Path(encoder) / asset_class / "experiment_logs"
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         self.csv_path = self.output_dir / f"{experiment_name}_training.csv"
         
         # Write headers if file doesn't exist
@@ -299,8 +304,8 @@ class ValidationCSVLogger:
         self.asset_class = asset_class
         self.encoder = encoder
         
-        self.output_dir = Path("experiment_logs")
-        self.output_dir.mkdir(exist_ok=True)
+        self.output_dir = Path(encoder) / asset_class / "experiment_logs"
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         self.csv_path = self.output_dir / f"{experiment_name}_validation.csv"
         
         # Write headers if file doesn't exist
@@ -353,8 +358,8 @@ class BacktestCSVLogger:
         self.encoder = encoder
         self.num_assets = num_assets
         
-        self.output_dir = Path("experiment_logs")
-        self.output_dir.mkdir(exist_ok=True)
+        self.output_dir = Path(encoder) / asset_class / "experiment_logs"
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         self.csv_path = self.output_dir / f"{experiment_name}_backtest.csv"
         
         # Write headers if file doesn't exist
