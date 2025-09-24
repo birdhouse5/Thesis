@@ -9,6 +9,7 @@ class PortfolioPolicy(nn.Module):
     def __init__(self, obs_shape, latent_dim, num_assets,
                  hidden_dim=256, noise_factor=0.0, random_policy=False,
                  action_scale=1.0):
+                 
         super().__init__()
         self.obs_shape = obs_shape
         self.latent_dim = latent_dim
@@ -16,6 +17,7 @@ class PortfolioPolicy(nn.Module):
         self.hidden_dim = hidden_dim
         self.noise_factor = noise_factor
         self.random_policy = random_policy
+        self.action_scale = action_scale
 
         obs_flat_dim = obs_shape[0] * obs_shape[1]
 
