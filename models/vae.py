@@ -77,34 +77,48 @@ class VAE(nn.Module):
     def compute_loss(
         self,
         obs_seq, action_seq, reward_seq,   # full trajectory τ
-        context_len=None,                  # how much of τ to encode
         beta=0.1,
         prev_mu=None, prev_logvar=None     # recursive prior
     ):
         """
-        VariBAD-style VAE loss:
-        - Encode context τ[:t] to posterior q(m|τ[:t])
-        - Decode full trajectory τ[:H]
-        - KL divergence against recursive prior (q(m|τ[:t-1})) or N(0,I) at t=0
+        VariBAD-style VAE loss with ASYMMETRIC encoding:
+        - Randomly truncate input to context_len (between H/2 and H)
+        - Encode ONLY truncated context τ[:context_len] to posterior q(m|τ[:context_len])
+        - Decode FULL trajectory τ[:H]
+        - This forces encoder to learn task-identifying features from incomplete information
+        
+        Args:
+            obs_seq: (batch, H, N, F) - full observation trajectory
+            action_seq: (batch, H, N) - full action trajectory
+            reward_seq: (batch, H, 1) - full reward trajectory
+            beta: KL divergence weight
+            prev_mu, prev_logvar: recursive prior parameters (optional)
+        
+        Returns:
+            total_loss: scalar loss
+            info_dict: dictionary with loss components and diagnostics
         """
 
         B, H = obs_seq.shape[:2]
 
-        # Select context for encoder
-        if context_len is not None:
-            encode_obs     = obs_seq[:, :context_len]
-            encode_actions = action_seq[:, :context_len]
-            encode_rewards = reward_seq[:, :context_len]
-        else:
-            encode_obs, encode_actions, encode_rewards = obs_seq, action_seq, reward_seq
+        # === ASYMMETRIC TRUNCATION: Randomly sample context length ===
+        # Context is between 50% and 100% of full trajectory
+        min_context = max(1, H // 2)
+        context_len = torch.randint(min_context, H, (1,)).item()
+        
+        # Truncate sequences for encoder input (τ:context_len)
+        encode_obs = obs_seq[:, :context_len]
+        encode_actions = action_seq[:, :context_len]
+        encode_rewards = reward_seq[:, :context_len]
 
-        # Encode to latent distribution
+        # === Encode truncated context to latent distribution ===
         mu, logvar, _ = self.encode(encode_obs, encode_actions, encode_rewards)
 
         # Sample latent
         latent = self.reparameterize(mu, logvar)
 
-        # === Full trajectory reconstruction ===
+        # === Decode FULL trajectory (asymmetric reconstruction) ===
+        # Decoder sees full trajectory including future steps beyond context
         pred_next_obs = self.obs_decoder.forward_seq(
             latent, obs_seq[:, :-1], action_seq[:, :-1]
         )   # (B, H-1, N, F)
@@ -113,7 +127,7 @@ class VAE(nn.Module):
             latent, obs_seq[:, :-1], action_seq[:, :-1], obs_seq[:, 1:]
         )   # (B, H-1, 1)
 
-        # Losses
+        # === Reconstruction losses over FULL trajectory ===
         recon_obs_loss = F.mse_loss(pred_next_obs, obs_seq[:, 1:])
         recon_reward_loss = F.mse_loss(pred_rewards, reward_seq[:, 1:])
 
@@ -135,20 +149,23 @@ class VAE(nn.Module):
                 1 + logvar - mu.pow(2) - logvar.exp(), dim=1
             ).mean()
 
-        # Total
+        # Total loss
         total_loss = recon_obs_loss + recon_reward_loss + beta * kl_loss
 
-        # Return with diagnostics
+        # === Return diagnostics including context information ===
+        context_fraction = context_len / H
+        
         return total_loss, {
             "total": total_loss.item(),
             "recon_obs": recon_obs_loss.item(),
             "recon_reward": recon_reward_loss.item(),
             "kl": kl_loss.item(),
-            "context_len": int(context_len) if context_len else H,
+            "context_len": context_len,  # Actual context length used
+            "context_fraction": context_fraction,  # Fraction of trajectory encoded (0.5-1.0)
             "latent_mu_mean": mu.mean().item(),
             "latent_logvar_mean": logvar.mean().item(),
         }
-
+ 
 
 class RNNEncoder(nn.Module):
     """

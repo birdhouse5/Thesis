@@ -3,3 +3,5 @@
     what do we see
     why do we likely see it?
     what does it imply?
+
+- report on sampling diversity of task. In this context explain why we sample time intervals and not regimes (we'd need to model that). Also explain what the differences are to the varibad approach (time series vs no time series data)
