@@ -296,127 +296,127 @@ class PortfolioDataset:
     
     # ========== MIGRATED FUNCTIONS FROM data_preparation.py ==========
 
-    def _download_stock_data(self, tickers: List[str], start_date: str, end_date: str) -> pd.DataFrame:
-        """Download stock data using yfinance (safe version with yf.download)"""
-        logger.info(f"Downloading data for {len(tickers)} tickers from {start_date} to {end_date}")
-
-        all_data = []
-        failed_tickers = []
-
-        for i, ticker in enumerate(tickers):
-            try:
-                logger.info(f"  • {ticker} ({i+1}/{len(tickers)})")
-
-                # Use yf.download instead of Ticker().history to avoid curl/TLS issues
-                hist = yf.download(
-                    ticker,
-                    start=start_date,
-                    end=end_date,
-                    auto_adjust=True,
-                    progress=False,
-                    threads=False  # critical: avoids curl backend
-                )
-
-                if hist.empty:
-                    logger.warning(f"      No data found for {ticker}")
-                    failed_tickers.append(ticker)
-                    continue
-
-                # Reset index and add ticker column
-                hist = hist.reset_index()
-                hist['ticker'] = ticker
-
-                # Standardize column names
-                hist = hist.rename(columns={
-                    'Date': 'date',
-                    'Open': 'open',
-                    'High': 'high',
-                    'Low': 'low',
-                    'Close': 'close',
-                    'Volume': 'volume'
-                })
-
-                hist['adj_close'] = hist['close']  # already adjusted by yfinance
-
-                # Keep only relevant columns
-                hist = hist[['date', 'ticker', 'open', 'high', 'low', 'close', 'adj_close', 'volume']]
-                all_data.append(hist)
-
-            except Exception as e:
-                logger.error(f"     Failed to download {ticker}: {e}")
-                failed_tickers.append(ticker)
-                continue
-
-        if not all_data:
-            raise ValueError("No data was successfully downloaded")
-
-        # Combine and sort all tickers’ data
-        combined_data = pd.concat(all_data, ignore_index=True)
-        combined_data = combined_data.sort_values(['date', 'ticker']).reset_index(drop=True)
-
-        logger.info(f"Downloaded data: {combined_data.shape}")
-        if failed_tickers:
-            logger.warning(f"Failed tickers: {', '.join(failed_tickers)}")
-
-        return combined_data
-
-
     # def _download_stock_data(self, tickers: List[str], start_date: str, end_date: str) -> pd.DataFrame:
-    #     """Download stock data using yfinance - migrated from data_preparation.py"""
+    #     """Download stock data using yfinance (safe version with yf.download)"""
     #     logger.info(f"Downloading data for {len(tickers)} tickers from {start_date} to {end_date}")
-        
+
     #     all_data = []
     #     failed_tickers = []
-        
+
     #     for i, ticker in enumerate(tickers):
     #         try:
     #             logger.info(f"  • {ticker} ({i+1}/{len(tickers)})")
-                
-    #             stock = yf.Ticker(ticker)
-    #             hist = stock.history(start=start_date, end=end_date, auto_adjust=True)
-                
+
+    #             # Use yf.download instead of Ticker().history to avoid curl/TLS issues
+    #             hist = yf.download(
+    #                 ticker,
+    #                 start=start_date,
+    #                 end=end_date,
+    #                 auto_adjust=True,
+    #                 progress=False,
+    #                 threads=False  # critical: avoids curl backend
+    #             )
+
     #             if hist.empty:
     #                 logger.warning(f"      No data found for {ticker}")
     #                 failed_tickers.append(ticker)
     #                 continue
-                
-    #             # Reset index and add ticker
+
+    #             # Reset index and add ticker column
     #             hist = hist.reset_index()
     #             hist['ticker'] = ticker
-                
+
     #             # Standardize column names
     #             hist = hist.rename(columns={
     #                 'Date': 'date',
     #                 'Open': 'open',
-    #                 'High': 'high', 
+    #                 'High': 'high',
     #                 'Low': 'low',
     #                 'Close': 'close',
     #                 'Volume': 'volume'
     #             })
-                
-    #             hist['adj_close'] = hist['close']  # Already adjusted by yfinance
-                
-    #             # Select relevant columns
+
+    #             hist['adj_close'] = hist['close']  # already adjusted by yfinance
+
+    #             # Keep only relevant columns
     #             hist = hist[['date', 'ticker', 'open', 'high', 'low', 'close', 'adj_close', 'volume']]
     #             all_data.append(hist)
-                
+
     #         except Exception as e:
     #             logger.error(f"     Failed to download {ticker}: {e}")
     #             failed_tickers.append(ticker)
     #             continue
-        
+
     #     if not all_data:
     #         raise ValueError("No data was successfully downloaded")
-        
-    #     # Combine and sort
+
+    #     # Combine and sort all tickers’ data
     #     combined_data = pd.concat(all_data, ignore_index=True)
     #     combined_data = combined_data.sort_values(['date', 'ticker']).reset_index(drop=True)
-        
+
     #     logger.info(f"Downloaded data: {combined_data.shape}")
     #     if failed_tickers:
     #         logger.warning(f"Failed tickers: {', '.join(failed_tickers)}")
-        
+
     #     return combined_data
+
+
+    def _download_stock_data(self, tickers: List[str], start_date: str, end_date: str) -> pd.DataFrame:
+        """Download stock data using yfinance - migrated from data_preparation.py"""
+        logger.info(f"Downloading data for {len(tickers)} tickers from {start_date} to {end_date}")
+        
+        all_data = []
+        failed_tickers = []
+        
+        for i, ticker in enumerate(tickers):
+            try:
+                logger.info(f"  • {ticker} ({i+1}/{len(tickers)})")
+                
+                stock = yf.Ticker(ticker)
+                hist = stock.history(start=start_date, end=end_date, auto_adjust=True)
+                
+                if hist.empty:
+                    logger.warning(f"      No data found for {ticker}")
+                    failed_tickers.append(ticker)
+                    continue
+                
+                # Reset index and add ticker
+                hist = hist.reset_index()
+                hist['ticker'] = ticker
+                
+                # Standardize column names
+                hist = hist.rename(columns={
+                    'Date': 'date',
+                    'Open': 'open',
+                    'High': 'high', 
+                    'Low': 'low',
+                    'Close': 'close',
+                    'Volume': 'volume'
+                })
+                
+                hist['adj_close'] = hist['close']  # Already adjusted by yfinance
+                
+                # Select relevant columns
+                hist = hist[['date', 'ticker', 'open', 'high', 'low', 'close', 'adj_close', 'volume']]
+                all_data.append(hist)
+                
+            except Exception as e:
+                logger.error(f"     Failed to download {ticker}: {e}")
+                failed_tickers.append(ticker)
+                continue
+        
+        if not all_data:
+            raise ValueError("No data was successfully downloaded")
+        
+        # Combine and sort
+        combined_data = pd.concat(all_data, ignore_index=True)
+        combined_data = combined_data.sort_values(['date', 'ticker']).reset_index(drop=True)
+        
+        logger.info(f"Downloaded data: {combined_data.shape}")
+        if failed_tickers:
+            logger.warning(f"Failed tickers: {', '.join(failed_tickers)}")
+        
+        return combined_data
     
     def _sample_crypto(self, symbols: List[str], attempts: int = 3, days: int = 92, 
                       interval: str = "15m", target_rows: int = 263520) -> pd.DataFrame:
