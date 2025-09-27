@@ -38,6 +38,15 @@ CRYPTO_TICKERS = [
     "IOSTUSDT", "CELRUSDT", "DASHUSDT", "THETAUSDT", "ENJUSDT"
 ]
 
+ETF_TICKERS = [
+    
+    "SPY","QQQ","IWM","DIA","VTV","VUG",                            # US Market Style
+    "EFA","EEM","EWJ","EWU","EWG","EWY","INDA","MCHI",              # Global Equities
+    "TLT","IEF","SHY","AGG","LQD","HYG",                            # Bonds
+    "GLD","SLV","DBC","USO","UNG"                                   # Commodities
+]
+
+
 BASE_URL = "https://api.binance.com/api/v3/klines"
 
 
