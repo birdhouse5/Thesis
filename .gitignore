@@ -11,6 +11,7 @@ optuna_results/
 validation_results/
 Optuna_HPO/
 MLFlow_Pipeline/
+viz/
 
 # python noise
 __pycache__/
