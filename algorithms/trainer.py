@@ -505,9 +505,6 @@ class PPOTrainer:
                 torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
                 self.optimizer.step()
 
-                # Log context fraction to verify asymmetric training
-                if "context_fraction" in vae_info:
-                    training_logger.log_metric("vae_context_fraction", vae_info["context_fraction"])
                 update_info["vae_loss"] = float(vae_loss.item())
                 for k, v in vae_info.items():
                     update_info[f"vae_{k}"] = v
