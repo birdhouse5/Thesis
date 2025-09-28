@@ -6,9 +6,7 @@ from config import ExperimentConfig, experiment_to_training_config
 from main import prepare_environments, create_models
 from algorithms.trainer import PPOTrainer
 
-# === Objective function ===
 def objective(trial):
-
     # --- Suggest hyperparams ---
     latent_dim   = trial.suggest_categorical("latent_dim", [16, 32, 64, 128])
     hidden_dim   = trial.suggest_categorical("hidden_dim", [256, 512, 768])
@@ -18,11 +16,9 @@ def objective(trial):
     entropy_coef = trial.suggest_uniform("entropy_coef", 0.0, 0.05)
     clip_ratio   = trial.suggest_uniform("ppo_clip_ratio", 0.1, 0.3)
 
-    # --- Base experiment config ---
+    # --- Config ---
     exp = ExperimentConfig(seed=0, asset_class="sp500", encoder="vae")
     cfg = experiment_to_training_config(exp)
-
-    # Override with trial params
     cfg.latent_dim   = latent_dim
     cfg.hidden_dim   = hidden_dim
     cfg.vae_lr       = vae_lr
@@ -31,32 +27,31 @@ def objective(trial):
     cfg.entropy_coef = entropy_coef
     cfg.ppo_clip_ratio = clip_ratio
 
-    # --- Prepare envs ---
+    # --- Prepare envs and models ---
     envs, split_tensors, datasets = prepare_environments(cfg)
     train_env = envs["train"]
-
-    # --- Create models ---
     obs_shape = (cfg.num_assets, len(split_tensors["train"]["feature_columns"]))
     vae, policy = create_models(cfg, obs_shape)
-
     trainer = PPOTrainer(train_env, policy, vae, cfg)
 
-    # --- Training loop (shortened for HPO) ---
+    # --- Training loop ---
     rewards = []
-    max_episodes = 200   # keep short for trial
+    max_episodes = 200
     for ep in range(max_episodes):
+        # ✅ set task before training episode
+        task = train_env.sample_task()
+        train_env.set_task(task)
+
         result = trainer.train_episode()
         rewards.append(result["episode_sum_reward"])
 
-        # report to Optuna for pruning
+        # Optuna pruning
         trial.report(np.mean(rewards[-20:]), step=ep)
         if trial.should_prune():
             raise optuna.TrialPruned()
 
-    # --- Return mean of last 50 episodes ---
     return float(np.mean(rewards[-50:]))
 
-# === Run study ===
 if __name__ == "__main__":
     study = optuna.create_study(
         study_name="ppo_vae_portfolio",
