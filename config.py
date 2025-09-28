@@ -123,7 +123,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         disable_vae=disable_vae,
         latent_dim=latent_dim, # optuna result1
         hidden_dim=512, # 768, # optuna result1
-        vae_lr=0.0003569748519315124             # 0.00004409096982106036, #optuna result1
+        vae_lr=0.0003569748519315124,             # 0.00004409096982106036, #optuna result1
         policy_lr=0.00015584712043192588, # 0.00002329493575648219, #optuna result1
         noise_factor=0.05, 
         random_policy=False,
