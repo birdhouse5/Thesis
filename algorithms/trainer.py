@@ -520,7 +520,7 @@ class PPOTrainer:
         torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
         self.optimizer.step()
 
-        update_info["vae_loss"] = 0.0 #TODO
+        #update_info["vae_loss"] = 0.0 #TODO
         return total_loss, update_info
 
     

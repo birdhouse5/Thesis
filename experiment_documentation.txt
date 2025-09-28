@@ -1,0 +1,5 @@
+1) general HPO
+2) experiment run
+    okayish results: vae reduced variance in capital gains across seeds for crypto but for sp5000, the variance exploded towards the end
+    I noticed: loss functions are not behaving optimally. Policy loss fluctuates around zero, no trend. VAE losses are not decreasing over time. Some metrics are not tracked.
+3) next stage: we optimize hyperparameters for the modules separately, then check again.

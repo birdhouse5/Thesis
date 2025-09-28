@@ -30,3 +30,5 @@ debug
 - find other things to track / do differently. Go through the paper systematically and find mismatches between description and implementation
 
 - implement hmm / volatility based regime sampling and compare to current implementation (random task sampling)
+- check value_loss and entropy
+- use approximately the same horizon length as during training
