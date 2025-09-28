@@ -104,7 +104,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
     # encoder handling
     if exp.encoder == "vae":
         disable_vae = False
-        latent_dim = 32
+        latent_dim = 64 # 32 optiuna result 1
     elif exp.encoder == "hmm":
         disable_vae = True
         latent_dim = 4   # number of HMM states
@@ -121,22 +121,22 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         data_path=data_paths[exp.asset_class],
         encoder=exp.encoder,
         disable_vae=disable_vae,
-        latent_dim=latent_dim, # optuna result
-        hidden_dim=768, # optuna result
-        vae_lr=0.00004409096982106036, #optuna result
-        policy_lr=0.00002329493575648219, #optuna result
+        latent_dim=latent_dim, # optuna result1
+        hidden_dim=512, # 768, # optuna result1
+        vae_lr=0.0003569748519315124             # 0.00004409096982106036, #optuna result1
+        policy_lr=0.00015584712043192588, # 0.00002329493575648219, #optuna result1
         noise_factor=0.05, 
         random_policy=False,
-        vae_beta=0.0007435972826570025, # optuna result
+        vae_beta=0.0709877778524465, # 0.0007435972826570025, # optuna result1
         vae_update_freq=5,
         seq_len=200,
         episodes_per_task=3,
         batch_size=8192,
         vae_batch_size=1024,
         ppo_epochs=8,
-        entropy_coef=0.0009083214087882104, # optuna result
+        entropy_coef=0.047315891962627706, # 0.0009083214087882104, # optuna result1
         joint_loss_lambda=1.0,
-        max_episodes=800, # TODO 6000
+        max_episodes=6000,
         early_stopping_patience=10,
         early_stopping_min_delta=0.02,
         val_interval=200,
@@ -147,17 +147,17 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         device="cuda",
         val_episodes=50,
         test_episodes=100, #-> we do final test on these number of episodes
-        ppo_clip_ratio=0.19086925122925438, # optuna result
+        ppo_clip_ratio=0.1473333435286036, # 0.19086925122925438, # optuna result1
         value_loss_coef=0.5,
         max_grad_norm=0.5,
         gae_lambda=0.95,
         discount_factor=0.99,
         min_horizon=exp.min_horizon,
         max_horizon=exp.max_horizon,
-        eta=0.026057381475720114, # optuna result
+        eta=0.026057381475720114, # optuna result1
         rf_rate=0.02,
         transaction_cost_rate=exp.transaction_cost_rate if exp.transaction_cost_rate is not None else 0.001,
         reward_type=exp.reward_type if hasattr(exp, 'reward_type') else "dsr",
-        reward_lookback=39, # optuna result
+        reward_lookback=39, # optuna result1
         inflation_rate=exp.inflation_rate if exp.inflation_rate is not None else 0.1,
     )
