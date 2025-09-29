@@ -181,6 +181,8 @@ class PPOTrainer:
         # === Loss tracking ===
         policy_loss = update_info.get("policy_loss", 0.0)
         vae_loss = update_info.get("vae_loss", 0.0)
+        value_loss = update_info.get("value_loss", 0.0)
+        entropy = update_info.get("entropy", 0.0)
         vae_loss_components = {k: v for k, v in update_info.items() if k.startswith("vae_")}
 
         self.episode_rewards.append(episode_reward_sum)
@@ -197,6 +199,8 @@ class PPOTrainer:
         results = {
             "policy_loss": policy_loss,
             "vae_loss": vae_loss,
+            "value_loss": value_loss,     
+            "entropy": entropy,        
             "total_steps": int(self.total_steps),
 
             # Portfolio metrics
