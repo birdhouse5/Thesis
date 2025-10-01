@@ -539,7 +539,7 @@ def main():
     logger.info("Using CSV logging backend")
 
     # Generate all experiment configurations
-    experiments = generate_experiment_configs(num_seeds=10)
+    experiments = generate_experiment_configs(num_seeds=3) # TODO 
     # Apply CLI overrides
     for exp in experiments:
         if args.exp_name:
