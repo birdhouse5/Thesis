@@ -169,23 +169,18 @@ class PPOTrainer:
                 if episode_idx > 0:
                     logger.info(f"    Latent change: {abs(latent_norms[-1] - latent_norms[-2]):.4f}")
             
-            # Accumulate transitions
+            # Accumulate transitions (all are tensors)
             for key in all_transitions.keys():
                 if key in trajectory:
-                    if isinstance(trajectory[key], torch.Tensor):
-                        all_transitions[key].append(trajectory[key])
-                    else:
-                        all_transitions[key].extend(trajectory[key])
+                    all_transitions[key].append(trajectory[key])
             
             # Add to episode trajectory buffer for VAE
             self.vae_buffer.append(trajectory)
-        
-        # Stack accumulated transitions
-        for key in ["observations", "actions", "values", "log_probs", "latents"]:
+
+        # Stack accumulated transitions from all episodes
+        for key in all_transitions.keys():
             all_transitions[key] = torch.cat(all_transitions[key], dim=0)
-        all_transitions["rewards"] = torch.cat([t["rewards"] for t in [trajectory]], dim=0) if isinstance(trajectory["rewards"], torch.Tensor) else torch.tensor([r for traj in [trajectory] for r in traj["rewards"]], device=self.device)
-        all_transitions["dones"] = torch.cat([t["dones"] for t in [trajectory]], dim=0) if isinstance(trajectory["dones"], torch.Tensor) else torch.tensor([d for traj in [trajectory] for d in traj["dones"]], device=self.device)
-        
+
         # Validation check 3: Single update per task
         logger.info(f"  Performing single PPO+VAE update on full BAMDP trajectory ({all_transitions['rewards'].shape[0]} steps)")
         
