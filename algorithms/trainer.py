@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Dict, List
 import time
 import logging
+logger = logging.getLogger(__name__)
 
 import numpy as np
 import torch
