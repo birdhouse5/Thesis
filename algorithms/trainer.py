@@ -217,10 +217,10 @@ class PPOTrainer:
             **update_info
         }
         
-        logger.info(f"=== Task {task_id} Complete ===")
-        logger.info(f"  Total reward: {results['task_total_reward']:.4f}")
-        logger.info(f"  Context growth: {results['context_growth']} steps")
-        logger.info(f"  Latent refinement: {results['latent_norm_change']:.4f}")
+        # logger.info(f"=== Task {task_id} Complete ===")
+        # logger.info(f"  Total reward: {results['task_total_reward']:.4f}")
+        # logger.info(f"  Context growth: {results['context_growth']} steps")
+        # logger.info(f"  Latent refinement: {results['latent_norm_change']:.4f}")
         
         return results
 

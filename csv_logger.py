@@ -351,7 +351,7 @@ class ValidationCSVLogger:
 class BacktestCSVLogger:
     """Backtest-specific CSV logger - one row per time step."""
     
-    def __init__(self, experiment_name: str, seed: int, asset_class: str, encoder: str, num_assets: int):
+    def __init__(self, experiment_name: str, seed: int, asset_class: str, encoder: str, num_assets: int, latent_dim: int):
         self.latent_dim = latent_dim
         self.experiment_name = experiment_name
         self.seed = seed
