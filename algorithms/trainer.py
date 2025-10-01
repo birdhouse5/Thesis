@@ -166,7 +166,7 @@ class PPOTrainer:
                 avg_latent_norm = trajectory["latents"].norm(dim=1).mean().item()
                 latent_norms.append(avg_latent_norm)
                 #logger.info(f"    Avg latent norm: {avg_latent_norm:.4f}")
-                if episode_idx > 0:
+                #if episode_idx > 0:
                     #logger.info(f"    Latent change: {abs(latent_norms[-1] - latent_norms[-2]):.4f}")
             
             # Accumulate transitions (all are tensors)
