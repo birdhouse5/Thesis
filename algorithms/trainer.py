@@ -163,7 +163,7 @@ class PPOTrainer:
             
             # Validation check 2: Latent beliefs change across episodes
             if len(trajectory["latents"]) > 0:
-                avg_latent_norm = torch.stack(trajectory["latents"]).norm(dim=1).mean().item()
+                avg_latent_norm = trajectory["latents"].norm(dim=1).mean().item()
                 latent_norms.append(avg_latent_norm)
                 logger.info(f"    Avg latent norm: {avg_latent_norm:.4f}")
                 if episode_idx > 0:
