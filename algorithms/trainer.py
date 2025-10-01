@@ -99,6 +99,226 @@ class PPOTrainer:
         self.episode_start_time = None
         self.portfolio_metrics_history = []
 
+        # BAMDP tracking
+        self.current_task_id = None
+        self.persistent_context = None
+        self.task_count = 0
+    
+    logger.info("PPOTrainer initialized with BAMDP multi-episode support")
+
+    # CORRECTED TASK TRAINING
+
+    def train_on_task(self) -> Dict[str, float]:
+        """
+        Train over multiple episodes on same task (BAMDP).
+        Context persists across episodes to enable belief refinement.
+        """
+        # Sample task once
+        task = self.env.sample_task()
+        task_id = task.get("task_id", self.task_count)
+        self.env.set_task(task)
+        self.task_count += 1
+        
+        # Initialize context for this task
+        persistent_context = {
+            "observations": [],
+            "actions": [],
+            "rewards": []
+        }
+        
+        # Accumulate all transitions across episodes
+        all_transitions = {
+            "observations": [],
+            "actions": [],
+            "rewards": [],
+            "values": [],
+            "log_probs": [],
+            "latents": [],
+            "dones": []
+        }
+        
+        episode_rewards = []
+        context_sizes = []
+        latent_norms = []
+        
+        logger.info(f"=== Starting BAMDP Task {task_id} ({self.config.episodes_per_task} episodes) ===")
+        
+        # Multiple episodes on same task
+        for episode_idx in range(self.config.episodes_per_task):
+            logger.info(f"  Episode {episode_idx+1}/{self.config.episodes_per_task} - Context size: {len(persistent_context['observations'])}")
+            
+            # Collect trajectory with persistent context
+            trajectory = self.collect_trajectory_with_context(persistent_context)
+            
+            # Track metrics
+            episode_reward = float(trajectory["rewards"].sum().item())
+            episode_rewards.append(episode_reward)
+            
+            # Validation check 1: Context grows across episodes
+            context_size_after = len(persistent_context['observations'])
+            context_sizes.append(context_size_after)
+            logger.info(f"    Episode reward: {episode_reward:.4f}")
+            logger.info(f"    Context grew: {context_sizes[-1] - (context_sizes[-2] if len(context_sizes) > 1 else 0)} steps")
+            
+            # Validation check 2: Latent beliefs change across episodes
+            if len(trajectory["latents"]) > 0:
+                avg_latent_norm = torch.stack(trajectory["latents"]).norm(dim=1).mean().item()
+                latent_norms.append(avg_latent_norm)
+                logger.info(f"    Avg latent norm: {avg_latent_norm:.4f}")
+                if episode_idx > 0:
+                    logger.info(f"    Latent change: {abs(latent_norms[-1] - latent_norms[-2]):.4f}")
+            
+            # Accumulate transitions
+            for key in all_transitions.keys():
+                if key in trajectory:
+                    if isinstance(trajectory[key], torch.Tensor):
+                        all_transitions[key].append(trajectory[key])
+                    else:
+                        all_transitions[key].extend(trajectory[key])
+            
+            # Add to episode trajectory buffer for VAE
+            self.vae_buffer.append(trajectory)
+        
+        # Stack accumulated transitions
+        for key in ["observations", "actions", "values", "log_probs", "latents"]:
+            all_transitions[key] = torch.cat(all_transitions[key], dim=0)
+        all_transitions["rewards"] = torch.cat([t["rewards"] for t in [trajectory]], dim=0) if isinstance(trajectory["rewards"], torch.Tensor) else torch.tensor([r for traj in [trajectory] for r in traj["rewards"]], device=self.device)
+        all_transitions["dones"] = torch.cat([t["dones"] for t in [trajectory]], dim=0) if isinstance(trajectory["dones"], torch.Tensor) else torch.tensor([d for traj in [trajectory] for d in traj["dones"]], device=self.device)
+        
+        # Validation check 3: Single update per task
+        logger.info(f"  Performing single PPO+VAE update on full BAMDP trajectory ({all_transitions['rewards'].shape[0]} steps)")
+        
+        # Single update on entire BAMDP trajectory
+        total_loss, update_info = self.update_ppo_and_vae(all_transitions)
+        
+        # Aggregate metrics
+        final_capital = self.env.current_capital
+        cumulative_return = final_capital / self.env.initial_capital - 1.0
+        
+        results = {
+            "policy_loss": update_info.get("policy_loss", 0.0),
+            "vae_loss": update_info.get("vae_loss", 0.0),
+            "value_loss": update_info.get("value_loss", 0.0),
+            "entropy": update_info.get("entropy", 0.0),
+            "total_steps": int(all_transitions["rewards"].shape[0]),
+            
+            # Task-level metrics
+            "task_total_reward": sum(episode_rewards),
+            "task_avg_reward_per_episode": sum(episode_rewards) / len(episode_rewards),
+            "task_final_capital": final_capital,
+            "task_cumulative_return": cumulative_return,
+            
+            # Validation metrics
+            "context_size_final": context_sizes[-1],
+            "context_growth": context_sizes[-1] - context_sizes[0] if len(context_sizes) > 1 else context_sizes[0],
+            "latent_norm_change": abs(latent_norms[-1] - latent_norms[0]) if len(latent_norms) > 1 else 0,
+            
+            # Episode breakdown
+            "episode_rewards": episode_rewards,
+            "episodes_per_task": self.config.episodes_per_task,
+            "task_count": self.task_count,
+            
+            **update_info
+        }
+        
+        logger.info(f"=== Task {task_id} Complete ===")
+        logger.info(f"  Total reward: {results['task_total_reward']:.4f}")
+        logger.info(f"  Context growth: {results['context_growth']} steps")
+        logger.info(f"  Latent refinement: {results['latent_norm_change']:.4f}")
+        
+        return results
+
+
+    def collect_trajectory_with_context(self, persistent_context):
+        """
+        Collect trajectory with persistent context from previous episodes.
+        Context accumulates across episodes within same task.
+        """
+        # Reset environment (position only, task remains)
+        obs0 = self.env.reset()
+        obs0 = obs0.to(self.device).to(torch.float32)
+        obs_tensor = obs0.unsqueeze(0)
+        
+        max_horizon = int(self.config.max_horizon)
+        obs_shape = tuple(obs0.shape)
+        
+        # Preallocate
+        observations = torch.zeros((max_horizon,) + obs_shape, dtype=torch.float32, device=self.device)
+        actions = torch.zeros((max_horizon, self.config.num_assets), dtype=torch.float32, device=self.device)
+        values = torch.zeros((max_horizon,), dtype=torch.float32, device=self.device)
+        log_probs = torch.zeros((max_horizon,), dtype=torch.float32, device=self.device)
+        latents = torch.zeros((max_horizon, self.config.latent_dim), dtype=torch.float32, device=self.device)
+        rewards = torch.zeros((max_horizon,), dtype=torch.float32, device=self.device)
+        dones = torch.zeros((max_horizon,), dtype=torch.bool, device=self.device)
+        
+        done, step = False, 0
+        
+        while not done and step < max_horizon:
+            # Get latent using persistent context
+            latent = self._get_latent_with_persistent_context(obs_tensor, persistent_context)
+            
+            # Sample action
+            with torch.no_grad():
+                actions_raw, value_t, log_prob_t = self.policy.act(obs_tensor, latent, deterministic=False)
+            
+            # Environment step
+            next_obs, reward_scalar, done_flag, info = self.env.step(actions_raw.squeeze(0))
+            
+            # Store step data
+            observations[step] = obs_tensor.squeeze(0)
+            actions[step] = actions_raw.squeeze(0).to(self.device)
+            values[step] = value_t.squeeze(0)
+            log_probs[step] = log_prob_t.squeeze(0)
+            latents[step] = latent.squeeze(0)
+            rewards[step] = float(reward_scalar)
+            dones[step] = bool(done_flag)
+            
+            # Update persistent context (accumulates across episodes)
+            persistent_context["observations"].append(obs_tensor.squeeze(0).detach())
+            persistent_context["actions"].append(actions_raw.squeeze(0).detach())
+            persistent_context["rewards"].append(torch.tensor(reward_scalar, dtype=torch.float32, device=self.device))
+            
+            # Advance
+            done = bool(done_flag)
+            if not done:
+                obs_tensor = next_obs.to(self.device, dtype=torch.float32).unsqueeze(0)
+            step += 1
+        
+        T = step if step > 0 else 1
+        traj = {
+            "observations": observations[:T],
+            "actions": actions[:T],
+            "rewards": rewards[:T],
+            "values": values[:T],
+            "log_probs": log_probs[:T],
+            "latents": latents[:T],
+            "dones": dones[:T],
+        }
+        return traj
+
+
+    def _get_latent_with_persistent_context(self, obs_tensor, persistent_context):
+        """Get latent encoding using persistent context from all episodes."""
+        if getattr(self.config, "disable_vae", False) or self.vae is None:
+            return torch.zeros(1, self.config.latent_dim, device=self.device)
+        
+        if len(persistent_context["observations"]) == 0:
+            # First step of first episode - use prior
+            return torch.zeros(1, self.config.latent_dim, device=self.device)
+        
+        # Encode full persistent context
+        obs_seq = torch.stack(persistent_context["observations"]).unsqueeze(0)
+        act_seq = torch.stack(persistent_context["actions"]).unsqueeze(0)
+        rew_seq = torch.stack(persistent_context["rewards"]).unsqueeze(0).unsqueeze(-1)
+        
+        try:
+            mu, logvar, _ = self.vae.encode(obs_seq, act_seq, rew_seq)
+            latent = self.vae.reparameterize(mu, logvar)
+            return latent
+        except Exception as e:
+            logger.warning(f"VAE encoding failed: {e}, using zero latent")
+            return torch.zeros(1, self.config.latent_dim, device=self.device)
+
 
     # ---------------------------------------------------------------------
     # Public training entry point
