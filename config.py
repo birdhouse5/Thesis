@@ -99,7 +99,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         eta = 0.01
     else:  # crypto
         train_end, val_end = "2020-12-31", "2023-12-31" # Note: will be overridden by intelligent splitting
-        eta = 0.1  
+        eta = 0.1
 
     # encoder handling
     if exp.encoder == "vae":
@@ -136,7 +136,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         ppo_epochs=8,
         entropy_coef=0.0009083214087882104, # optuna result1 - best # 0.006439257494565313, # 0.047315891962627706, optuna 2 # 
         joint_loss_lambda=1.0,
-        max_episodes=6000,
+        max_episodes=200, #6000, TODO
         early_stopping_patience=10,
         early_stopping_min_delta=0.02,
         val_interval=200,

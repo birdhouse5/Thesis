@@ -352,6 +352,7 @@ class BacktestCSVLogger:
     """Backtest-specific CSV logger - one row per time step."""
     
     def __init__(self, experiment_name: str, seed: int, asset_class: str, encoder: str, num_assets: int):
+        self.latent_dim = latent_dim
         self.experiment_name = experiment_name
         self.seed = seed
         self.asset_class = asset_class
@@ -373,17 +374,22 @@ class BacktestCSVLogger:
             'long_exposure', 'short_exposure', 'cash_position', 'net_exposure', 
             'gross_exposure', 'turnover', 'transaction_cost'
         ]
-        
+
         # Add weight columns: weight_0, weight_1, ..., weight_N
         for i in range(self.num_assets):
             headers.append(f'weight_{i}')
+
+        # Add latent columns
+        for i in range(self.latent_dim):
+            headers.append(f'latent_{i}')
         
         with open(self.csv_path, 'w') as f:
             f.write(','.join(headers) + '\n')
     
     def log_step(self, step: int, capital: float, log_return: float, excess_return: float, 
                  reward: float, weights: np.ndarray, long_exposure: float, short_exposure: float,
-                 cash_position: float, net_exposure: float, gross_exposure: float, turnover: float, transaction_cost: float):
+                 cash_position: float, net_exposure: float, gross_exposure: float, turnover: float, 
+                 transaction_cost: float, latent: list):
         """Log one backtest time step."""
         
         row = [
@@ -396,6 +402,10 @@ class BacktestCSVLogger:
         # Add individual weights
         for weight in weights:
             row.append(weight)
+        
+        # Add latent values
+        for i in range(self.latent_dim):
+            row.append(latent[i])
         
         with open(self.csv_path, 'a') as f:
             f.write(','.join(map(str, row)) + '\n')

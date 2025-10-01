@@ -142,11 +142,11 @@ class PPOTrainer:
         context_sizes = []
         latent_norms = []
         
-        logger.info(f"=== Starting BAMDP Task {task_id} ({self.config.episodes_per_task} episodes) ===")
+        #logger.info(f"=== Starting BAMDP Task {task_id} ({self.config.episodes_per_task} episodes) ===")
         
         # Multiple episodes on same task
         for episode_idx in range(self.config.episodes_per_task):
-            logger.info(f"  Episode {episode_idx+1}/{self.config.episodes_per_task} - Context size: {len(persistent_context['observations'])}")
+            #logger.info(f"  Episode {episode_idx+1}/{self.config.episodes_per_task} - Context size: {len(persistent_context['observations'])}")
             
             # Collect trajectory with persistent context
             trajectory = self.collect_trajectory_with_context(persistent_context)
@@ -158,16 +158,16 @@ class PPOTrainer:
             # Validation check 1: Context grows across episodes
             context_size_after = len(persistent_context['observations'])
             context_sizes.append(context_size_after)
-            logger.info(f"    Episode reward: {episode_reward:.4f}")
-            logger.info(f"    Context grew: {context_sizes[-1] - (context_sizes[-2] if len(context_sizes) > 1 else 0)} steps")
+            #logger.info(f"    Episode reward: {episode_reward:.4f}")
+            #logger.info(f"    Context grew: {context_sizes[-1] - (context_sizes[-2] if len(context_sizes) > 1 else 0)} steps")
             
             # Validation check 2: Latent beliefs change across episodes
             if len(trajectory["latents"]) > 0:
                 avg_latent_norm = trajectory["latents"].norm(dim=1).mean().item()
                 latent_norms.append(avg_latent_norm)
-                logger.info(f"    Avg latent norm: {avg_latent_norm:.4f}")
+                #logger.info(f"    Avg latent norm: {avg_latent_norm:.4f}")
                 if episode_idx > 0:
-                    logger.info(f"    Latent change: {abs(latent_norms[-1] - latent_norms[-2]):.4f}")
+                    #logger.info(f"    Latent change: {abs(latent_norms[-1] - latent_norms[-2]):.4f}")
             
             # Accumulate transitions (all are tensors)
             for key in all_transitions.keys():
@@ -182,7 +182,7 @@ class PPOTrainer:
             all_transitions[key] = torch.cat(all_transitions[key], dim=0)
 
         # Validation check 3: Single update per task
-        logger.info(f"  Performing single PPO+VAE update on full BAMDP trajectory ({all_transitions['rewards'].shape[0]} steps)")
+        #logger.info(f"  Performing single PPO+VAE update on full BAMDP trajectory ({all_transitions['rewards'].shape[0]} steps)")
         
         # Single update on entire BAMDP trajectory
         total_loss, update_info = self.update_ppo_and_vae(all_transitions)
