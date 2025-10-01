@@ -215,7 +215,10 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
         steps_per_year=252 if config.asset_class == 'sp500' else 35040
     )
 
-    backtest_logger = BacktestCSVLogger(config.exp_name, config.seed, config.asset_class, config.encoder, dataset.num_assets)
+    backtest_logger = BacktestCSVLogger(
+        config.exp_name, config.seed, config.asset_class, 
+        config.encoder, dataset.num_assets, config.latent_dim
+        )
 
     # Enable sequential mode
     env.set_sequential_mode(True)
@@ -292,18 +295,11 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
             cash_pos = float(w_cash_normalized)
             net_exp = long_exp - short_exp
             gross_exp = long_exp + short_exp
-            # print("DEBUG: -----------")
-            # print("long_exp", long_exp)
-            # print("short_exp", short_exp)
-            # print("cash_pos", cash_pos)
-            # print("net_exp", net_exp)
-            # print("gross_exp", gross_exp)
-            # Log detailed step data to CSV
             backtest_logger.log_step(
                 step=t, capital=env.current_capital, log_return=log_return, excess_return=excess_return,
                 reward=reward, weights=weights_np, long_exposure=long_exp, short_exposure=short_exp,
                 cash_position=cash_pos, net_exposure=net_exp, gross_exposure=gross_exp, 
-                turnover=turnover, transaction_cost=cost
+                turnover=turnover, transaction_cost=cost, latent=latent.squeeze().cpu().numpy()
             )
 
             # Keep minimal tracking for summary metrics
