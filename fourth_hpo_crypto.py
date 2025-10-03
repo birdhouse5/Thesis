@@ -19,7 +19,7 @@ def objective(trial):
     exp = ExperimentConfig(seed=0, asset_class="crypto", encoder="vae")
     cfg = experiment_to_training_config(exp)
 
-    cfg.latent_dim   = lantet_dim
+    cfg.latent_dim   = latent_dim
     cfg.hidden_dim   = 768
     cfg.vae_beta     = 0.0709877778524465
     cfg.policy_lr    = policy_lr
