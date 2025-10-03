@@ -13,7 +13,7 @@ def objective(trial):
     entropy_coef = trial.suggest_uniform("entropy_coef", 0.0, 0.05)
     value_loss_coef = trial.suggest_uniform("value_loss_coef", 0.25, 1.0)
     gae_lambda   = trial.suggest_uniform("gae_lambda", 0.9, 0.98)
-    latent_dim  = trial.suggest_uniform("latent_dim", [32, 64, 128])
+    latent_dim  = trial.suggest_categorical("latent_dim", [32, 64, 128])
 
     # --- Fixed encoder hyperparams ---
     exp = ExperimentConfig(seed=0, asset_class="crypto", encoder="vae")
