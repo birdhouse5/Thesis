@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import random
 import requests
 import torch
+import pickle
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,9 @@ SP500_TICKERS = [
     'DD'                                          # Materials
 ]
 
+# Coverage window discovered by scanner
+CRYPTO_START_DATE = datetime(2019, 4, 18, 6, 0, 0)
+CRYPTO_END_DATE = datetime(2025, 10, 3, 13, 45, 0)
 CRYPTO_TICKERS = [
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "NEOUSDT", "LTCUSDT",
     "QTUMUSDT", "ADAUSDT", "XRPUSDT", "IOTAUSDT", "TUSDUSDT",
@@ -38,13 +42,15 @@ CRYPTO_TICKERS = [
     "IOSTUSDT", "CELRUSDT", "DASHUSDT", "THETAUSDT", "ENJUSDT"
 ]
 
-ETF_TICKERS = [
+
+
+# ETF_TICKERS = [
     
-    "SPY","QQQ","IWM","DIA","VTV","VUG",                            # US Market Style
-    "EFA","EEM","EWJ","EWU","EWG","EWY","INDA","MCHI",              # Global Equities
-    "TLT","IEF","SHY","AGG","LQD","HYG",                            # Bonds
-    "GLD","SLV","DBC","USO","UNG"                                   # Commodities
-]
+#     "SPY","QQQ","IWM","DIA","VTV","VUG",                            # US Market Style
+#     "EFA","EEM","EWJ","EWU","EWG","EWY","INDA","MCHI",              # Global Equities
+#     "TLT","IEF","SHY","AGG","LQD","HYG",                            # Bonds
+#     "GLD","SLV","DBC","USO","UNG"                                   # Commodities
+# ]
 
 
 BASE_URL = "https://api.binance.com/api/v3/klines"
@@ -198,9 +204,15 @@ class PortfolioDataset:
         return cleaned
     
     def _create_crypto_dataset(self) -> pd.DataFrame:
-        """Create crypto dataset - migrated from data_preparation.py"""
-        # Sample crypto data with defaults
-        raw_data = self._sample_crypto(CRYPTO_TICKERS, days=92, interval="15m", target_rows=263520)
+        """Create crypto dataset using chunked download"""
+        # Use chunked download for full coverage
+        raw_data = self._download_crypto_chunked(
+            symbols=CRYPTO_TICKERS,
+            start_date=CRYPTO_START_DATE,
+            end_date=CRYPTO_END_DATE,
+            interval="15m",
+            chunk_days=30
+        )
         
         # Process same as stocks
         with_indicators = self._add_technical_indicators(raw_data)
@@ -418,73 +430,409 @@ class PortfolioDataset:
         
         return combined_data
     
-    def _sample_crypto(self, symbols: List[str], attempts: int = 3, days: int = 92, 
-                      interval: str = "15m", target_rows: int = 263520) -> pd.DataFrame:
-        """Sample crypto OHLCV data - migrated from data_preparation.py"""
-        for attempt in range(attempts):
-            logger.info(f"Crypto sampling attempt {attempt+1} ({interval})")
-            end = datetime.utcnow()
-            start_bound = datetime(2024, 4, 2)
-            max_start = end - timedelta(days=days)
-            if start_bound >= max_start:
-                start = start_bound
-            else:
-                start = start_bound + (max_start - start_bound) * random.random()
-            end = start + timedelta(days=days)
+    # def _sample_crypto(self, symbols: List[str], attempts: int = 3, days: int = 92, 
+    #                   interval: str = "15m", target_rows: int = 263520) -> pd.DataFrame:
+    #     """Sample crypto OHLCV data - migrated from data_preparation.py"""
+    #     for attempt in range(attempts):
+    #         logger.info(f"Crypto sampling attempt {attempt+1} ({interval})")
+    #         end = datetime.utcnow()
+    #         start_bound = datetime(2024, 4, 2)
+    #         max_start = end - timedelta(days=days)
+    #         if start_bound >= max_start:
+    #             start = start_bound
+    #         else:
+    #             start = start_bound + (max_start - start_bound) * random.random()
+    #         end = start + timedelta(days=days)
 
-            all_dfs, failed, illiquid = [], [], []
-            for sym in symbols:
-                df = self._fetch_klines(sym, interval, start, end)
-                expected_rows = days * (1440 // 15)  # 96 per day
-                if df is None or len(df) < expected_rows:
-                    failed.append(sym)
-                    continue
-                if df["volume"].sum() <= 0:
-                    illiquid.append(sym)
-                    continue
-                df["ticker"] = sym
-                all_dfs.append(df)
+    #         all_dfs, failed, illiquid = [], [], []
+    #         for sym in symbols:
+    #             df = self._fetch_klines(sym, interval, start, end)
+    #             expected_rows = days * (1440 // 15)  # 96 per day
+    #             if df is None or len(df) < expected_rows:
+    #                 failed.append(sym)
+    #                 continue
+    #             if df["volume"].sum() <= 0:
+    #                 illiquid.append(sym)
+    #                 continue
+    #             df["ticker"] = sym
+    #             all_dfs.append(df)
             
-            if not failed and not illiquid:
-                full = pd.concat(all_dfs, ignore_index=True)
-                logger.info(f"✅ Crypto sampling success: {full.shape}")
-                return full.iloc[:target_rows]
-            else:
-                logger.info(f"Retrying due to failed/illiquid: {failed+illiquid}")
+    #         if not failed and not illiquid:
+    #             full = pd.concat(all_dfs, ignore_index=True)
+    #             logger.info(f"✅ Crypto sampling success: {full.shape}")
+    #             return full.iloc[:target_rows]
+    #         else:
+    #             logger.info(f"Retrying due to failed/illiquid: {failed+illiquid}")
         
-        raise RuntimeError(f"Failed after {attempts} attempts")
+    #     raise RuntimeError(f"Failed after {attempts} attempts")
     
-    def _fetch_klines(self, symbol: str, interval: str, start: datetime, end: datetime) -> Optional[pd.DataFrame]:
-        """Fetch crypto klines from Binance - migrated from data_preparation.py"""
-        url = BASE_URL
-        params = {
-            "symbol": symbol,
-            "interval": interval,
-            "startTime": int(start.timestamp() * 1000),
-            "endTime": int(end.timestamp() * 1000),
-            "limit": 1000
-        }
-        all_data = []
-        while True:
-            resp = requests.get(url, params=params)
-            data = resp.json()
-            if not isinstance(data, list):
-                return None
-            all_data.extend(data)
-            if len(data) < 1000:
-                break
-            params["startTime"] = data[-1][6]
-        if not all_data:
+    # def _fetch_klines(self, symbol: str, interval: str, start: datetime, end: datetime) -> Optional[pd.DataFrame]:
+    #     """Fetch crypto klines from Binance - migrated from data_preparation.py"""
+    #     url = BASE_URL
+    #     params = {
+    #         "symbol": symbol,
+    #         "interval": interval,
+    #         "startTime": int(start.timestamp() * 1000),
+    #         "endTime": int(end.timestamp() * 1000),
+    #         "limit": 1000
+    #     }
+    #     all_data = []
+    #     while True:
+    #         resp = requests.get(url, params=params)
+    #         data = resp.json()
+    #         if not isinstance(data, list):
+    #             return None
+    #         all_data.extend(data)
+    #         if len(data) < 1000:
+    #             break
+    #         params["startTime"] = data[-1][6]
+    #     if not all_data:
+    #         return None
+    #     df = pd.DataFrame(all_data, columns=[
+    #         "openTime","open","high","low","close","volume",
+    #         "closeTime","qav","trades","tbbav","tbqav","ignore"
+    #     ])
+    #     df["date"] = pd.to_datetime(df["openTime"], unit="ms")
+    #     df = df[["date","open","high","low","close","volume"]]
+    #     df = df.astype({"open":float,"high":float,"low":float,"close":float,"volume":float})
+    #     return df
+    def _create_crypto_dataset(self) -> pd.DataFrame:
+        """
+        Create crypto dataset using chunked download.
+        REPLACES the old _create_crypto_dataset() method.
+        """
+        # Use chunked download instead of random sampling
+        raw_data = self._download_crypto_chunked(
+            symbols=CRYPTO_TICKERS,
+            start_date=CRYPTO_START_DATE,
+            end_date=CRYPTO_END_DATE,
+            interval="15m",
+            chunk_days=30
+        )
+        
+        # Process same as before - these steps remain unchanged
+        with_indicators = self._add_technical_indicators(raw_data)
+        normalized = self._normalize_features(with_indicators)
+        cleaned = self._clean_data(normalized)
+        
+        return cleaned
+
+
+    def _download_crypto_chunked(
+            self,
+            symbols: List[str],
+            start_date: datetime,
+            end_date: datetime,
+            interval: str = "15m",
+            chunk_days: int = 30
+        ) -> pd.DataFrame:
+        """
+        Download crypto data in chunks with validation and resume capability.
+        Returns DataFrame with columns: ['date', 'ticker', 'open', 'high', 'low', 'close', 'volume']
+        """
+        logger.info(f"📥 Starting chunked download for {len(symbols)} tickers")
+        logger.info(f"   Date range: {start_date.date()} to {end_date.date()}")
+        logger.info(f"   Chunk size: {chunk_days} days")
+        
+        # Setup progress tracking
+        progress_file = Path("environments/data/.crypto_download_progress.pkl")
+        progress_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Try to resume from previous download
+        all_chunks = []
+        completed_chunks = set()
+        
+        if progress_file.exists():
+            try:
+                with open(progress_file, 'rb') as f:
+                    saved_state = pickle.load(f)
+                    all_chunks = saved_state.get('chunks', [])
+                    completed_chunks = saved_state.get('completed', set())
+                    logger.info(f"   📂 Resuming from checkpoint: {len(completed_chunks)} chunks completed")
+            except Exception as e:
+                logger.warning(f"   ⚠️  Could not load progress file: {e}")
+        
+        # Generate chunk boundaries
+        chunks = []
+        current_start = start_date
+        
+        while current_start < end_date:
+            current_end = min(current_start + timedelta(days=chunk_days), end_date)
+            chunk_id = f"{current_start.strftime('%Y%m%d')}_{current_end.strftime('%Y%m%d')}"
+            
+            if chunk_id not in completed_chunks:
+                chunks.append({
+                    'id': chunk_id,
+                    'start': current_start,
+                    'end': current_end
+                })
+            
+            current_start = current_end
+        
+        total_chunks = len(chunks) + len(completed_chunks)
+        logger.info(f"   📊 Total chunks: {total_chunks} ({len(chunks)} remaining)")
+        
+        # Download each chunk
+        for i, chunk in enumerate(chunks):
+            chunk_num = len(completed_chunks) + i + 1
+            logger.info(f"\n📦 Chunk {chunk_num}/{total_chunks}: {chunk['start'].date()} to {chunk['end'].date()}")
+            
+            chunk_data = self._download_chunk(
+                symbols=symbols,
+                start_date=chunk['start'],
+                end_date=chunk['end'],
+                interval=interval
+            )
+            
+            if chunk_data is None:
+                logger.error(f"   ❌ Failed to download chunk {chunk['id']}")
+                logger.error(f"   💾 Progress saved. You can resume by running again.")
+                self._save_progress(progress_file, all_chunks, completed_chunks)
+                raise RuntimeError(f"Failed to download chunk {chunk['id']}")
+            
+            # Validate chunk
+            if not self._validate_chunk(chunk_data, symbols, chunk['start'], chunk['end'], interval):
+                logger.error(f"   ❌ Chunk validation failed for {chunk['id']}")
+                self._save_progress(progress_file, all_chunks, completed_chunks)
+                raise RuntimeError(f"Chunk validation failed for {chunk['id']}")
+            
+            logger.info(f"   ✅ Chunk validated: {len(chunk_data)} rows")
+            
+            all_chunks.append(chunk_data)
+            completed_chunks.add(chunk['id'])
+            
+            # Save progress
+            self._save_progress(progress_file, all_chunks, completed_chunks)
+            
+            # Rate limiting between chunks
+            if i < len(chunks) - 1:
+                sleep_time = 2.5
+                logger.info(f"   ⏱️  Sleeping {sleep_time}s (rate limiting)...")
+                time.sleep(sleep_time)
+        
+        # Combine all chunks
+        logger.info(f"\n🔗 Combining {len(all_chunks)} chunks...")
+        combined_data = pd.concat(all_chunks, ignore_index=True)
+        combined_data = combined_data.sort_values(['date', 'ticker']).reset_index(drop=True)
+        
+        # Final validation
+        logger.info(f"📋 Final dataset: {combined_data.shape}")
+        logger.info(f"   Date range: {combined_data['date'].min()} to {combined_data['date'].max()}")
+        logger.info(f"   Tickers: {combined_data['ticker'].nunique()}")
+        logger.info(f"   Days: {combined_data['date'].nunique()}")
+        
+        # Cleanup progress file on success
+        if progress_file.exists():
+            progress_file.unlink()
+            logger.info(f"   🧹 Cleaned up progress file")
+        
+        return combined_data
+
+
+    def _download_chunk(
+            self,
+            symbols: List[str],
+            start_date: datetime,
+            end_date: datetime,
+            interval: str
+        ) -> Optional[pd.DataFrame]:
+        """
+        Download a single chunk of data for all symbols.
+        Returns DataFrame or None if failed.
+        """
+        all_dfs = []
+        failed = []
+        
+        for sym in symbols:
+            df = self._fetch_klines_robust(sym, interval, start_date, end_date)
+            
+            if df is None or len(df) == 0:
+                failed.append(sym)
+                logger.warning(f"      ⚠️  {sym}: No data returned")
+                continue
+            
+            # Check for sufficient volume
+            if df["volume"].sum() <= 0:
+                failed.append(sym)
+                logger.warning(f"      ⚠️  {sym}: Zero volume")
+                continue
+            
+            df["ticker"] = sym
+            all_dfs.append(df)
+            
+            # Small delay between tickers
+            time.sleep(0.1)
+        
+        if failed:
+            logger.warning(f"      Failed/illiquid tickers: {', '.join(failed)}")
             return None
-        df = pd.DataFrame(all_data, columns=[
-            "openTime","open","high","low","close","volume",
-            "closeTime","qav","trades","tbbav","tbqav","ignore"
-        ])
-        df["date"] = pd.to_datetime(df["openTime"], unit="ms")
-        df = df[["date","open","high","low","close","volume"]]
-        df = df.astype({"open":float,"high":float,"low":float,"close":float,"volume":float})
-        return df
-    
+        
+        if not all_dfs:
+            return None
+        
+        # Combine all tickers
+        chunk_df = pd.concat(all_dfs, ignore_index=True)
+        return chunk_df
+
+
+    def _fetch_klines_robust(
+            self,
+            symbol: str,
+            interval: str,
+            start: datetime,
+            end: datetime,
+            max_retries: int = 3
+        ) -> Optional[pd.DataFrame]:
+        """
+        Fetch klines with retry logic and better error handling.
+        Returns DataFrame with columns: ['date', 'open', 'high', 'low', 'close', 'volume']
+        """
+        for attempt in range(max_retries):
+            try:
+                params = {
+                    "symbol": symbol,
+                    "interval": interval,
+                    "startTime": int(start.timestamp() * 1000),
+                    "endTime": int(end.timestamp() * 1000),
+                    "limit": 1000
+                }
+                
+                all_data = []
+                
+                while True:
+                    resp = requests.get(BASE_URL, params=params, timeout=30)
+                    
+                    # Check for rate limiting
+                    if resp.status_code == 429:
+                        retry_after = int(resp.headers.get('Retry-After', 60))
+                        logger.warning(f"      Rate limited. Waiting {retry_after}s...")
+                        time.sleep(retry_after)
+                        continue
+                    
+                    resp.raise_for_status()
+                    data = resp.json()
+                    
+                    if not isinstance(data, list):
+                        logger.warning(f"      Unexpected response format for {symbol}")
+                        return None
+                    
+                    if len(data) == 0:
+                        break
+                    
+                    all_data.extend(data)
+                    
+                    # Check if we got all data
+                    if len(data) < 1000:
+                        break
+                    
+                    # Update start time for next batch
+                    params["startTime"] = data[-1][6] + 1  # closeTime + 1
+                    
+                    # Small delay between batches
+                    time.sleep(0.05)
+                
+                if not all_data:
+                    return None
+                
+                # Convert to DataFrame
+                df = pd.DataFrame(all_data, columns=[
+                    "openTime", "open", "high", "low", "close", "volume",
+                    "closeTime", "qav", "trades", "tbbav", "tbqav", "ignore"
+                ])
+                
+                # Process timestamps
+                df["date"] = pd.to_datetime(df["openTime"], unit="ms")
+                
+                # Select and convert columns
+                df = df[["date", "open", "high", "low", "close", "volume"]]
+                df = df.astype({
+                    "open": float,
+                    "high": float,
+                    "low": float,
+                    "close": float,
+                    "volume": float
+                })
+                
+                return df
+                
+            except requests.exceptions.RequestException as e:
+                if attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 2
+                    logger.warning(f"      Retry {attempt+1}/{max_retries} for {symbol} in {wait_time}s: {e}")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"      Failed to fetch {symbol} after {max_retries} attempts: {e}")
+                    return None
+            
+            except Exception as e:
+                logger.error(f"      Unexpected error fetching {symbol}: {e}")
+                return None
+        
+        return None
+
+
+    def _validate_chunk(self, chunk_data: pd.DataFrame, expected_symbols: List[str], start_date: datetime, end_date: datetime, interval: str) -> bool:
+        """
+        Validate that chunk has complete coverage.
+        """
+        # Check all symbols present
+        present_symbols = set(chunk_data['ticker'].unique())
+        expected_set = set(expected_symbols)
+        
+        if present_symbols != expected_set:
+            missing = expected_set - present_symbols
+            logger.error(f"      Missing symbols: {missing}")
+            return False
+        
+        # Check date range coverage
+        min_date = chunk_data['date'].min()
+        max_date = chunk_data['date'].max()
+        
+        # Calculate expected number of candles
+        duration = (end_date - start_date).total_seconds()
+        
+        if interval == "15m":
+            interval_seconds = 15 * 60
+        elif interval == "1h":
+            interval_seconds = 60 * 60
+        elif interval == "1d":
+            interval_seconds = 24 * 60 * 60
+        else:
+            logger.warning(f"      Unknown interval: {interval}")
+            return True  # Skip validation for unknown intervals
+        
+        expected_candles = int(duration / interval_seconds)
+        actual_candles = len(chunk_data) // len(expected_symbols)
+        
+        # Allow some tolerance (98% coverage)
+        coverage_ratio = actual_candles / expected_candles
+        
+        if coverage_ratio < 0.98:
+            logger.warning(f"      Coverage: {coverage_ratio:.2%} ({actual_candles}/{expected_candles} candles)")
+            logger.warning(f"      Date range: {min_date} to {max_date}")
+            return False
+        
+        # Check for duplicates
+        duplicates = chunk_data.duplicated(subset=['date', 'ticker']).sum()
+        if duplicates > 0:
+            logger.error(f"      Found {duplicates} duplicate rows")
+            return False
+        
+        return True
+
+
+    def _save_progress(self, progress_file: Path, chunks: List[pd.DataFrame], completed_ids: set):
+        """Save download progress for resume capability."""
+        try:
+            with open(progress_file, 'wb') as f:
+                pickle.dump({
+                    'chunks': chunks,
+                    'completed': completed_ids,
+                    'timestamp': datetime.utcnow()
+                }, f)
+        except Exception as e:
+            logger.warning(f"Could not save progress: {e}")
+
     def _add_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add comprehensive technical indicators - migrated from data_preparation.py"""
         logger.info("Adding technical indicators...")
