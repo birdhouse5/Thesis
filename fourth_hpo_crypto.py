@@ -58,5 +58,5 @@ if __name__ == "__main__":
         direction="maximize",
         pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=50)
     )
-    study.optimize(objective, n_trials=100)
+    study.optimize(objective, n_trials=50)
     print("Best params:", study.best_trial.params)
