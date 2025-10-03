@@ -536,7 +536,9 @@ class PortfolioDataset:
         logger.info(f"   Chunk size: {chunk_days} days")
         
         # Setup progress tracking
-        progress_file = Path("environments/data/.crypto_download_progress.pkl")
+        # Use same directory as the dataset file
+        data_dir = Path(self.data_path).parent
+        progress_file = data_dir / ".crypto_download_progress.pkl"
         progress_file.parent.mkdir(parents=True, exist_ok=True)
         
         # Try to resume from previous download
