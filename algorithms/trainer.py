@@ -667,7 +667,7 @@ class PPOTrainer:
 
         # === Track first epoch for logging ===
         first_epoch_metrics = {}
-        ratio = None
+        final_ratio_mean = 1.0
 
         # === MULTI-EPOCH PPO UPDATE ===
         for epoch in range(self.config.ppo_epochs):
@@ -706,6 +706,9 @@ class PPOTrainer:
                     "advantages_mean": float(advantages.mean().item()),
                 }
 
+            # Save final ratio before deletion
+            final_ratio_mean = float(ratio.mean().item())
+
             # Update policy only
             self.optimizer.zero_grad()
             ppo_loss.backward()
@@ -741,7 +744,7 @@ class PPOTrainer:
                 logger.warning(f"VAE update failed: {e}")
 
         first_epoch_metrics["vae_loss"] = vae_loss_val
-        first_epoch_metrics["ratio_mean"] = float(ratio.mean().item()) if ratio is not None else 1.0
+        first_epoch_metrics["ratio_mean"] = final_ratio_mean  # Use saved value
 
         return ppo_loss, first_epoch_metrics
 
