@@ -93,7 +93,7 @@ class PPOTrainer:
         self.optimizer = Adam(param_groups)
         # Experience buffers
         self.experience_buffer = ExperienceBuffer(config.batch_size)  # for PPO
-        self.vae_buffer = deque(maxlen=1000)  # recent trajectories for VAE
+        self.vae_buffer = deque(maxlen=100)  # TODO recent trajectories for VAE
 
         # Rolling stats (store Python floats to avoid CUDA logging issues)
         self.policy_losses = deque(maxlen=100)
