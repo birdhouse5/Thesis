@@ -302,6 +302,10 @@ class PPOTrainer:
             # First step of first episode - use prior
             return torch.zeros(1, self.config.latent_dim, device=self.device)
         
+        # 🔥 NEW: Limit context to last N steps to prevent OOM
+        max_context_len = 200  # Only use last 200 steps
+        start_idx = max(0, len(persistent_context["observations"]) - max_context_len)
+        
         # Encode full persistent context
         obs_seq = torch.stack(persistent_context["observations"]).unsqueeze(0)
         act_seq = torch.stack(persistent_context["actions"]).unsqueeze(0)
