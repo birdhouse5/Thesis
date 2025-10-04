@@ -551,15 +551,19 @@ class PPOTrainer:
         if len(context_obs) == 0:
             return torch.zeros(1, self.config.latent_dim, device=self.device)
         
-        # Limit context window (CRITICAL for memory)
-        max_context_len = 200  # Reduced from 200
-        start_idx = max(0, len(context_obs) - max_context_len)
+        # # Limit context window (CRITICAL for memory)
+        # max_context_len = 200  # Reduced from 200
+        # start_idx = max(0, len(context_obs) - max_context_len)
         
-        # Create GPU tensors ONLY for encoding, then DELETE immediately
-        obs_seq = torch.stack(context_obs[start_idx:]).to(self.device).unsqueeze(0)
-        act_seq = torch.stack(context_act[start_idx:]).to(self.device).unsqueeze(0)
-        rew_seq = torch.stack(context_rew[start_idx:]).to(self.device).unsqueeze(0).unsqueeze(-1)
+        # # Create GPU tensors ONLY for encoding, then DELETE immediately
+        # obs_seq = torch.stack(context_obs[start_idx:]).to(self.device).unsqueeze(0)
+        # act_seq = torch.stack(context_act[start_idx:]).to(self.device).unsqueeze(0)
+        # rew_seq = torch.stack(context_rew[start_idx:]).to(self.device).unsqueeze(0).unsqueeze(-1)
         
+        obs_seq = torch.stack(context_obs).to(self.device).unsqueeze(0)
+        act_seq = torch.stack(context_act).to(self.device).unsqueeze(0)
+        rew_seq = torch.stack(context_rew).to(self.device).unsqueeze(0).unsqueeze(-1)
+
         try:
             with torch.no_grad():  # CRITICAL: No gradients for context encoding
                 mu, logvar, _ = self.vae.encode(obs_seq, act_seq, rew_seq)
