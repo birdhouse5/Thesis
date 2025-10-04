@@ -162,5 +162,5 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         reward_type=exp.reward_type if hasattr(exp, 'reward_type') else "dsr",
         reward_lookback=39, # optuna result1 - best
         inflation_rate=exp.inflation_rate if exp.inflation_rate is not None else 0.1,
-        ppo_minibatch_size = 32,
+        ppo_minibatch_size = 128,
     )
