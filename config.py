@@ -79,13 +79,14 @@ class TrainingConfig:
     min_horizon: int
     max_horizon: int
     eta: float
+    ppo_minibatch_size: int
     rf_rate: float = 0.02
     transaction_cost_rate: float = 0.001
     force_recreate: bool = False
     inflation_rate: float = 0.1
     reward_type: str = "dsr"
     reward_lookback: int = 20
-    ppo_minibatch_size: int
+    
 
 def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
     # dataset paths
