@@ -1382,10 +1382,22 @@ class PPOTrainer:
                     # Delete intermediate lists
                     del batch_obs, batch_act, batch_rew
                     
-                    # Train VAE
+                    # Extract priors from trajectories
+                    # Use prior from first trajectory in batch (they're all from same task)
+                    prior_mu = all_transitions["prior_mu"][0].to(self.device).unsqueeze(0)  # [1, latent_dim]
+                    prior_logvar = all_transitions["prior_logvar"][0].to(self.device).unsqueeze(0)
+
+                    # Expand to batch size for VAE loss computation
+                    prior_mu = prior_mu.expand(obs_batch.shape[0], -1)  # [batch, latent_dim]
+                    prior_logvar = prior_logvar.expand(obs_batch.shape[0], -1)
+
+                    # Train VAE with recursive prior
                     vae_loss, vae_info = self.vae.compute_loss(
-                        obs_batch, act_batch, rew_batch, beta=self.config.vae_beta,
-                        num_elbo_terms=getattr(self.config, 'vae_num_elbo_terms', 8)
+                        obs_batch, act_batch, rew_batch, 
+                        beta=self.config.vae_beta,
+                        num_elbo_terms=getattr(self.config, 'vae_num_elbo_terms', 8),
+                        prior_mu=prior_mu,
+                        prior_logvar=prior_logvar
                     )
                     
                     logger.info(f"  Loss breakdown:")
