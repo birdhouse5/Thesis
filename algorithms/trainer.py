@@ -667,6 +667,7 @@ class PPOTrainer:
         # === Mini-batch setup ===
         batch_size = min(self.config.ppo_minibatch_size, len(obs))  # Don't exceed trajectory length
         num_samples = len(obs)
+        logger.info(f"PPO update: trajectory size={len(obs)}, mini-batch={batch_size}")
         
         # === Initialize tracking ===
         first_epoch_metrics = {}
