@@ -103,12 +103,6 @@ class PPOTrainer:
 
         # Track VAE enablement
         self.vae_enabled = (vae is not None) and (not getattr(config, "disable_vae", False))
-        logger.info(f"=== Trainer Initialization ===")
-        logger.info(f"  vae object: {vae is not None}")
-        logger.info(f"  disable_vae flag: {getattr(config, 'disable_vae', False)}")
-        logger.info(f"  vae_enabled: {self.vae_enabled}")
-        logger.info(f"  vae_update_freq: {config.vae_update_freq}")
-        logger.info(f"  vae_buffer maxlen: {self.vae_buffer.maxlen}")
 
         # Optimizer: include VAE params only if enabled/present
         param_groups = [
@@ -120,6 +114,13 @@ class PPOTrainer:
         # Experience buffers
         self.experience_buffer = ExperienceBuffer(config.batch_size)  # for PPO
         self.vae_buffer = deque(maxlen=10)  # TODO recent trajectories for VAE
+
+        logger.info(f"=== Trainer Initialization ===")
+        logger.info(f"  vae object: {vae is not None}")
+        logger.info(f"  disable_vae flag: {getattr(config, 'disable_vae', False)}")
+        logger.info(f"  vae_enabled: {self.vae_enabled}")
+        logger.info(f"  vae_update_freq: {config.vae_update_freq}")
+        logger.info(f"  vae_buffer maxlen: {self.vae_buffer}")
 
         # Rolling stats (store Python floats to avoid CUDA logging issues)
         self.policy_losses = deque(maxlen=100)
