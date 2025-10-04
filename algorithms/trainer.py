@@ -360,6 +360,7 @@ class PPOTrainer:
     #     except Exception as e:
     #         logger.warning(f"VAE encoding failed: {e}, using zero latent")
     #         return torch.zeros(1, self.config.latent_dim, device=self.device)
+    
     def train_on_task(self) -> Dict[str, float]:
         """Train over multiple episodes on same task (BAMDP) - MEMORY OPTIMIZED"""
         
@@ -386,7 +387,9 @@ class PPOTrainer:
             "log_probs": [],
             "latents": [],
             "dones": [],
-            "episode_boundaries": []
+            "episode_boundaries": [],
+            "prior_mu": [],
+            "prior_logvar": []
         }
         
         episode_rewards = []
@@ -409,9 +412,13 @@ class PPOTrainer:
             current_total = sum(len(t) for t in all_transitions["observations"])
             all_transitions["episode_boundaries"].append(current_total + traj_length - 1)
             
+            # Store priors (one per trajectory/episode)
+            all_transitions["prior_mu"].append(trajectory["prior_mu"])
+            all_transitions["prior_logvar"].append(trajectory["prior_logvar"])
+            
             # Accumulate transitions (keep on GPU for now)
             for key in all_transitions.keys():
-                if key in trajectory:
+                if key in trajectory and key not in ["prior_mu", "prior_logvar"]:
                     all_transitions[key].append(trajectory[key])
             
             # Update context (move to CPU immediately)
@@ -427,7 +434,7 @@ class PPOTrainer:
         
         # Stack accumulated transitions from all episodes
         for key in all_transitions.keys():
-            if key != "episode_boundaries":  # Don't stack this - keep as list
+            if key not in ["episode_boundaries", "prior_mu", "prior_logvar"]:
                 all_transitions[key] = torch.cat(all_transitions[key], dim=0)
         
         episode_boundaries = all_transitions["episode_boundaries"]
@@ -489,7 +496,6 @@ class PPOTrainer:
         log_memory("After aggressive cleanup")
         return results
 
-
     def collect_trajectory_with_context_v2(self, context_obs, context_act, context_rew):
         """
         Collect trajectory with MINIMAL context usage.
@@ -501,6 +507,29 @@ class PPOTrainer:
         
         max_horizon = int(self.config.max_horizon)
         obs_shape = tuple(obs0.shape)
+        
+        # Compute prior from existing context
+        if len(context_obs) == 0 or getattr(self.config, "disable_vae", False) or self.vae is None:
+            # First episode of task or no VAE - use N(0,I)
+            prior_mu = torch.zeros(1, self.config.latent_dim, device=self.device)
+            prior_logvar = torch.zeros(1, self.config.latent_dim, device=self.device)
+        else:
+            # Encode existing context to get prior
+            with torch.no_grad():
+                obs_seq = torch.stack(context_obs).to(self.device).unsqueeze(0)
+                act_seq = torch.stack(context_act).to(self.device).unsqueeze(0)
+                rew_seq = torch.stack(context_rew).to(self.device).unsqueeze(0).unsqueeze(-1)
+                
+                try:
+                    prior_mu, prior_logvar, _ = self.vae.encode(obs_seq, act_seq, rew_seq)
+                    prior_mu = prior_mu.detach()
+                    prior_logvar = prior_logvar.detach()
+                except Exception as e:
+                    logger.warning(f"Prior computation failed: {e}, using N(0,I)")
+                    prior_mu = torch.zeros(1, self.config.latent_dim, device=self.device)
+                    prior_logvar = torch.zeros(1, self.config.latent_dim, device=self.device)
+                finally:
+                    del obs_seq, act_seq, rew_seq
         
         # Preallocate
         observations = torch.zeros((max_horizon,) + obs_shape, dtype=torch.float32, device=self.device)
@@ -551,8 +580,9 @@ class PPOTrainer:
             "log_probs": log_probs[:T],
             "latents": latents[:T],
             "dones": dones[:T],
+            "prior_mu": prior_mu.cpu(),
+            "prior_logvar": prior_logvar.cpu(),
         }
-
 
     def _get_latent_from_context_v2(self, obs_tensor, context_obs, context_act, context_rew):
         """Get latent with EXPLICIT tensor lifecycle management."""
