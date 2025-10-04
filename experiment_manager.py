@@ -31,9 +31,10 @@ class ExperimentManager:
         # Create hierarchical checkpoint directory based on experiments
         if experiments:
             first_exp = experiments[0]
+            exp_name = first_exp.exp_name or f"{first_exp.asset_class}_{first_exp.encoder}_study"
             encoder = first_exp.encoder
             asset_class = first_exp.asset_class
-            self.checkpoint_dir = Path(encoder) / asset_class / "experiment_checkpoints"
+            self.checkpoint_dir = Path(exp_name) / encoder / asset_class / "experiment_checkpoints"
         else:
             self.checkpoint_dir = Path(checkpoint_dir)
         
