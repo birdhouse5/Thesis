@@ -667,6 +667,7 @@ class PPOTrainer:
 
         # === Track first epoch for logging ===
         first_epoch_metrics = {}
+        ratio = None
 
         # === MULTI-EPOCH PPO UPDATE ===
         for epoch in range(self.config.ppo_epochs):
@@ -740,7 +741,7 @@ class PPOTrainer:
                 logger.warning(f"VAE update failed: {e}")
 
         first_epoch_metrics["vae_loss"] = vae_loss_val
-        first_epoch_metrics["ratio_mean"] = float(ratio.mean().item())  # Final epoch ratio
+        first_epoch_metrics["ratio_mean"] = float(ratio.mean().item()) if ratio is not None else 1.0
 
         return ppo_loss, first_epoch_metrics
 
