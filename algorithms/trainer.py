@@ -113,7 +113,7 @@ class PPOTrainer:
         self.optimizer = Adam(param_groups)
         # Experience buffers
         self.experience_buffer = ExperienceBuffer(config.batch_size)  # for PPO
-        self.vae_buffer = deque(maxlen=100)  # TODO recent trajectories for VAE
+        self.vae_buffer = deque(maxlen=1000)  # TODO recent trajectories for VAE
 
         # Rolling stats (store Python floats to avoid CUDA logging issues)
         self.policy_losses = deque(maxlen=100)
@@ -552,7 +552,7 @@ class PPOTrainer:
             return torch.zeros(1, self.config.latent_dim, device=self.device)
         
         # Limit context window (CRITICAL for memory)
-        max_context_len = 100  # Reduced from 200
+        max_context_len = 200  # Reduced from 200
         start_idx = max(0, len(context_obs) - max_context_len)
         
         # Create GPU tensors ONLY for encoding, then DELETE immediately
