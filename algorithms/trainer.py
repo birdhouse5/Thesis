@@ -628,7 +628,7 @@ class PPOTrainer:
 
     def update_ppo_and_vae(self, traj):
         """
-        PPO with multiple epochs + separate VAE update.
+        PPO with mini-batching + separate VAE update.
         """
         def ensure_stacked(x):
             if isinstance(x, torch.Tensor):
@@ -646,7 +646,7 @@ class PPOTrainer:
         values = ensure_stacked(traj["values"])
         old_logp = ensure_stacked(traj["log_probs"])
 
-        # === DETACH ALL INPUTS (prevents graph reuse across epochs) ===
+        # === DETACH ALL INPUTS ===
         obs = obs.detach()
         actions = actions.detach()
         latents = latents.detach()
@@ -659,69 +659,88 @@ class PPOTrainer:
         if isinstance(last_value, torch.Tensor):
             last_value = last_value.detach().to(self.device)
 
-        # === Compute advantages once (reused across epochs) ===
+        # === Compute advantages once ===
         advantages, returns = self.compute_gae(rewards, values, dones, last_value)
         advantages = advantages.detach()
         returns = returns.detach()
 
-        # === Initialize tracking variables BEFORE loop ===
+        # === Mini-batch setup ===
+        batch_size = min(self.config.ppo_minibatch_size, len(obs))  # Don't exceed trajectory length
+        num_samples = len(obs)
+        
+        # === Initialize tracking ===
         first_epoch_metrics = {}
         final_ratio_mean = 1.0
-        final_ppo_loss = torch.tensor(0.0, device=self.device)  # Default dummy tensor
+        final_ppo_loss = torch.tensor(0.0, device=self.device)
 
-        # === MULTI-EPOCH PPO UPDATE ===
+        # === MULTI-EPOCH MINI-BATCH PPO UPDATE ===
         for epoch in range(self.config.ppo_epochs):
-            # Re-evaluate with current policy
-            new_values, new_logp, entropy = self.policy.evaluate_actions(obs, latents, actions)
-            new_values = new_values.squeeze(-1)
-            new_logp = new_logp.squeeze(-1)
-            entropy = entropy.squeeze(-1)
+            # Shuffle indices
+            indices = torch.randperm(num_samples, device=self.device)
+            
+            # Process mini-batches
+            for start_idx in range(0, num_samples, batch_size):
+                end_idx = min(start_idx + batch_size, num_samples)
+                batch_indices = indices[start_idx:end_idx]
+                
+                # Extract mini-batch
+                batch_obs = obs[batch_indices]
+                batch_actions = actions[batch_indices]
+                batch_latents = latents[batch_indices]
+                batch_old_logp = old_logp[batch_indices]
+                batch_advantages = advantages[batch_indices]
+                batch_returns = returns[batch_indices]
+                
+                # Forward pass
+                new_values, new_logp, entropy = self.policy.evaluate_actions(
+                    batch_obs, batch_latents, batch_actions
+                )
+                new_values = new_values.squeeze(-1)
+                new_logp = new_logp.squeeze(-1)
+                entropy = entropy.squeeze(-1)
 
-            # PPO ratio (changes each epoch!)
-            ratio = torch.exp(new_logp - old_logp)
+                # PPO losses
+                ratio = torch.exp(new_logp - batch_old_logp)
+                eps = self.config.ppo_clip_ratio
+                surr1 = ratio * batch_advantages
+                surr2 = torch.clamp(ratio, 1.0 - eps, 1.0 + eps) * batch_advantages
+                policy_loss = -torch.min(surr1, surr2).mean()
+                value_loss = F.mse_loss(new_values, batch_returns)
+                entropy_loss = -entropy.mean()
 
-            # Clipped surrogate
-            eps = self.config.ppo_clip_ratio
-            surr1 = ratio * advantages
-            surr2 = torch.clamp(ratio, 1.0 - eps, 1.0 + eps) * advantages
-            policy_loss = -torch.min(surr1, surr2).mean()
+                ppo_loss = (policy_loss + 
+                            self.config.value_loss_coef * value_loss + 
+                            self.config.entropy_coef * entropy_loss)
 
-            # Value loss
-            value_loss = F.mse_loss(new_values, returns)
+                # Capture first batch of first epoch metrics
+                if epoch == 0 and start_idx == 0:
+                    first_epoch_metrics = {
+                        "policy_loss": float(policy_loss.item()),
+                        "value_loss": float(value_loss.item()),
+                        "entropy": float(entropy.mean().item()),
+                        "advantages_mean": float(batch_advantages.mean().item()),
+                    }
 
-            # Entropy
-            entropy_loss = -entropy.mean()
+                final_ratio_mean = float(ratio.mean().item())
+                final_ppo_loss = ppo_loss.detach()
 
-            # Combined
-            ppo_loss = (policy_loss + 
-                        self.config.value_loss_coef * value_loss + 
-                        self.config.entropy_coef * entropy_loss)
+                # Update
+                self.optimizer.zero_grad()
+                ppo_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
+                self.optimizer.step()
 
-            # Capture first epoch metrics
-            if epoch == 0:
-                first_epoch_metrics = {
-                    "policy_loss": float(policy_loss.item()),
-                    "value_loss": float(value_loss.item()),
-                    "entropy": float(entropy.mean().item()),
-                    "advantages_mean": float(advantages.mean().item()),
-                }
+                # Cleanup mini-batch
+                del new_values, new_logp, entropy, surr1, surr2, ratio
+                del policy_loss, value_loss, entropy_loss, ppo_loss
+                del batch_obs, batch_actions, batch_latents, batch_old_logp
+                del batch_advantages, batch_returns
 
-            # SAVE values BEFORE updating and deleting
-            final_ratio_mean = float(ratio.mean().item())
-            final_ppo_loss = ppo_loss.detach()  # Detach to break grad graph but keep value
-
-            # Update policy
-            self.optimizer.zero_grad()
-            ppo_loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
-            self.optimizer.step()
-
-            # Free intermediate tensors (NOT ppo_loss, we saved it as final_ppo_loss)
-            del new_values, new_logp, entropy, surr1, surr2, ratio, policy_loss, value_loss, entropy_loss, ppo_loss
+            # Cleanup after each epoch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-        # === VAE update (once, after all PPO epochs) ===
+        # === VAE update (full trajectory) ===
         vae_loss_val = 0.0
         if self.vae_enabled and (self.episode_count % self.config.vae_update_freq == 0):
             obs_seq = obs.unsqueeze(0)
@@ -750,14 +769,15 @@ class PPOTrainer:
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
+        # === Final cleanup ===
+        del obs, actions, latents, rewards, dones, values, old_logp, advantages, returns
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         # === Build final metrics ===
         first_epoch_metrics["vae_loss"] = vae_loss_val
         first_epoch_metrics["ratio_mean"] = final_ratio_mean
 
-        del obs, actions, latents, rewards, dones, values, old_logp, advantages, returns
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            
         return final_ppo_loss, first_epoch_metrics
     
     def compute_advantages(self, trajectory):
