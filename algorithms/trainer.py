@@ -360,7 +360,7 @@ class PPOTrainer:
     #     except Exception as e:
     #         logger.warning(f"VAE encoding failed: {e}, using zero latent")
     #         return torch.zeros(1, self.config.latent_dim, device=self.device)
-    
+
     def train_on_task(self) -> Dict[str, float]:
         """Train over multiple episodes on same task (BAMDP) - MEMORY OPTIMIZED"""
         
@@ -1368,7 +1368,8 @@ class PPOTrainer:
                     
                     # Train VAE
                     vae_loss, vae_info = self.vae.compute_loss(
-                        obs_batch, act_batch, rew_batch, beta=self.config.vae_beta
+                        obs_batch, act_batch, rew_batch, beta=self.config.vae_beta,
+                        num_elbo_terms=getattr(self.config, 'vae_num_elbo_terms', 8)
                     )
                     
                     self.optimizer.zero_grad()
