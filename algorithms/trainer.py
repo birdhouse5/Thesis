@@ -743,12 +743,21 @@ class PPOTrainer:
 
             except Exception as e:
                 logger.warning(f"VAE update failed: {e}")
+            finally:
+                del obs_seq, act_seq, rew_seq
+                if 'vae_loss' in locals():
+                    del vae_loss
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
         # === Build final metrics ===
         first_epoch_metrics["vae_loss"] = vae_loss_val
         first_epoch_metrics["ratio_mean"] = final_ratio_mean
 
-        # Return saved loss (exists even if loop body executed or not)
+        del obs, actions, latents, rewards, dones, values, old_logp, advantages, returns
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
         return final_ppo_loss, first_epoch_metrics
     
     def compute_advantages(self, trajectory):
