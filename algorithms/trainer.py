@@ -1,5 +1,5 @@
 # trainer.py - Optimized with fixed-length trajectory batching
-
+import gc
 from collections import deque
 from datetime import datetime
 from typing import Dict, List
@@ -345,7 +345,7 @@ class PPOTrainer:
         Train over multiple episodes on same task (BAMDP).
         Context persists across episodes to enable belief refinement.
         """
-        import gc
+        
         log_memory("Task start")
         
         # Sample task once
@@ -401,7 +401,11 @@ class PPOTrainer:
                     all_transitions[key].append(trajectory[key])
             
             # Add to VAE buffer
-            self.vae_buffer.append(trajectory)
+            trajectory_cpu = {
+                k: v.cpu() if torch.is_tensor(v) else v 
+                for k, v in trajectory.items()
+            }
+            self.vae_buffer.append(trajectory_cpu)
             del trajectory
 
         # Stack accumulated transitions
@@ -985,9 +989,13 @@ class PPOTrainer:
                 try:
                     # Sample mini-batch from buffer
                     indices = np.random.choice(len(self.vae_buffer), vae_batch_size, replace=False)
-                    
-                    # Collect trajectories and find max length for padding
-                    sampled_trajs = [self.vae_buffer[idx] for idx in indices]
+            
+                    # Collect trajectories (move from CPU to GPU) and find max length for padding
+                    sampled_trajs = [
+                        {k: v.to(self.device) if torch.is_tensor(v) else v 
+                        for k, v in self.vae_buffer[idx].items()}
+                        for idx in indices
+                    ]
                     max_len = max(traj["observations"].shape[0] for traj in sampled_trajs)
                     
                     # Pad and stack trajectories
