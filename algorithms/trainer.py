@@ -647,6 +647,15 @@ class PPOTrainer:
         values = ensure_stacked(traj["values"])
         old_logp = ensure_stacked(traj["log_probs"])
 
+        # === DETACH ALL INPUTS (prevents graph reuse across epochs) ===
+        obs = obs.detach()
+        actions = actions.detach()
+        latents = latents.detach()
+        rewards = rewards.detach()
+        dones = dones.detach()
+        values = values.detach()
+        old_logp = old_logp.detach()
+
         last_value = traj.get("last_value", 0.0)
         if isinstance(last_value, torch.Tensor):
             last_value = last_value.to(self.device)
