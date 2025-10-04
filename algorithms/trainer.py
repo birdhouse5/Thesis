@@ -629,119 +629,106 @@ class PPOTrainer:
 
     def update_ppo_and_vae(self, traj):
         """
-        PPO clipped surrogate objective + value loss + entropy bonus,
-        with optional joint VAE update.
+        PPO with multiple epochs + separate VAE update.
         """
         def ensure_stacked(x):
             if isinstance(x, torch.Tensor):
                 return x.to(self.device)
             return torch.stack(x).to(self.device)
 
-
-        obs = ensure_stacked(traj["observations"])            # (T, ... )
-        actions = ensure_stacked(traj["actions"])             # (T, N)
-        latents = ensure_stacked(traj["latents"])             # (T, Z)
+        # === Prepare data ===
+        obs = ensure_stacked(traj["observations"])
+        actions = ensure_stacked(traj["actions"])
+        latents = ensure_stacked(traj["latents"])
         rewards = traj["rewards"] if isinstance(traj["rewards"], torch.Tensor) \
             else torch.as_tensor(traj["rewards"], dtype=torch.float32, device=self.device)
         dones = traj["dones"] if isinstance(traj["dones"], torch.Tensor) \
             else torch.as_tensor(traj["dones"], dtype=torch.float32, device=self.device)
-        values = ensure_stacked(traj["values"])               # (T,)
-        old_logp = ensure_stacked(traj["log_probs"])          # (T,)
+        values = ensure_stacked(traj["values"])
+        old_logp = ensure_stacked(traj["log_probs"])
 
-        # Bootstrap value if present
         last_value = traj.get("last_value", 0.0)
         if isinstance(last_value, torch.Tensor):
             last_value = last_value.to(self.device)
 
-        # Initialize first epoch tracking
-        first_epoch_policy_loss = None
-        first_epoch_value_loss = None  
-        first_epoch_entropy = None
-
-        # Compute GAE
+        # === Compute advantages once (reused across epochs) ===
         advantages, returns = self.compute_gae(rewards, values, dones, last_value)
+        advantages = advantages.detach()
+        returns = returns.detach()
 
-        # Evaluate current policy
-        new_values, new_logp, entropy = self.policy.evaluate_actions(obs, latents, actions)
-        new_values = new_values.squeeze(-1)
-        new_logp = new_logp.squeeze(-1)
-        entropy = entropy.squeeze(-1)
+        # === Track first epoch for logging ===
+        first_epoch_metrics = {}
 
-        # PPO probability ratio
-        ratio = torch.exp(new_logp - old_logp)
+        # === MULTI-EPOCH PPO UPDATE ===
+        for epoch in range(self.config.ppo_epochs):
+            # Re-evaluate with current policy
+            new_values, new_logp, entropy = self.policy.evaluate_actions(obs, latents, actions)
+            new_values = new_values.squeeze(-1)
+            new_logp = new_logp.squeeze(-1)
+            entropy = entropy.squeeze(-1)
 
-        # Clipped surrogate objective
-        eps = self.config.ppo_clip_ratio
-        surr1 = ratio * advantages
-        surr2 = torch.clamp(ratio, 1.0 - eps, 1.0 + eps) * advantages
-        policy_loss = -torch.min(surr1, surr2).mean()
+            # PPO ratio (changes each epoch!)
+            ratio = torch.exp(new_logp - old_logp)
 
-        # Value loss
-        value_loss = F.mse_loss(new_values, returns) * self.config.value_loss_coef
+            # Clipped surrogate
+            eps = self.config.ppo_clip_ratio
+            surr1 = ratio * advantages
+            surr2 = torch.clamp(ratio, 1.0 - eps, 1.0 + eps) * advantages
+            policy_loss = -torch.min(surr1, surr2).mean()
 
-        # Entropy bonus
-        entropy_loss = -self.config.entropy_coef * entropy.mean()
+            # Value loss
+            value_loss = F.mse_loss(new_values, returns)
 
-        # === CAPTURE FIRST EPOCH VALUES (before optimization) ===
-        if first_epoch_policy_loss is None:
-            first_epoch_policy_loss = float(policy_loss.item())
-            first_epoch_value_loss = float(value_loss.item() / self.config.value_loss_coef)  # unscaled
-            first_epoch_entropy = float(entropy.mean().item())
+            # Entropy
+            entropy_loss = -entropy.mean()
 
+            # Combined
+            ppo_loss = (policy_loss + 
+                        self.config.value_loss_coef * value_loss + 
+                        self.config.entropy_coef * entropy_loss)
 
-        # --- Base PPO loss ---
-        total_loss = policy_loss + value_loss + entropy_loss
-        
-        if self.config.encoder in ["none", "hmm"]:
-            action_norm = actions.abs().mean()
-            action_penalty = 0.01 * action_norm  # Penalize large actions
-            total_loss = policy_loss + value_loss + entropy_loss + action_penalty
+            # Capture first epoch
+            if epoch == 0:
+                first_epoch_metrics = {
+                    "policy_loss": float(policy_loss.item()),
+                    "value_loss": float(value_loss.item()),
+                    "entropy": float(entropy.mean().item()),
+                    "advantages_mean": float(advantages.mean().item()),
+                }
 
-        update_info = {
-            "policy_loss": first_epoch_policy_loss,
-            "value_loss": first_epoch_value_loss,
-            "entropy": first_epoch_entropy,
-            "advantages_mean": float(advantages.mean().item()),
-            "ratio_mean": float(ratio.mean().item()),
-        }
+            # Update policy only
+            self.optimizer.zero_grad()
+            ppo_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
+            self.optimizer.step()
 
-
-        # --- VAE update (every vae_update_freq episodes) ---
+        # === VAE update (once, after all PPO epochs) ===
+        vae_loss_val = 0.0
         if self.vae_enabled and (self.episode_count % self.config.vae_update_freq == 0):
-            obs_seq = obs.unsqueeze(0)        # (1, T, N, F)
-            act_seq = actions.unsqueeze(0)    # (1, T, N)
-            rew_seq = rewards.unsqueeze(0).unsqueeze(-1)  # (1, T, 1)
+            obs_seq = obs.unsqueeze(0)
+            act_seq = actions.unsqueeze(0)
+            rew_seq = rewards.unsqueeze(0).unsqueeze(-1)
 
             try:
                 vae_loss, vae_info = self.vae.compute_loss(
                     obs_seq, act_seq, rew_seq, beta=self.config.vae_beta
                 )
 
-                # Joint optimization
-                joint_loss = total_loss + self.config.joint_loss_lambda * vae_loss
                 self.optimizer.zero_grad()
-                joint_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
+                vae_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
                 self.optimizer.step()
 
-                update_info["vae_loss"] = float(vae_loss.item())
-                for k, v in vae_info.items():
-                    update_info[f"vae_{k}"] = v
-
-                return joint_loss, update_info
+                vae_loss_val = float(vae_loss.item())
+                first_epoch_metrics.update({f"vae_{k}": v for k, v in vae_info.items()})
 
             except Exception as e:
-                print(f"[Warning] VAE update failed: {e}")
+                logger.warning(f"VAE update failed: {e}")
 
-        # --- PPO-only update ---
-        self.optimizer.zero_grad()
-        total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
-        self.optimizer.step()
+        first_epoch_metrics["vae_loss"] = vae_loss_val
+        first_epoch_metrics["ratio_mean"] = float(ratio.mean().item())  # Final epoch ratio
 
-        #update_info["vae_loss"] = 0.0 #TODO
-        return total_loss, update_info
+        return ppo_loss, first_epoch_metrics
 
     
     def compute_advantages(self, trajectory):
