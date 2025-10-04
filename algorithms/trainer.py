@@ -414,6 +414,9 @@ class PPOTrainer:
             episode_reward = float(trajectory["rewards"].sum().item())
             episode_rewards.append(episode_reward)
 
+            self.vae_buffer.append(trajectory)  # Store for VAE training
+            logger.debug(f"  Added trajectory to VAE buffer (size: {len(self.vae_buffer)})")
+
             # NEW: Track where this episode ends in the accumulated trajectory
             traj_length = len(trajectory["observations"])
             current_total = sum(len(t) for t in all_transitions["observations"])
