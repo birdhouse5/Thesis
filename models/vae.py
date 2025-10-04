@@ -281,7 +281,7 @@ class VAE(nn.Module):
         return total_loss, {
             "total": total_loss.item(),
             "recon_obs": avg_recon_obs.item(),
-            "recon_reward": avg_recon_reward_loss.item(),
+            "recon_reward": avg_recon_reward.item(),
             "kl": avg_kl.item(),
             "num_elbo_terms": num_terms,
             "timesteps_sampled": timesteps,
