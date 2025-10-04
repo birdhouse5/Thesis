@@ -974,34 +974,75 @@ class PPOTrainer:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-        # === VAE update (full trajectory) ===
+        # === VAE update (sample from buffer) ===
         vae_loss_val = 0.0
         if self.vae_enabled and (self.episode_count % self.config.vae_update_freq == 0):
-            obs_seq = obs.unsqueeze(0)
-            act_seq = actions.unsqueeze(0)
-            rew_seq = rewards.unsqueeze(0).unsqueeze(-1)
+            # Minimum buffer size before training
+            min_buffer_size = 8
+            vae_batch_size = min(32, len(self.vae_buffer))
+            
+            if len(self.vae_buffer) >= min_buffer_size:
+                try:
+                    # Sample mini-batch from buffer
+                    indices = np.random.choice(len(self.vae_buffer), vae_batch_size, replace=False)
+                    
+                    # Collect trajectories and find max length for padding
+                    sampled_trajs = [self.vae_buffer[idx] for idx in indices]
+                    max_len = max(traj["observations"].shape[0] for traj in sampled_trajs)
+                    
+                    # Pad and stack trajectories
+                    batch_obs, batch_act, batch_rew = [], [], []
+                    for traj in sampled_trajs:
+                        T = traj["observations"].shape[0]
+                        
+                        # Pad observations
+                        obs_padded = torch.zeros((max_len,) + traj["observations"].shape[1:], 
+                                                dtype=torch.float32, device=self.device)
+                        obs_padded[:T] = traj["observations"]
+                        batch_obs.append(obs_padded)
+                        
+                        # Pad actions
+                        act_padded = torch.zeros((max_len,) + traj["actions"].shape[1:],
+                                                dtype=torch.float32, device=self.device)
+                        act_padded[:T] = traj["actions"]
+                        batch_act.append(act_padded)
+                        
+                        # Pad rewards
+                        rew_padded = torch.zeros(max_len, dtype=torch.float32, device=self.device)
+                        rew_padded[:T] = traj["rewards"]
+                        batch_rew.append(rew_padded)
+                    
+                    # Stack into batches
+                    obs_batch = torch.stack(batch_obs)  # (batch, max_len, N, F)
+                    act_batch = torch.stack(batch_act)  # (batch, max_len, N)
+                    rew_batch = torch.stack(batch_rew).unsqueeze(-1)  # (batch, max_len, 1)
+                    
+                    # Train VAE on batch
+                    vae_loss, vae_info = self.vae.compute_loss(
+                        obs_batch, act_batch, rew_batch, beta=self.config.vae_beta
+                    )
 
-            try:
-                vae_loss, vae_info = self.vae.compute_loss(
-                    obs_seq, act_seq, rew_seq, beta=self.config.vae_beta
-                )
+                    self.optimizer.zero_grad()
+                    vae_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
+                    self.optimizer.step()
 
-                self.optimizer.zero_grad()
-                vae_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
-                self.optimizer.step()
+                    vae_loss_val = float(vae_loss.item())
+                    first_epoch_metrics.update({f"vae_{k}": v for k, v in vae_info.items()})
 
-                vae_loss_val = float(vae_loss.item())
-                first_epoch_metrics.update({f"vae_{k}": v for k, v in vae_info.items()})
-
-            except Exception as e:
-                logger.warning(f"VAE update failed: {e}")
-            finally:
-                del obs_seq, act_seq, rew_seq
-                if 'vae_loss' in locals():
-                    del vae_loss
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                except Exception as e:
+                    logger.warning(f"VAE update failed: {e}")
+                finally:
+                    # Cleanup
+                    if 'obs_batch' in locals():
+                        del obs_batch, act_batch, rew_batch
+                    if 'vae_loss' in locals():
+                        del vae_loss
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+            else:
+                # Not enough data in buffer yet - skip VAE update
+                logger.debug(f"VAE buffer has {len(self.vae_buffer)} trajectories, need {min_buffer_size}")
 
         # === Final cleanup ===
         del obs, actions, latents, rewards, dones, values, old_logp, advantages, returns
