@@ -113,7 +113,7 @@ class PPOTrainer:
         self.optimizer = Adam(param_groups)
         # Experience buffers
         self.experience_buffer = ExperienceBuffer(config.batch_size)  # for PPO
-        self.vae_buffer = deque(maxlen=10)  # TODO recent trajectories for VAE
+        self.vae_buffer = deque(maxlen=1000)  # TODO recent trajectories for VAE
 
         logger.info(f"=== Trainer Initialization ===")
         logger.info(f"  vae object: {vae is not None}")
