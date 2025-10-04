@@ -120,6 +120,7 @@ class PPOTrainer:
         Train over multiple episodes on same task (BAMDP).
         Context persists across episodes to enable belief refinement.
         """
+        import gc
         log_memory("Task start")
         # Sample task once
         task = self.env.sample_task()
@@ -185,6 +186,8 @@ class PPOTrainer:
             
             # Add to episode trajectory buffer for VAE
             self.vae_buffer.append(trajectory)
+            # 🔥 NEW: Delete trajectory after copying to all_transitions
+            del trajectory
 
         # Stack accumulated transitions from all episodes
         for key in all_transitions.keys():
@@ -197,6 +200,14 @@ class PPOTrainer:
         log_memory("Before update")
         total_loss, update_info = self.update_ppo_and_vae(all_transitions)
         log_memory("After update")
+        # 🔥 NEW: Aggressive cleanup
+        del all_transitions
+        del persistent_context
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()  # Wait for all ops to complete
+            torch.cuda.empty_cache()
+        gc.collect()
+        log_memory("After aggressive cleanup")
         
         # Aggregate metrics
         final_capital = self.env.current_capital
