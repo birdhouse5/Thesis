@@ -485,7 +485,7 @@ class PPOTrainer:
             ) / 1024**3
             logger.info(f"Optimizer state: {optimizer_params:.2f}GB, tracking {len(self.optimizer.state)} param groups")
         diagnose_gpu_tensors()
-        
+
         return results
 
 
@@ -996,6 +996,12 @@ class PPOTrainer:
                 ppo_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
                 self.optimizer.step()
+
+                # for param in self.policy.parameters():
+                #     if param.grad is not None:
+                #         param.grad.detach_()
+                #         param.grad.zero_()
+                self.optimizer.zero_grad(set_to_none=True)
 
                 # Cleanup mini-batch
                 del new_values, new_logp, entropy, surr1, surr2, ratio
