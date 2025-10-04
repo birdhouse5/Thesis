@@ -367,6 +367,10 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
 
         # Create models
         encoder, policy = create_models(cfg, obs_shape)
+        logger.info(f"=== Models Created ===")
+        logger.info(f"  Encoder type: {type(encoder).__name__ if encoder else 'None'}")
+        logger.info(f"  Config encoder: {cfg.encoder}")
+        logger.info(f"  Config disable_vae: {cfg.disable_vae}")
 
         # Create trainer
         trainer = PPOTrainer(env=train_env, policy=policy, vae=encoder, config=cfg)

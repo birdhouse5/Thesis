@@ -103,6 +103,12 @@ class PPOTrainer:
 
         # Track VAE enablement
         self.vae_enabled = (vae is not None) and (not getattr(config, "disable_vae", False))
+        logger.info(f"=== Trainer Initialization ===")
+        logger.info(f"  vae object: {vae is not None}")
+        logger.info(f"  disable_vae flag: {getattr(config, 'disable_vae', False)}")
+        logger.info(f"  vae_enabled: {self.vae_enabled}")
+        logger.info(f"  vae_update_freq: {config.vae_update_freq}")
+        logger.info(f"  vae_buffer maxlen: {self.vae_buffer.maxlen}")
 
         # Optimizer: include VAE params only if enabled/present
         param_groups = [
@@ -727,6 +733,7 @@ class PPOTrainer:
         with diag.time_section("collect_single_trajectory"):
             tr = self.collect_trajectory()
             self.vae_buffer.append(tr)
+            logger.debug(f"  Added trajectory to VAE buffer (size now: {len(self.vae_buffer)})")
             self.experience_buffer.add_trajectory(tr)
 
         # Aggregate reward for episode
@@ -1322,9 +1329,12 @@ class PPOTrainer:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         
+        if self.vae_enabled:
+            logger.debug(f"VAE enabled, checking update condition: episode_count={self.episode_count}, vae_update_freq={self.config.vae_update_freq}, modulo={self.episode_count % self.config.vae_update_freq}")
         # VAE UPDATE with aggressive cleanup
         vae_loss_val = 0.0
         if self.vae_enabled and (self.episode_count % self.config.vae_update_freq == 0):
+            logger.info(f"=== VAE Update Triggered (Episode {self.episode_count}) ===")
             min_buffer_size = 8
             vae_batch_size = min(16, len(self.vae_buffer))  # Reduced from 32
             
@@ -1401,7 +1411,10 @@ class PPOTrainer:
                 finally:
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
-        
+        else:
+            if self.vae_enabled:
+                logger.debug(f"VAE update skipped (episode {self.episode_count} % {self.config.vae_update_freq} = {self.episode_count % self.config.vae_update_freq})")
+
         # Final cleanup
         del obs, actions, latents, rewards, dones, values, old_logp, advantages, returns
         
