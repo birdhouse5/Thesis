@@ -1329,6 +1329,8 @@ class PPOTrainer:
             vae_batch_size = min(16, len(self.vae_buffer))  # Reduced from 32
             
             if len(self.vae_buffer) >= min_buffer_size:
+                logger.info(f"=== VAE Update (Episode {self.episode_count}) ===")
+                logger.info(f"  Buffer size: {len(self.vae_buffer)}, Batch size: {vae_batch_size}")
                 try:
                     indices = np.random.choice(len(self.vae_buffer), vae_batch_size, replace=False)
                     
@@ -1372,11 +1374,22 @@ class PPOTrainer:
                         num_elbo_terms=getattr(self.config, 'vae_num_elbo_terms', 8)
                     )
                     
+                    logger.info(f"  Loss breakdown:")
+                    logger.info(f"    Total: {vae_info['total']:.4f}")
+                    logger.info(f"    Recon obs: {vae_info['recon_obs']:.4f}")
+                    logger.info(f"    Recon reward: {vae_info['recon_reward']:.4f}")
+                    logger.info(f"    KL: {vae_info['kl']:.4f}")
+                    logger.info(f"  Timesteps sampled: {vae_info['num_elbo_terms']} -> {vae_info['timesteps_sampled']}")
+                    
                     self.optimizer.zero_grad()
                     vae_loss.backward()
-                    torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
-                    self.optimizer.step()
+
+                    vae_grad_norm = torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
+                    logger.info(f"  VAE grad norm: {vae_grad_norm:.4f}")
                     
+                    self.optimizer.step()
+                    logger.info(f"  ✓ VAE weights updated") 
+
                     vae_loss_val = float(vae_loss.item())
                     first_epoch_metrics.update({f"vae_{k}": v for k, v in vae_info.items()})
                     
