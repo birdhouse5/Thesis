@@ -626,7 +626,6 @@ class PPOTrainer:
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         return advantages, returns
 
-
     def update_ppo_and_vae(self, traj):
         """
         PPO with multiple epochs + separate VAE update.
@@ -658,16 +657,17 @@ class PPOTrainer:
 
         last_value = traj.get("last_value", 0.0)
         if isinstance(last_value, torch.Tensor):
-            last_value = last_value.to(self.device)
+            last_value = last_value.detach().to(self.device)
 
         # === Compute advantages once (reused across epochs) ===
         advantages, returns = self.compute_gae(rewards, values, dones, last_value)
         advantages = advantages.detach()
         returns = returns.detach()
 
-        # === Track first epoch for logging ===
+        # === Initialize tracking variables BEFORE loop ===
         first_epoch_metrics = {}
         final_ratio_mean = 1.0
+        final_ppo_loss = torch.tensor(0.0, device=self.device)  # Default dummy tensor
 
         # === MULTI-EPOCH PPO UPDATE ===
         for epoch in range(self.config.ppo_epochs):
@@ -697,7 +697,7 @@ class PPOTrainer:
                         self.config.value_loss_coef * value_loss + 
                         self.config.entropy_coef * entropy_loss)
 
-            # Capture first epoch
+            # Capture first epoch metrics
             if epoch == 0:
                 first_epoch_metrics = {
                     "policy_loss": float(policy_loss.item()),
@@ -706,17 +706,18 @@ class PPOTrainer:
                     "advantages_mean": float(advantages.mean().item()),
                 }
 
-            # Save final ratio before deletion
+            # SAVE values BEFORE updating and deleting
             final_ratio_mean = float(ratio.mean().item())
+            final_ppo_loss = ppo_loss.detach()  # Detach to break grad graph but keep value
 
-            # Update policy only
+            # Update policy
             self.optimizer.zero_grad()
             ppo_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
             self.optimizer.step()
 
-            # Free memory after each epoch
-            del new_values, new_logp, entropy, ratio, policy_loss, value_loss, ppo_loss
+            # Free intermediate tensors (NOT ppo_loss, we saved it as final_ppo_loss)
+            del new_values, new_logp, entropy, surr1, surr2, ratio, policy_loss, value_loss, entropy_loss, ppo_loss
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
@@ -743,11 +744,12 @@ class PPOTrainer:
             except Exception as e:
                 logger.warning(f"VAE update failed: {e}")
 
+        # === Build final metrics ===
         first_epoch_metrics["vae_loss"] = vae_loss_val
-        first_epoch_metrics["ratio_mean"] = final_ratio_mean  # Use saved value
+        first_epoch_metrics["ratio_mean"] = final_ratio_mean
 
-        return ppo_loss, first_epoch_metrics
-
+        # Return saved loss (exists even if loop body executed or not)
+        return final_ppo_loss, first_epoch_metrics
     
     def compute_advantages(self, trajectory):
         rewards = trajectory["rewards"]
