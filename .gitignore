@@ -12,6 +12,7 @@ validation_results/
 Optuna_HPO/
 MLFlow_Pipeline/
 viz/
+deprecated/
 
 # python noise
 __pycache__/
