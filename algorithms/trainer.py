@@ -361,10 +361,7 @@ class PPOTrainer:
     #         logger.warning(f"VAE encoding failed: {e}, using zero latent")
     #         return torch.zeros(1, self.config.latent_dim, device=self.device)
     def train_on_task(self) -> Dict[str, float]:
-        """
-        Train over multiple episodes on same task (BAMDP).
-        Context persists across episodes to enable belief refinement.
-        """
+        """Train over multiple episodes on same task (BAMDP) - MEMORY OPTIMIZED"""
         
         log_memory("Task start")
         
@@ -374,12 +371,11 @@ class PPOTrainer:
         self.env.set_task(task)
         self.task_count += 1
         
-        # Initialize context for this task (CPU storage)
-        persistent_context = {
-            "observations": [],
-            "actions": [],
-            "rewards": []
-        }
+        # Initialize context for this task (STORE ONLY INDICES, NOT TENSORS)
+        context_start_step = 0
+        context_obs_list = []  # Will store on CPU
+        context_act_list = []
+        context_rew_list = []
         
         # Accumulate all transitions across episodes
         all_transitions = {
@@ -393,51 +389,46 @@ class PPOTrainer:
         }
         
         episode_rewards = []
-        context_sizes = []
-        latent_norms = []
         
         # Multiple episodes on same task
         for episode_idx in range(self.config.episodes_per_task):
             log_memory(f"Episode {episode_idx} start")
-            trajectory = self.collect_trajectory_with_context(persistent_context)
+            
+            # Collect trajectory with MINIMAL context
+            trajectory = self.collect_trajectory_with_context_v2(
+                context_obs_list, context_act_list, context_rew_list
+            )
             log_memory(f"Episode {episode_idx} collected")
             
-            # Track metrics
             episode_reward = float(trajectory["rewards"].sum().item())
             episode_rewards.append(episode_reward)
             
-            # Context growth tracking
-            context_size_after = len(persistent_context['observations'])
-            context_sizes.append(context_size_after)
-            
-            # Latent belief tracking
-            if len(trajectory["latents"]) > 0:
-                avg_latent_norm = trajectory["latents"].norm(dim=1).mean().item()
-                latent_norms.append(avg_latent_norm)
-            
-            # Accumulate transitions
+            # Accumulate transitions (keep on GPU for now)
             for key in all_transitions.keys():
                 if key in trajectory:
                     all_transitions[key].append(trajectory[key])
             
-            # Add to VAE buffer
-            trajectory_cpu = {
-                k: v.cpu() if torch.is_tensor(v) else v 
-                for k, v in trajectory.items()
-            }
-            self.vae_buffer.append(trajectory_cpu)
+            # Update context (move to CPU immediately)
+            T = len(trajectory["observations"])
+            for t in range(T):
+                context_obs_list.append(trajectory["observations"][t].detach().cpu())
+                context_act_list.append(trajectory["actions"][t].detach().cpu())
+                context_rew_list.append(trajectory["rewards"][t].detach().cpu())
+            
+            # CRITICAL: Delete trajectory immediately after copying
             del trajectory
-
+            torch.cuda.empty_cache()
+        
         # Stack accumulated transitions
         for key in all_transitions.keys():
             all_transitions[key] = torch.cat(all_transitions[key], dim=0)
-
+        
         # Single update on entire BAMDP trajectory
         log_memory("Before update")
         total_loss, update_info = self.update_ppo_and_vae(all_transitions)
         log_memory("After update")
         
-        # Calculate metrics (use all_transitions BEFORE deleting)
+        # Build results BEFORE cleanup
         final_capital = self.env.current_capital
         cumulative_return = final_capital / self.env.initial_capital - 1.0
         total_steps = int(all_transitions["rewards"].shape[0])
@@ -448,46 +439,141 @@ class PPOTrainer:
             "value_loss": update_info.get("value_loss", 0.0),
             "entropy": update_info.get("entropy", 0.0),
             "total_steps": total_steps,
-            
-            # Task-level metrics
             "task_total_reward": sum(episode_rewards),
             "task_avg_reward_per_episode": sum(episode_rewards) / len(episode_rewards),
             "task_final_capital": final_capital,
             "task_cumulative_return": cumulative_return,
-            
-            # Validation metrics
-            "context_size_final": context_sizes[-1],
-            "context_growth": context_sizes[-1] - context_sizes[0] if len(context_sizes) > 1 else context_sizes[0],
-            "latent_norm_change": abs(latent_norms[-1] - latent_norms[0]) if len(latent_norms) > 1 else 0,
-            
-            # Episode breakdown
             "episode_rewards": episode_rewards,
             "episodes_per_task": self.config.episodes_per_task,
             "task_count": self.task_count,
-            
             **update_info
         }
         
-        # Cleanup AFTER using all_transitions
+        # AGGRESSIVE CLEANUP
         del all_transitions
-        del persistent_context
+        del context_obs_list
+        del context_act_list  
+        del context_rew_list
+        
+        # Clear optimizer state periodically (every 10 tasks)
+        if self.task_count % 10 == 0:
+            self.optimizer.zero_grad(set_to_none=True)
+            # Force optimizer state reset
+            for group in self.optimizer.param_groups:
+                for p in group['params']:
+                    if p.grad is not None:
+                        p.grad.detach_()
+                        p.grad = None
+                    state = self.optimizer.state.get(p, None)
+                    if state is not None:
+                        for k, v in state.items():
+                            if torch.is_tensor(v):
+                                state[k] = v.detach()
+        
         if torch.cuda.is_available():
             torch.cuda.synchronize()
             torch.cuda.empty_cache()
         gc.collect()
+        
         log_memory("After aggressive cleanup")
-
-        if hasattr(self.optimizer, 'state') and len(self.optimizer.state) > 0:
-            optimizer_params = sum(
-                t.numel() * t.element_size() 
-                for state in self.optimizer.state.values()
-                for t in state.values() if torch.is_tensor(t)
-            ) / 1024**3
-            logger.info(f"Optimizer state: {optimizer_params:.2f}GB, tracking {len(self.optimizer.state)} param groups")
-        diagnose_gpu_tensors()
-
         return results
 
+
+    def collect_trajectory_with_context_v2(self, context_obs, context_act, context_rew):
+        """
+        Collect trajectory with MINIMAL context usage.
+        Context lists are CPU-only and only used for VAE encoding.
+        """
+        obs0 = self.env.reset()
+        obs0 = obs0.to(self.device).to(torch.float32)
+        obs_tensor = obs0.unsqueeze(0)
+        
+        max_horizon = int(self.config.max_horizon)
+        obs_shape = tuple(obs0.shape)
+        
+        # Preallocate
+        observations = torch.zeros((max_horizon,) + obs_shape, dtype=torch.float32, device=self.device)
+        actions = torch.zeros((max_horizon, self.config.num_assets), dtype=torch.float32, device=self.device)
+        values = torch.zeros((max_horizon,), dtype=torch.float32, device=self.device)
+        log_probs = torch.zeros((max_horizon,), dtype=torch.float32, device=self.device)
+        latents = torch.zeros((max_horizon, self.config.latent_dim), dtype=torch.float32, device=self.device)
+        rewards = torch.zeros((max_horizon,), dtype=torch.float32, device=self.device)
+        dones = torch.zeros((max_horizon,), dtype=torch.bool, device=self.device)
+        
+        done, step = False, 0
+        
+        while not done and step < max_horizon:
+            # Get latent with EXPLICIT cleanup
+            latent = self._get_latent_from_context_v2(obs_tensor, context_obs, context_act, context_rew)
+            
+            # Sample action
+            with torch.no_grad():
+                actions_raw, value_t, log_prob_t = self.policy.act(obs_tensor, latent, deterministic=False)
+            
+            # Environment step
+            next_obs, reward_scalar, done_flag, info = self.env.step(actions_raw.squeeze(0))
+            
+            # Store step data
+            observations[step] = obs_tensor.squeeze(0)
+            actions[step] = actions_raw.squeeze(0).to(self.device)
+            values[step] = value_t.squeeze(0)
+            log_probs[step] = log_prob_t.squeeze(0)
+            latents[step] = latent.squeeze(0)
+            rewards[step] = float(reward_scalar)
+            dones[step] = bool(done_flag)
+            
+            # Advance
+            done = bool(done_flag)
+            if not done:
+                obs_tensor = next_obs.to(self.device, dtype=torch.float32).unsqueeze(0)
+            step += 1
+            
+            # CRITICAL: Delete intermediate tensors
+            del latent, actions_raw, value_t, log_prob_t
+        
+        T = step if step > 0 else 1
+        return {
+            "observations": observations[:T],
+            "actions": actions[:T],
+            "rewards": rewards[:T],
+            "values": values[:T],
+            "log_probs": log_probs[:T],
+            "latents": latents[:T],
+            "dones": dones[:T],
+        }
+
+
+    def _get_latent_from_context_v2(self, obs_tensor, context_obs, context_act, context_rew):
+        """Get latent with EXPLICIT tensor lifecycle management."""
+        if getattr(self.config, "disable_vae", False) or self.vae is None:
+            return torch.zeros(1, self.config.latent_dim, device=self.device)
+        
+        if len(context_obs) == 0:
+            return torch.zeros(1, self.config.latent_dim, device=self.device)
+        
+        # Limit context window (CRITICAL for memory)
+        max_context_len = 100  # Reduced from 200
+        start_idx = max(0, len(context_obs) - max_context_len)
+        
+        # Create GPU tensors ONLY for encoding, then DELETE immediately
+        obs_seq = torch.stack(context_obs[start_idx:]).to(self.device).unsqueeze(0)
+        act_seq = torch.stack(context_act[start_idx:]).to(self.device).unsqueeze(0)
+        rew_seq = torch.stack(context_rew[start_idx:]).to(self.device).unsqueeze(0).unsqueeze(-1)
+        
+        try:
+            with torch.no_grad():  # CRITICAL: No gradients for context encoding
+                mu, logvar, _ = self.vae.encode(obs_seq, act_seq, rew_seq)
+                latent = self.vae.reparameterize(mu, logvar).clone()  # Clone to detach from encoder
+        except Exception as e:
+            logger.warning(f"VAE encoding failed: {e}, using zero latent")
+            latent = torch.zeros(1, self.config.latent_dim, device=self.device)
+        finally:
+            # EXPLICIT cleanup of temporary tensors
+            del obs_seq, act_seq, rew_seq
+            if 'mu' in locals():
+                del mu, logvar
+        
+        return latent
 
     def collect_trajectory_with_context(self, persistent_context):
         """
@@ -892,60 +978,245 @@ class PPOTrainer:
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         return advantages, returns
 
+    # def update_ppo_and_vae(self, traj):
+    #     """
+    #     PPO with mini-batching + separate VAE update.
+    #     """
+    #     def ensure_stacked(x):
+    #         if isinstance(x, torch.Tensor):
+    #             return x.to(self.device)
+    #         return torch.stack(x).to(self.device)
+
+    #     # === Prepare data ===
+    #     obs = ensure_stacked(traj["observations"])
+    #     actions = ensure_stacked(traj["actions"])
+    #     latents = ensure_stacked(traj["latents"])
+    #     rewards = traj["rewards"] if isinstance(traj["rewards"], torch.Tensor) \
+    #         else torch.as_tensor(traj["rewards"], dtype=torch.float32, device=self.device)
+    #     dones = traj["dones"] if isinstance(traj["dones"], torch.Tensor) \
+    #         else torch.as_tensor(traj["dones"], dtype=torch.float32, device=self.device)
+    #     values = ensure_stacked(traj["values"])
+    #     old_logp = ensure_stacked(traj["log_probs"])
+
+    #     # === DETACH ALL INPUTS ===
+    #     obs = obs.detach()
+    #     actions = actions.detach()
+    #     latents = latents.detach()
+    #     rewards = rewards.detach()
+    #     dones = dones.detach()
+    #     values = values.detach()
+    #     old_logp = old_logp.detach()
+
+    #     last_value = traj.get("last_value", 0.0)
+    #     if isinstance(last_value, torch.Tensor):
+    #         last_value = last_value.detach().to(self.device)
+
+    #     # === Compute advantages once ===
+    #     advantages, returns = self.compute_gae(rewards, values, dones, last_value)
+    #     advantages = advantages.detach()
+    #     returns = returns.detach()
+
+    #     # === Mini-batch setup ===
+    #     batch_size = min(self.config.ppo_minibatch_size, len(obs))  # Don't exceed trajectory length
+    #     num_samples = len(obs)
+    #     logger.info(f"PPO update: trajectory size={len(obs)}, mini-batch={batch_size}")
+        
+    #     # === Initialize tracking ===
+    #     first_epoch_metrics = {}
+    #     final_ratio_mean = 1.0
+    #     final_ppo_loss = torch.tensor(0.0, device=self.device)
+
+    #     # === MULTI-EPOCH MINI-BATCH PPO UPDATE ===
+    #     for epoch in range(self.config.ppo_epochs):
+    #         # Shuffle indices
+    #         indices = torch.randperm(num_samples, device=self.device)
+            
+    #         # Process mini-batches
+    #         for start_idx in range(0, num_samples, batch_size):
+    #             end_idx = min(start_idx + batch_size, num_samples)
+    #             batch_indices = indices[start_idx:end_idx]
+                
+    #             # Extract mini-batch
+    #             batch_obs = obs[batch_indices]
+    #             batch_actions = actions[batch_indices]
+    #             batch_latents = latents[batch_indices]
+    #             batch_old_logp = old_logp[batch_indices]
+    #             batch_advantages = advantages[batch_indices]
+    #             batch_returns = returns[batch_indices]
+                
+    #             # Forward pass
+    #             new_values, new_logp, entropy = self.policy.evaluate_actions(
+    #                 batch_obs, batch_latents, batch_actions
+    #             )
+    #             new_values = new_values.squeeze(-1)
+    #             new_logp = new_logp.squeeze(-1)
+    #             entropy = entropy.squeeze(-1)
+
+    #             # PPO losses
+    #             ratio = torch.exp(new_logp - batch_old_logp)
+    #             eps = self.config.ppo_clip_ratio
+    #             surr1 = ratio * batch_advantages
+    #             surr2 = torch.clamp(ratio, 1.0 - eps, 1.0 + eps) * batch_advantages
+    #             policy_loss = -torch.min(surr1, surr2).mean()
+    #             value_loss = F.mse_loss(new_values, batch_returns)
+    #             entropy_loss = -entropy.mean()
+
+    #             ppo_loss = (policy_loss + 
+    #                         self.config.value_loss_coef * value_loss + 
+    #                         self.config.entropy_coef * entropy_loss)
+
+    #             # Capture first batch of first epoch metrics
+    #             if epoch == 0 and start_idx == 0:
+    #                 first_epoch_metrics = {
+    #                     "policy_loss": float(policy_loss.item()),
+    #                     "value_loss": float(value_loss.item()),
+    #                     "entropy": float(entropy.mean().item()),
+    #                     "advantages_mean": float(batch_advantages.mean().item()),
+    #                 }
+
+    #             final_ratio_mean = float(ratio.mean().item())
+    #             final_ppo_loss = ppo_loss.detach()
+
+    #             # Update
+    #             self.optimizer.zero_grad()
+    #             ppo_loss.backward()
+    #             torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
+    #             self.optimizer.step()
+
+    #             # for param in self.policy.parameters():
+    #             #     if param.grad is not None:
+    #             #         param.grad.detach_()
+    #             #         param.grad.zero_()
+    #             self.optimizer.zero_grad(set_to_none=True)
+
+    #             # Cleanup mini-batch
+    #             del new_values, new_logp, entropy, surr1, surr2, ratio
+    #             del policy_loss, value_loss, entropy_loss, ppo_loss
+    #             del batch_obs, batch_actions, batch_latents, batch_old_logp
+    #             del batch_advantages, batch_returns
+
+    #         # Cleanup after each epoch
+    #         if torch.cuda.is_available():
+    #             torch.cuda.empty_cache()
+
+    #     # === VAE update (sample from buffer) ===
+    #     vae_loss_val = 0.0
+    #     if self.vae_enabled and (self.episode_count % self.config.vae_update_freq == 0):
+    #         # Minimum buffer size before training
+    #         min_buffer_size = 8
+    #         vae_batch_size = min(32, len(self.vae_buffer))
+            
+    #         if len(self.vae_buffer) >= min_buffer_size:
+    #             try:
+    #                 # Sample mini-batch from buffer
+    #                 indices = np.random.choice(len(self.vae_buffer), vae_batch_size, replace=False)
+            
+    #                 # Collect trajectories (move from CPU to GPU) and find max length for padding
+    #                 sampled_trajs = [
+    #                     {k: v.to(self.device) if torch.is_tensor(v) else v 
+    #                     for k, v in self.vae_buffer[idx].items()}
+    #                     for idx in indices
+    #                 ]
+    #                 max_len = max(traj["observations"].shape[0] for traj in sampled_trajs)
+                    
+    #                 # Pad and stack trajectories
+    #                 batch_obs, batch_act, batch_rew = [], [], []
+    #                 for traj in sampled_trajs:
+    #                     T = traj["observations"].shape[0]
+                        
+    #                     # Pad observations
+    #                     obs_padded = torch.zeros((max_len,) + traj["observations"].shape[1:], 
+    #                                             dtype=torch.float32, device=self.device)
+    #                     obs_padded[:T] = traj["observations"]
+    #                     batch_obs.append(obs_padded)
+                        
+    #                     # Pad actions
+    #                     act_padded = torch.zeros((max_len,) + traj["actions"].shape[1:],
+    #                                             dtype=torch.float32, device=self.device)
+    #                     act_padded[:T] = traj["actions"]
+    #                     batch_act.append(act_padded)
+                        
+    #                     # Pad rewards
+    #                     rew_padded = torch.zeros(max_len, dtype=torch.float32, device=self.device)
+    #                     rew_padded[:T] = traj["rewards"]
+    #                     batch_rew.append(rew_padded)
+                    
+    #                 # Stack into batches
+    #                 obs_batch = torch.stack(batch_obs)  # (batch, max_len, N, F)
+    #                 act_batch = torch.stack(batch_act)  # (batch, max_len, N)
+    #                 rew_batch = torch.stack(batch_rew).unsqueeze(-1)  # (batch, max_len, 1)
+                    
+    #                 # Train VAE on batch
+    #                 vae_loss, vae_info = self.vae.compute_loss(
+    #                     obs_batch, act_batch, rew_batch, beta=self.config.vae_beta
+    #                 )
+
+    #                 self.optimizer.zero_grad()
+    #                 vae_loss.backward()
+    #                 torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
+    #                 self.optimizer.step()
+
+    #                 vae_loss_val = float(vae_loss.item())
+    #                 first_epoch_metrics.update({f"vae_{k}": v for k, v in vae_info.items()})
+
+    #             except Exception as e:
+    #                 logger.warning(f"VAE update failed: {e}")
+    #             finally:
+    #                 # Cleanup
+    #                 if 'obs_batch' in locals():
+    #                     del obs_batch, act_batch, rew_batch
+    #                 if 'vae_loss' in locals():
+    #                     del vae_loss
+    #                 if torch.cuda.is_available():
+    #                     torch.cuda.empty_cache()
+    #         else:
+    #             # Not enough data in buffer yet - skip VAE update
+    #             logger.debug(f"VAE buffer has {len(self.vae_buffer)} trajectories, need {min_buffer_size}")
+
+    #     # === Final cleanup ===
+    #     del obs, actions, latents, rewards, dones, values, old_logp, advantages, returns
+    #     if torch.cuda.is_available():
+    #         torch.cuda.empty_cache()
+
+    #     # === Build final metrics ===
+    #     first_epoch_metrics["vae_loss"] = vae_loss_val
+    #     first_epoch_metrics["ratio_mean"] = final_ratio_mean
+
+    #     return final_ppo_loss, first_epoch_metrics
+    
     def update_ppo_and_vae(self, traj):
-        """
-        PPO with mini-batching + separate VAE update.
-        """
-        def ensure_stacked(x):
-            if isinstance(x, torch.Tensor):
-                return x.to(self.device)
-            return torch.stack(x).to(self.device)
-
-        # === Prepare data ===
-        obs = ensure_stacked(traj["observations"])
-        actions = ensure_stacked(traj["actions"])
-        latents = ensure_stacked(traj["latents"])
-        rewards = traj["rewards"] if isinstance(traj["rewards"], torch.Tensor) \
-            else torch.as_tensor(traj["rewards"], dtype=torch.float32, device=self.device)
-        dones = traj["dones"] if isinstance(traj["dones"], torch.Tensor) \
-            else torch.as_tensor(traj["dones"], dtype=torch.float32, device=self.device)
-        values = ensure_stacked(traj["values"])
-        old_logp = ensure_stacked(traj["log_probs"])
-
-        # === DETACH ALL INPUTS ===
-        obs = obs.detach()
-        actions = actions.detach()
-        latents = latents.detach()
-        rewards = rewards.detach()
-        dones = dones.detach()
-        values = values.detach()
-        old_logp = old_logp.detach()
-
+        """PPO with mini-batching + VAE update - MEMORY OPTIMIZED"""
+        
+        # Prepare data with DETACH
+        obs = traj["observations"].detach()
+        actions = traj["actions"].detach()
+        latents = traj["latents"].detach()
+        rewards = traj["rewards"].detach()
+        dones = traj["dones"].detach()
+        values = traj["values"].detach()
+        old_logp = traj["log_probs"].detach()
+        
         last_value = traj.get("last_value", 0.0)
         if isinstance(last_value, torch.Tensor):
             last_value = last_value.detach().to(self.device)
-
-        # === Compute advantages once ===
+        
+        # Compute advantages once
         advantages, returns = self.compute_gae(rewards, values, dones, last_value)
         advantages = advantages.detach()
         returns = returns.detach()
-
-        # === Mini-batch setup ===
-        batch_size = min(self.config.ppo_minibatch_size, len(obs))  # Don't exceed trajectory length
+        
+        # Mini-batch setup
+        batch_size = min(self.config.ppo_minibatch_size, len(obs))
         num_samples = len(obs)
         logger.info(f"PPO update: trajectory size={len(obs)}, mini-batch={batch_size}")
         
-        # === Initialize tracking ===
         first_epoch_metrics = {}
         final_ratio_mean = 1.0
-        final_ppo_loss = torch.tensor(0.0, device=self.device)
-
-        # === MULTI-EPOCH MINI-BATCH PPO UPDATE ===
+        
+        # PPO UPDATE with explicit cleanup
         for epoch in range(self.config.ppo_epochs):
-            # Shuffle indices
             indices = torch.randperm(num_samples, device=self.device)
             
-            # Process mini-batches
             for start_idx in range(0, num_samples, batch_size):
                 end_idx = min(start_idx + batch_size, num_samples)
                 batch_indices = indices[start_idx:end_idx]
@@ -965,7 +1236,7 @@ class PPOTrainer:
                 new_values = new_values.squeeze(-1)
                 new_logp = new_logp.squeeze(-1)
                 entropy = entropy.squeeze(-1)
-
+                
                 # PPO losses
                 ratio = torch.exp(new_logp - batch_old_logp)
                 eps = self.config.ppo_clip_ratio
@@ -974,130 +1245,116 @@ class PPOTrainer:
                 policy_loss = -torch.min(surr1, surr2).mean()
                 value_loss = F.mse_loss(new_values, batch_returns)
                 entropy_loss = -entropy.mean()
-
+                
                 ppo_loss = (policy_loss + 
-                            self.config.value_loss_coef * value_loss + 
-                            self.config.entropy_coef * entropy_loss)
-
-                # Capture first batch of first epoch metrics
+                        self.config.value_loss_coef * value_loss + 
+                        self.config.entropy_coef * entropy_loss)
+                
+                # Capture first batch metrics
                 if epoch == 0 and start_idx == 0:
                     first_epoch_metrics = {
                         "policy_loss": float(policy_loss.item()),
                         "value_loss": float(value_loss.item()),
                         "entropy": float(entropy.mean().item()),
-                        "advantages_mean": float(batch_advantages.mean().item()),
                     }
-
+                
                 final_ratio_mean = float(ratio.mean().item())
-                final_ppo_loss = ppo_loss.detach()
-
+                
                 # Update
                 self.optimizer.zero_grad()
                 ppo_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
                 self.optimizer.step()
-
-                # for param in self.policy.parameters():
-                #     if param.grad is not None:
-                #         param.grad.detach_()
-                #         param.grad.zero_()
-                self.optimizer.zero_grad(set_to_none=True)
-
-                # Cleanup mini-batch
+                
+                # CRITICAL: Explicit cleanup of batch tensors
                 del new_values, new_logp, entropy, surr1, surr2, ratio
                 del policy_loss, value_loss, entropy_loss, ppo_loss
                 del batch_obs, batch_actions, batch_latents, batch_old_logp
                 del batch_advantages, batch_returns
-
-            # Cleanup after each epoch
+            
+            # Cleanup after epoch
+            del indices
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-
-        # === VAE update (sample from buffer) ===
+        
+        # VAE UPDATE with aggressive cleanup
         vae_loss_val = 0.0
         if self.vae_enabled and (self.episode_count % self.config.vae_update_freq == 0):
-            # Minimum buffer size before training
             min_buffer_size = 8
-            vae_batch_size = min(32, len(self.vae_buffer))
+            vae_batch_size = min(16, len(self.vae_buffer))  # Reduced from 32
             
             if len(self.vae_buffer) >= min_buffer_size:
                 try:
-                    # Sample mini-batch from buffer
                     indices = np.random.choice(len(self.vae_buffer), vae_batch_size, replace=False)
-            
-                    # Collect trajectories (move from CPU to GPU) and find max length for padding
-                    sampled_trajs = [
-                        {k: v.to(self.device) if torch.is_tensor(v) else v 
-                        for k, v in self.vae_buffer[idx].items()}
-                        for idx in indices
-                    ]
-                    max_len = max(traj["observations"].shape[0] for traj in sampled_trajs)
                     
-                    # Pad and stack trajectories
+                    # Move to GPU batch-by-batch to avoid OOM
                     batch_obs, batch_act, batch_rew = [], [], []
-                    for traj in sampled_trajs:
+                    max_len = max(self.vae_buffer[idx]["observations"].shape[0] for idx in indices)
+                    
+                    for idx in indices:
+                        traj = self.vae_buffer[idx]
                         T = traj["observations"].shape[0]
                         
-                        # Pad observations
+                        # Pad on GPU
                         obs_padded = torch.zeros((max_len,) + traj["observations"].shape[1:], 
                                                 dtype=torch.float32, device=self.device)
-                        obs_padded[:T] = traj["observations"]
+                        obs_padded[:T] = traj["observations"].to(self.device)
                         batch_obs.append(obs_padded)
                         
-                        # Pad actions
                         act_padded = torch.zeros((max_len,) + traj["actions"].shape[1:],
                                                 dtype=torch.float32, device=self.device)
-                        act_padded[:T] = traj["actions"]
+                        act_padded[:T] = traj["actions"].to(self.device)
                         batch_act.append(act_padded)
                         
-                        # Pad rewards
                         rew_padded = torch.zeros(max_len, dtype=torch.float32, device=self.device)
-                        rew_padded[:T] = traj["rewards"]
+                        rew_padded[:T] = traj["rewards"].to(self.device)
                         batch_rew.append(rew_padded)
+                        
+                        # CRITICAL: Delete temporary padded tensors
+                        del obs_padded, act_padded, rew_padded
                     
-                    # Stack into batches
-                    obs_batch = torch.stack(batch_obs)  # (batch, max_len, N, F)
-                    act_batch = torch.stack(batch_act)  # (batch, max_len, N)
-                    rew_batch = torch.stack(batch_rew).unsqueeze(-1)  # (batch, max_len, 1)
+                    # Stack
+                    obs_batch = torch.stack(batch_obs)
+                    act_batch = torch.stack(batch_act)
+                    rew_batch = torch.stack(batch_rew).unsqueeze(-1)
                     
-                    # Train VAE on batch
+                    # Delete intermediate lists
+                    del batch_obs, batch_act, batch_rew
+                    
+                    # Train VAE
                     vae_loss, vae_info = self.vae.compute_loss(
                         obs_batch, act_batch, rew_batch, beta=self.config.vae_beta
                     )
-
+                    
                     self.optimizer.zero_grad()
                     vae_loss.backward()
                     torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
                     self.optimizer.step()
-
+                    
                     vae_loss_val = float(vae_loss.item())
                     first_epoch_metrics.update({f"vae_{k}": v for k, v in vae_info.items()})
-
+                    
+                    # CRITICAL: Delete VAE tensors
+                    del obs_batch, act_batch, rew_batch, vae_loss
+                    
                 except Exception as e:
                     logger.warning(f"VAE update failed: {e}")
                 finally:
-                    # Cleanup
-                    if 'obs_batch' in locals():
-                        del obs_batch, act_batch, rew_batch
-                    if 'vae_loss' in locals():
-                        del vae_loss
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
-            else:
-                # Not enough data in buffer yet - skip VAE update
-                logger.debug(f"VAE buffer has {len(self.vae_buffer)} trajectories, need {min_buffer_size}")
-
-        # === Final cleanup ===
+        
+        # Final cleanup
         del obs, actions, latents, rewards, dones, values, old_logp, advantages, returns
+        
         if torch.cuda.is_available():
+            torch.cuda.synchronize()
             torch.cuda.empty_cache()
-
-        # === Build final metrics ===
+        
         first_epoch_metrics["vae_loss"] = vae_loss_val
         first_epoch_metrics["ratio_mean"] = final_ratio_mean
+        
+        return torch.tensor(0.0), first_epoch_metrics
 
-        return final_ppo_loss, first_epoch_metrics
-    
     def compute_advantages(self, trajectory):
         rewards = trajectory["rewards"]
         values = trajectory["values"]
