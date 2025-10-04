@@ -385,7 +385,8 @@ class PPOTrainer:
             "values": [],
             "log_probs": [],
             "latents": [],
-            "dones": []
+            "dones": [],
+            "episode_boundaries": []
         }
         
         episode_rewards = []
@@ -402,6 +403,11 @@ class PPOTrainer:
             
             episode_reward = float(trajectory["rewards"].sum().item())
             episode_rewards.append(episode_reward)
+
+            # NEW: Track where this episode ends in the accumulated trajectory
+            traj_length = len(trajectory["observations"])
+            current_total = sum(len(t) for t in all_transitions["observations"])
+            all_transitions["episode_boundaries"].append(current_total + traj_length - 1)
             
             # Accumulate transitions (keep on GPU for now)
             for key in all_transitions.keys():
@@ -419,9 +425,14 @@ class PPOTrainer:
             del trajectory
             torch.cuda.empty_cache()
         
-        # Stack accumulated transitions
+        # Stack accumulated transitions from all episodes
         for key in all_transitions.keys():
-            all_transitions[key] = torch.cat(all_transitions[key], dim=0)
+            if key != "episode_boundaries":  # Don't stack this - keep as list
+                all_transitions[key] = torch.cat(all_transitions[key], dim=0)
+        
+        episode_boundaries = all_transitions["episode_boundaries"]
+        for boundary_idx in episode_boundaries[:-1]:  # All except last episode boundary
+            all_transitions["dones"][boundary_idx] = False
         
         # Single update on entire BAMDP trajectory
         log_memory("Before update")
