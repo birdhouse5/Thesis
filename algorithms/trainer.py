@@ -15,6 +15,12 @@ from torch.optim import Adam
 # Needed to clone environments for batched rollouts
 from environments.env import MetaEnv
 
+def log_memory(label):
+    if torch.cuda.is_available():
+        allocated = torch.cuda.memory_allocated() / 1024**3
+        reserved = torch.cuda.memory_reserved() / 1024**3
+        logger.info(f"[{label}] GPU: {allocated:.2f}GB alloc, {reserved:.2f}GB reserved")
+
 
 class PerformanceDiagnostic:
     def __init__(self):
@@ -114,6 +120,7 @@ class PPOTrainer:
         Train over multiple episodes on same task (BAMDP).
         Context persists across episodes to enable belief refinement.
         """
+        log_memory("Task start")
         # Sample task once
         task = self.env.sample_task()
         task_id = task.get("task_id", self.task_count)
@@ -149,7 +156,9 @@ class PPOTrainer:
             #logger.info(f"  Episode {episode_idx+1}/{self.config.episodes_per_task} - Context size: {len(persistent_context['observations'])}")
             
             # Collect trajectory with persistent context
+            log_memory(f"Episode {episode_idx} start")
             trajectory = self.collect_trajectory_with_context(persistent_context)
+            log_memory(f"Episode {episode_idx} collected")
             
             # Track metrics
             episode_reward = float(trajectory["rewards"].sum().item())
@@ -185,7 +194,9 @@ class PPOTrainer:
         #logger.info(f"  Performing single PPO+VAE update on full BAMDP trajectory ({all_transitions['rewards'].shape[0]} steps)")
         
         # Single update on entire BAMDP trajectory
+        log_memory("Before update")
         total_loss, update_info = self.update_ppo_and_vae(all_transitions)
+        log_memory("After update")
         
         # Aggregate metrics
         final_capital = self.env.current_capital
