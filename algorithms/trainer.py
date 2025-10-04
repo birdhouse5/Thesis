@@ -1348,56 +1348,56 @@ class PPOTrainer:
                 try:
                     indices = np.random.choice(len(self.vae_buffer), vae_batch_size, replace=False)
                     
-                    # Move to GPU batch-by-batch to avoid OOM
+                    # Collect priors and data from sampled trajectories
                     batch_obs, batch_act, batch_rew = [], [], []
+                    batch_prior_mu, batch_prior_logvar = [], []
                     max_len = max(self.vae_buffer[idx]["observations"].shape[0] for idx in indices)
                     
                     for idx in indices:
                         traj = self.vae_buffer[idx]
                         T = traj["observations"].shape[0]
                         
-                        # Pad on GPU
+                        # Pad observations
                         obs_padded = torch.zeros((max_len,) + traj["observations"].shape[1:], 
                                                 dtype=torch.float32, device=self.device)
                         obs_padded[:T] = traj["observations"].to(self.device)
                         batch_obs.append(obs_padded)
                         
+                        # Pad actions
                         act_padded = torch.zeros((max_len,) + traj["actions"].shape[1:],
                                                 dtype=torch.float32, device=self.device)
                         act_padded[:T] = traj["actions"].to(self.device)
                         batch_act.append(act_padded)
                         
+                        # Pad rewards
                         rew_padded = torch.zeros(max_len, dtype=torch.float32, device=self.device)
                         rew_padded[:T] = traj["rewards"].to(self.device)
                         batch_rew.append(rew_padded)
                         
-                        # CRITICAL: Delete temporary padded tensors
+                        # Extract priors (stored as CPU tensors, move to GPU)
+                        batch_prior_mu.append(traj["prior_mu"].to(self.device))
+                        batch_prior_logvar.append(traj["prior_logvar"].to(self.device))
+                        
+                        # Delete temporary padded tensors
                         del obs_padded, act_padded, rew_padded
                     
-                    # Stack
+                    # Stack into batches
                     obs_batch = torch.stack(batch_obs)
                     act_batch = torch.stack(batch_act)
                     rew_batch = torch.stack(batch_rew).unsqueeze(-1)
+                    prior_mu_batch = torch.stack(batch_prior_mu)  # [batch, latent_dim]
+                    prior_logvar_batch = torch.stack(batch_prior_logvar)  # [batch, latent_dim]
                     
                     # Delete intermediate lists
-                    del batch_obs, batch_act, batch_rew
+                    del batch_obs, batch_act, batch_rew, batch_prior_mu, batch_prior_logvar
                     
-                    # Extract priors from trajectories
-                    # Use prior from first trajectory in batch (they're all from same task)
-                    prior_mu = all_transitions["prior_mu"][0].to(self.device).unsqueeze(0)  # [1, latent_dim]
-                    prior_logvar = all_transitions["prior_logvar"][0].to(self.device).unsqueeze(0)
-
-                    # Expand to batch size for VAE loss computation
-                    prior_mu = prior_mu.expand(obs_batch.shape[0], -1)  # [batch, latent_dim]
-                    prior_logvar = prior_logvar.expand(obs_batch.shape[0], -1)
-
-                    # Train VAE with recursive prior
+                    # Train VAE with recursive priors
                     vae_loss, vae_info = self.vae.compute_loss(
                         obs_batch, act_batch, rew_batch, 
                         beta=self.config.vae_beta,
                         num_elbo_terms=getattr(self.config, 'vae_num_elbo_terms', 8),
-                        prior_mu=prior_mu,
-                        prior_logvar=prior_logvar
+                        prior_mu=prior_mu_batch,
+                        prior_logvar=prior_logvar_batch
                     )
                     
                     logger.info(f"  Loss breakdown:")
