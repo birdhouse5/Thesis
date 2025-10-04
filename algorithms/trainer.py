@@ -21,6 +21,26 @@ def log_memory(label):
         reserved = torch.cuda.memory_reserved() / 1024**3
         logger.info(f"[{label}] GPU: {allocated:.2f}GB alloc, {reserved:.2f}GB reserved")
 
+def diagnose_gpu_tensors():
+    """Find all tensors on GPU"""
+    import gc
+    tensors = []
+    for obj in gc.get_objects():
+        try:
+            if torch.is_tensor(obj) and obj.is_cuda:
+                tensors.append((type(obj), obj.size(), obj.element_size() * obj.nelement() / 1024**2))
+        except:
+            pass
+    
+    # Group by size
+    tensors.sort(key=lambda x: x[2], reverse=True)
+    total_mb = sum(t[2] for t in tensors)
+    
+    logger.info(f"Found {len(tensors)} GPU tensors, total {total_mb:.2f}MB")
+    logger.info("Top 10 largest:")
+    for i, (typ, size, mb) in enumerate(tensors[:10]):
+        logger.info(f"  {i+1}. {typ} {size} = {mb:.2f}MB")
+
 
 class PerformanceDiagnostic:
     def __init__(self):
@@ -456,6 +476,15 @@ class PPOTrainer:
             torch.cuda.empty_cache()
         gc.collect()
         log_memory("After aggressive cleanup")
+
+        if hasattr(self.optimizer, 'state') and len(self.optimizer.state) > 0:
+            optimizer_params = sum(
+                t.numel() * t.element_size() 
+                for state in self.optimizer.state.values()
+                for t in state.values() if torch.is_tensor(t)
+            ) / 1024**3
+            logger.info(f"Optimizer state: {optimizer_params:.2f}GB, tracking {len(self.optimizer.state)} param groups")
+        diagnose_gpu_tensors()
         
         return results
 
