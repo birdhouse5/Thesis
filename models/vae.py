@@ -181,11 +181,11 @@ class VAE(nn.Module):
         obs_seq, action_seq, reward_seq,
         beta=0.1,
         num_elbo_terms=8,
-        prev_mu=None, prev_logvar=None
+        prior_mu=None, prior_logvar=None  # Renamed from prev_* for clarity
     ):
         """
-        VariBAD-style VAE loss: compute ELBO at multiple timesteps within trajectory.
-        Implements Equation 10: Σ_{t=0}^{H+} ELBO_t
+        VariBAD-style VAE loss with recursive prior.
+        At each timestep t: encode τ:t, use previous posterior as prior.
         
         Args:
             obs_seq: (batch, H, N, F) - full observation trajectory
@@ -193,35 +193,35 @@ class VAE(nn.Module):
             reward_seq: (batch, H, 1) - full reward trajectory
             beta: KL divergence weight
             num_elbo_terms: number of timesteps to sample for ELBO computation
-            prev_mu, prev_logvar: recursive prior parameters (optional)
+            prior_mu, prior_logvar: prior from previous episode (or None for N(0,I))
         
         Returns:
             total_loss: scalar loss
             info_dict: dictionary with loss components and diagnostics
         """
         B, H = obs_seq.shape[:2]
+        device = obs_seq.device
         
-        # Sample multiple timesteps for ELBO computation
-        # Paper: "subsample a fixed number of ELBO terms (for random time steps t)"
+        # Sample timesteps for ELBO computation
         if num_elbo_terms >= H:
-            # Use all timesteps
             timesteps = list(range(1, H + 1))
         else:
-            # Randomly sample timesteps, ensure diversity across trajectory
             timesteps = torch.randint(1, H + 1, (num_elbo_terms,)).tolist()
-            timesteps = sorted(list(set(timesteps)))  # Remove duplicates
+            timesteps = sorted(list(set(timesteps)))
         
-        # Accumulate losses across timesteps
+        # Accumulate losses
         total_recon_obs_loss = 0.0
         total_recon_reward_loss = 0.0
         total_kl_loss = 0.0
         
-        # Store diagnostics from last timestep
+        # Track posterior for recursive prior
+        current_prior_mu = prior_mu
+        current_prior_logvar = prior_logvar
         last_mu, last_logvar = None, None
         
-        # Compute ELBO at each sampled timestep
-        for t in timesteps:
-            # === Encode context up to timestep t ===
+        # Compute ELBO at each sampled timestep with recursive prior
+        for i, t in enumerate(timesteps):
+            # Encode context up to timestep t (NO truncation)
             encode_obs = obs_seq[:, :t]
             encode_actions = action_seq[:, :t]
             encode_rewards = reward_seq[:, :t]
@@ -229,55 +229,62 @@ class VAE(nn.Module):
             mu, logvar, _ = self.encode(encode_obs, encode_actions, encode_rewards)
             latent = self.reparameterize(mu, logvar)
             
-            # === Decode FULL trajectory (asymmetric: encode past, decode all) ===
+            # Decode FULL trajectory
             pred_next_obs = self.obs_decoder.forward_seq(
                 latent, obs_seq[:, :-1], action_seq[:, :-1]
-            )  # (B, H-1, N, F)
-            
+            )
             pred_rewards = self.reward_decoder.forward_seq(
                 latent, obs_seq[:, :-1], action_seq[:, :-1], obs_seq[:, 1:]
-            )  # (B, H-1, 1)
+            )
             
-            # === Reconstruction losses over FULL trajectory ===
+            # Reconstruction losses
             recon_obs_loss = F.mse_loss(pred_next_obs, obs_seq[:, 1:])
             recon_reward_loss = F.mse_loss(pred_rewards, reward_seq[:, 1:])
             
-            # === KL divergence ===
-            if prev_mu is not None and prev_logvar is not None:
-                # Recursive KL: KL(q(m|τ:t) || q(m|τ:t-1))
-                var_post = logvar.exp()
-                var_prior = prev_logvar.exp()
-                kl_elements = (
-                    var_post / var_prior
-                    + (mu - prev_mu).pow(2) / var_prior
-                    - 1
-                    + prev_logvar - logvar
-                )
-                kl_loss = 0.5 * torch.sum(kl_elements, dim=1).mean()
-            else:
-                # Standard prior: KL(q(m|τ:t) || N(0,I))
+            # KL divergence with recursive prior
+            if i == 0 and current_prior_mu is None:
+                # First timestep of first episode: KL(q || N(0,I))
                 kl_loss = -0.5 * torch.sum(
                     1 + logvar - mu.pow(2) - logvar.exp(), dim=1
                 ).mean()
+            else:
+                # Recursive: KL(q(m|τ:t) || q(m|τ:t-1))
+                # Use current_prior from previous timestep or previous episode
+                if i == 0:
+                    # First timestep of subsequent episode: use prior from last episode
+                    prior_mu_use = current_prior_mu
+                    prior_logvar_use = current_prior_logvar
+                else:
+                    # Within episode: use previous timestep's posterior
+                    prior_mu_use = last_mu
+                    prior_logvar_use = last_logvar
+                
+                var_post = logvar.exp()
+                var_prior = prior_logvar_use.exp()
+                kl_elements = (
+                    var_post / var_prior
+                    + (mu - prior_mu_use).pow(2) / var_prior
+                    - 1
+                    + prior_logvar_use - logvar
+                )
+                kl_loss = 0.5 * torch.sum(kl_elements, dim=1).mean()
             
             # Accumulate
             total_recon_obs_loss += recon_obs_loss
             total_recon_reward_loss += recon_reward_loss
             total_kl_loss += kl_loss
             
-            # Store for diagnostics
-            last_mu, last_logvar = mu, logvar
+            # Update for next iteration
+            last_mu, last_logvar = mu.detach(), logvar.detach()
         
-        # Average over sampled timesteps (as per Equation 10 summation)
+        # Average over sampled timesteps
         num_terms = len(timesteps)
         avg_recon_obs = total_recon_obs_loss / num_terms
         avg_recon_reward = total_recon_reward_loss / num_terms
         avg_kl = total_kl_loss / num_terms
         
-        # Total loss
         total_loss = avg_recon_obs + avg_recon_reward + beta * avg_kl
         
-        # Return diagnostics
         return total_loss, {
             "total": total_loss.item(),
             "recon_obs": avg_recon_obs.item(),
