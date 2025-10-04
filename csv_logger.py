@@ -22,7 +22,7 @@ class CSVLogger:
 
         encoder = config.get('encoder', 'unknown')
         asset_class = config.get('asset_class', 'unknown')
-        self.output_dir = Path(encoder) / asset_class / "experiment_logs"
+        self.output_dir = Path(self.run_name) / encoder / asset_class / "experiment_logs"
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # File paths
@@ -235,7 +235,7 @@ class TrainingCSVLogger:
         self.asset_class = asset_class
         self.encoder = encoder
         
-        self.output_dir = Path(encoder) / asset_class / "experiment_logs"
+        self.output_dir = Path(experiment_name) / encoder / asset_class / "experiment_logs"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.csv_path = self.output_dir / f"{experiment_name}_training.csv"
         
@@ -304,7 +304,7 @@ class ValidationCSVLogger:
         self.asset_class = asset_class
         self.encoder = encoder
         
-        self.output_dir = Path(encoder) / asset_class / "experiment_logs"
+        self.output_dir = Path(experiment_name) / encoder / asset_class / "experiment_logs"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.csv_path = self.output_dir / f"{experiment_name}_validation.csv"
         
@@ -359,7 +359,7 @@ class BacktestCSVLogger:
         self.encoder = encoder
         self.num_assets = num_assets
         
-        self.output_dir = Path(encoder) / asset_class / "experiment_logs"
+        self.output_dir = Path(experiment_name) / encoder / asset_class / "experiment_logs"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.csv_path = self.output_dir / f"{experiment_name}_backtest.csv"
         
