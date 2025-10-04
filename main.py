@@ -312,7 +312,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
     # if mlflow.active_run():
     #     mlflow.end_run()
 
-    ckpt_dir = Path(cfg.encoder) / cfg.asset_class / "checkpoints" / cfg.exp_name
+    ckpt_dir = Path(cfg.exp_name) / cfg.encoder / cfg.asset_class / "checkpoints"
 
     resume_state = None
     episodes_trained, best_val_reward = 0, float("-inf")
