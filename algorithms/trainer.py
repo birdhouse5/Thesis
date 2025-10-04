@@ -711,6 +711,11 @@ class PPOTrainer:
             torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
             self.optimizer.step()
 
+            # Free memory after each epoch
+            del new_values, new_logp, entropy, ratio, policy_loss, value_loss, ppo_loss
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
         # === VAE update (once, after all PPO epochs) ===
         vae_loss_val = 0.0
         if self.vae_enabled and (self.episode_count % self.config.vae_update_freq == 0):
