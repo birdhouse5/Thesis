@@ -116,11 +116,8 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         latent_dim = 0   # policy sees obs only
 
     default_name=f"{exp.asset_class}_{exp.encoder}_seed{exp.seed}"
-    
-    if hasattr(exp, '_hpo_path'):
-        cfg._from_hpo_path = exp._hpo_path
 
-    return TrainingConfig(
+    cfg = TrainingConfig(
         seed=exp.seed,
         exp_name=exp.exp_name or default_name,
         asset_class=exp.asset_class,
@@ -169,3 +166,8 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         ppo_minibatch_size = 128,
         vae_num_elbo_terms = 8
     )
+
+    if hasattr(exp, '_hpo_path'):
+        cfg._from_hpo_path = exp._hpo_path
+    
+    return cfg
