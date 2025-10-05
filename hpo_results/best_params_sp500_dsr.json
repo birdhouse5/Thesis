@@ -1,0 +1,18 @@
+{
+  "study_name": "ppo_vae_sp500_dsr",
+  "asset_class": "sp500",
+  "reward_type": "dsr",
+  "best_value": -22.774434161186218,
+  "best_params": {
+    "latent_dim": 16,
+    "hidden_dim": 768,
+    "vae_lr": 0.0004168866266434878,
+    "policy_lr": 6.352625921335406e-05,
+    "vae_beta": 0.02290780543112849,
+    "entropy_coef": 0.044993274822514355,
+    "ppo_clip_ratio": 0.24029892440847633,
+    "eta": 0.09898951901674358,
+    "reward_lookback": 14
+  },
+  "n_trials": 50
+}
