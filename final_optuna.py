@@ -98,5 +98,37 @@ if __name__ == "__main__":
 
     # sp500 dsr 1
     # crypto dsr 2
+
+
+
     # sp500 sharpe 4
+# === Best Trial (sharpe) ===
+# Value: -106.20400454998017
+# Params: {'latent_dim': 32, 
+# 'hidden_dim': 512, 
+# 'vae_lr': 0.00032768209762336516, 
+# 'policy_lr': 8.854562053336064e-05, 
+# 'vae_beta': 0.0014277747724047083, 
+# 'entropy_coef': 0.04356214051589346, 
+# 'ppo_clip_ratio': 0.2983609586372239, 
+# 'eta': 0.001069954956673335, 
+# 'reward_lookback': 27}
+
+    
+
+
     # sp500 drawdown 5
+#     === Best Trial (drawdown) ===
+# Value: 37.967431259155276
+# Params: {'latent_dim': 16, 
+# 'hidden_dim': 256, 
+# 'vae_lr': 1.3731078963442245e-05, 
+# 'policy_lr': 1.0374001123774155e-05, 
+# 'vae_beta': 0.03462979100777297, 
+# 'entropy_coef': 0.030010195766720024, 
+# 'ppo_clip_ratio': 0.15292418418968373, 
+# 'eta': 0.004665718933151942, 
+# reward_lookback': 50}
+
+
+# crypto drawdown 6

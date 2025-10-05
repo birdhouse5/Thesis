@@ -116,6 +116,9 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         latent_dim = 0   # policy sees obs only
 
     default_name=f"{exp.asset_class}_{exp.encoder}_seed{exp.seed}"
+    
+    if hasattr(exp, '_hpo_path'):
+        cfg._from_hpo_path = exp._hpo_path
 
     return TrainingConfig(
         seed=exp.seed,
