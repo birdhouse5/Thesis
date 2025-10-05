@@ -36,10 +36,10 @@ def diagnose_gpu_tensors():
     tensors.sort(key=lambda x: x[2], reverse=True)
     total_mb = sum(t[2] for t in tensors)
     
-    logger.info(f"Found {len(tensors)} GPU tensors, total {total_mb:.2f}MB")
-    logger.info("Top 10 largest:")
-    for i, (typ, size, mb) in enumerate(tensors[:10]):
-        logger.info(f"  {i+1}. {typ} {size} = {mb:.2f}MB")
+    # logger.info(f"Found {len(tensors)} GPU tensors, total {total_mb:.2f}MB")
+    # logger.info("Top 10 largest:")
+    # for i, (typ, size, mb) in enumerate(tensors[:10]):
+    #     logger.info(f"  {i+1}. {typ} {size} = {mb:.2f}MB")
 
 
 class PerformanceDiagnostic:
@@ -115,12 +115,12 @@ class PPOTrainer:
         self.experience_buffer = ExperienceBuffer(config.batch_size)  # for PPO
         self.vae_buffer = deque(maxlen=1000)  # TODO recent trajectories for VAE
 
-        logger.info(f"=== Trainer Initialization ===")
-        logger.info(f"  vae object: {vae is not None}")
-        logger.info(f"  disable_vae flag: {getattr(config, 'disable_vae', False)}")
-        logger.info(f"  vae_enabled: {self.vae_enabled}")
-        logger.info(f"  vae_update_freq: {config.vae_update_freq}")
-        logger.info(f"  vae_buffer maxlen: {self.vae_buffer}")
+        # logger.info(f"=== Trainer Initialization ===")
+        # logger.info(f"  vae object: {vae is not None}")
+        # logger.info(f"  disable_vae flag: {getattr(config, 'disable_vae', False)}")
+        # logger.info(f"  vae_enabled: {self.vae_enabled}")
+        # logger.info(f"  vae_update_freq: {config.vae_update_freq}")
+        # logger.info(f"  vae_buffer maxlen: {self.vae_buffer}")
 
         # Rolling stats (store Python floats to avoid CUDA logging issues)
         self.policy_losses = deque(maxlen=100)
@@ -138,7 +138,7 @@ class PPOTrainer:
         self.persistent_context = None
         self.task_count = 0
     
-    logger.info("PPOTrainer initialized with BAMDP multi-episode support")
+    #logger.info("PPOTrainer initialized with BAMDP multi-episode support")
 
     # CORRECTED TASK TRAINING
 
@@ -1264,7 +1264,7 @@ class PPOTrainer:
         # Mini-batch setup
         batch_size = min(self.config.ppo_minibatch_size, len(obs))
         num_samples = len(obs)
-        logger.info(f"PPO update: trajectory size={len(obs)}, mini-batch={batch_size}")
+        #logger.info(f"PPO update: trajectory size={len(obs)}, mini-batch={batch_size}")
         
         first_epoch_metrics = {}
         final_ratio_mean = 1.0
@@ -1338,13 +1338,13 @@ class PPOTrainer:
         # VAE UPDATE with aggressive cleanup
         vae_loss_val = 0.0
         if self.vae_enabled and (self.episode_count % self.config.vae_update_freq == 0):
-            logger.info(f"=== VAE Update Triggered (Episode {self.episode_count}) ===")
+            #logger.info(f"=== VAE Update Triggered (Episode {self.episode_count}) ===")
             min_buffer_size = 8
             vae_batch_size = min(16, len(self.vae_buffer))  # Reduced from 32
             
             if len(self.vae_buffer) >= min_buffer_size:
-                logger.info(f"=== VAE Update (Episode {self.episode_count}) ===")
-                logger.info(f"  Buffer size: {len(self.vae_buffer)}, Batch size: {vae_batch_size}")
+                #logger.info(f"=== VAE Update (Episode {self.episode_count}) ===")
+                #logger.info(f"  Buffer size: {len(self.vae_buffer)}, Batch size: {vae_batch_size}")
                 try:
                     indices = np.random.choice(len(self.vae_buffer), vae_batch_size, replace=False)
                     
@@ -1400,21 +1400,21 @@ class PPOTrainer:
                         prior_logvar=prior_logvar_batch
                     )
                     
-                    logger.info(f"  Loss breakdown:")
-                    logger.info(f"    Total: {vae_info['total']:.4f}")
-                    logger.info(f"    Recon obs: {vae_info['recon_obs']:.4f}")
-                    logger.info(f"    Recon reward: {vae_info['recon_reward']:.4f}")
-                    logger.info(f"    KL: {vae_info['kl']:.4f}")
-                    logger.info(f"  Timesteps sampled: {vae_info['num_elbo_terms']} -> {vae_info['timesteps_sampled']}")
+                    # logger.info(f"  Loss breakdown:")
+                    # logger.info(f"    Total: {vae_info['total']:.4f}")
+                    # logger.info(f"    Recon obs: {vae_info['recon_obs']:.4f}")
+                    # logger.info(f"    Recon reward: {vae_info['recon_reward']:.4f}")
+                    # logger.info(f"    KL: {vae_info['kl']:.4f}")
+                    # logger.info(f"  Timesteps sampled: {vae_info['num_elbo_terms']} -> {vae_info['timesteps_sampled']}")
                     
                     self.optimizer.zero_grad()
                     vae_loss.backward()
 
                     vae_grad_norm = torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
-                    logger.info(f"  VAE grad norm: {vae_grad_norm:.4f}")
+                    #logger.info(f"  VAE grad norm: {vae_grad_norm:.4f}")
                     
                     self.optimizer.step()
-                    logger.info(f"  ✓ VAE weights updated") 
+                    #logger.info(f"  ✓ VAE weights updated") 
 
                     vae_loss_val = float(vae_loss.item())
                     first_epoch_metrics.update({f"vae_{k}": v for k, v in vae_info.items()})
