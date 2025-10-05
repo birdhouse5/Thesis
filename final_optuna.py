@@ -95,3 +95,8 @@ if __name__ == "__main__":
     print(f"\n=== Best Trial ({args.reward_type}) ===")
     print(f"Value: {study.best_trial.value}")
     print(f"Params: {study.best_trial.params}")
+
+    # sp500 dsr 1
+    # crypto dsr 2
+    # sp500 sharpe 4
+    # sp500 drawdown 5

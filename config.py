@@ -83,7 +83,7 @@ class TrainingConfig:
     rf_rate: float = 0.02
     transaction_cost_rate: float = 0.001
     force_recreate: bool = False
-    inflation_rate: float = 0.1
+    inflation_rate: float
     reward_type: str = "dsr"
     reward_lookback: int = 20
     vae_num_elbo_terms: int = 8
