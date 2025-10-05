@@ -1,0 +1,18 @@
+{
+  "study_name": "ppo_vae_crypto_drawdown",
+  "asset_class": "crypto",
+  "reward_type": "drawdown",
+  "best_value": 31.651033639907837,
+  "best_params": {
+    "latent_dim": 64,
+    "hidden_dim": 768,
+    "vae_lr": 1.0889137593040411e-05,
+    "policy_lr": 0.0002520226318151366,
+    "vae_beta": 0.17699799843877007,
+    "entropy_coef": 0.0041456955802857695,
+    "ppo_clip_ratio": 0.10342265483394283,
+    "eta": 0.026641331384536962,
+    "reward_lookback": 50
+  },
+  "n_trials": 50
+}
