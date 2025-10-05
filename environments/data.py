@@ -31,25 +31,33 @@ SP500_TICKERS = [
     'DD'                                          # Materials
 ]
 
-# Coverage window discovered by scanner
-CRYPTO_START_DATE = datetime(2019, 4, 18, 6, 0, 0)
-CRYPTO_END_DATE = datetime(2025, 10, 3, 13, 45, 0)
-# CRYPTO_TICKERS = [
-#     "BTCUSDT", "ETHUSDT", "BNBUSDT", "NEOUSDT", "LTCUSDT",
-#     "QTUMUSDT", "ADAUSDT", "XRPUSDT", "IOTAUSDT", "TUSDUSDT",
-#     "XLMUSDT", "ONTUSDT", "TRXUSDT", "ETCUSDT", "ICXUSDT",
-#     "VETUSDT", "USDCUSDT", "LINKUSDT", "ONGUSDT", "HOTUSDT",
-#     "ZILUSDT", "FETUSDT", "ZRXUSDT", "BATUSDT", "ZECUSDT",
-#     "IOSTUSDT", "CELRUSDT", "DASHUSDT", "THETAUSDT", "ENJUSDT"
-# ]
+# Coverage window discovered by scanner: full range
+# CRYPTO_START_DATE = datetime(2019, 4, 18, 6, 0, 0)
+# CRYPTO_END_DATE = datetime(2025, 10, 3, 13, 45, 0)
+
+# moderate range (1 year)
+CRYPTO_START_DATE = datetime(2024, 1, 1, 0, 0, 0)
+CRYPTO_END_DATE = datetime(2025, 1, 1, 0, 0, 0)
+
+# 30 tickers
 CRYPTO_TICKERS = [
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "NEOUSDT", "LTCUSDT",
-    "QTUMUSDT", "ADAUSDT", "XRPUSDT", "IOTAUSDT", 
+    "QTUMUSDT", "ADAUSDT", "XRPUSDT", "IOTAUSDT", "TUSDUSDT",
     "XLMUSDT", "ONTUSDT", "TRXUSDT", "ETCUSDT", "ICXUSDT",
-    "VETUSDT", "LINKUSDT", "ONGUSDT", "HOTUSDT",
+    "VETUSDT", "USDCUSDT", "LINKUSDT", "ONGUSDT", "HOTUSDT",
     "ZILUSDT", "FETUSDT", "ZRXUSDT", "BATUSDT", "ZECUSDT",
     "IOSTUSDT", "CELRUSDT", "DASHUSDT", "THETAUSDT", "ENJUSDT"
 ]
+
+# 28 tickers
+# CRYPTO_TICKERS = [
+#     "BTCUSDT", "ETHUSDT", "BNBUSDT", "NEOUSDT", "LTCUSDT",
+#     "QTUMUSDT", "ADAUSDT", "XRPUSDT", "IOTAUSDT", 
+#     "XLMUSDT", "ONTUSDT", "TRXUSDT", "ETCUSDT", "ICXUSDT",
+#     "VETUSDT", "LINKUSDT", "ONGUSDT", "HOTUSDT",
+#     "ZILUSDT", "FETUSDT", "ZRXUSDT", "BATUSDT", "ZECUSDT",
+#     "IOSTUSDT", "CELRUSDT", "DASHUSDT", "THETAUSDT", "ENJUSDT"
+# ]
 
 
 # ETF_TICKERS = [
