@@ -13,6 +13,7 @@ import time
 import pandas as pd
 import argparse
 from tqdm import tqdm
+from hpo_utils import load_hpo_params
 
 
 # --- import your config system ---
@@ -356,6 +357,10 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         # Ensure dataset exists
         cfg.data_path = ensure_dataset_exists(cfg)
 
+        # Apply HPO parameters if provided
+        if hasattr(cfg, '_from_hpo_path'):
+            cfg = load_hpo_params(cfg._from_hpo_path, cfg)
+
         # Prepare environments
         environments, split_tensors, datasets = prepare_environments(cfg)
         train_env, val_env, test_env = environments['train'], environments['val'], environments['test']
@@ -589,7 +594,9 @@ def main():
     parser.add_argument("--disable_inflation", action="store_true",
                     help="Disable inflation penalty (set to 0)")
     parser.add_argument("--inflation_rate", type=float, default=None,
-                    help="Override inflation rate (default: 0.1)")                    
+                    help="Override inflation rate (default: 0.1)")
+    parser.add_argument("--load_hpo_params", type=str, default=None,
+                    help="Path to HPO results JSON")                    
 
     args = parser.parse_args()
 
@@ -602,13 +609,18 @@ def main():
     # Generate all experiment configurations
     experiments = generate_experiment_configs(num_seeds=5) # TODO 
     # Apply CLI overrides
+    # Apply CLI overrides
     for exp in experiments:
         if args.exp_name:
             exp.exp_name = args.exp_name
         if args.force_recreate:
             exp.force_recreate = True
         
-        # NEW: Add cost/inflation overrides to experiment config
+        # Store HPO path for later application
+        if args.load_hpo_params:
+            exp._hpo_path = args.load_hpo_params
+        
+        # Cost/inflation overrides
         if args.disable_transaction_costs:
             exp.transaction_cost_rate = 0.0
         elif args.transaction_cost_rate is not None:
@@ -630,6 +642,11 @@ def main():
     logger.info("- Seeds: 0-9 (10 seeds per combination)")
     logger.info(f"- Total: {len(experiments)} experiments")
     
+    # Store HPO path in experiments
+    if args.load_hpo_params:
+        for exp in experiments:
+            exp._hpo_params_path = args.load_hpo_params
+
     # Run all experiments
     summary = run_experiment_batch(
         experiments, 
