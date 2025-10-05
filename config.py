@@ -80,10 +80,10 @@ class TrainingConfig:
     max_horizon: int
     eta: float
     ppo_minibatch_size: int
+    inflation_rate: float    
     rf_rate: float = 0.02
     transaction_cost_rate: float = 0.001
     force_recreate: bool = False
-    inflation_rate: float
     reward_type: str = "dsr"
     reward_lookback: int = 20
     vae_num_elbo_terms: int = 8
