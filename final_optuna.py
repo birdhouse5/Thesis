@@ -96,9 +96,18 @@ if __name__ == "__main__":
     print(f"Value: {study.best_trial.value}")
     print(f"Params: {study.best_trial.params}")
 
-    # sp500 dsr 1
-    # crypto dsr 2
 
+# crypto dsr 2 - dead, restarting on new instance
+# crypto drawdown 6 -running
+# crypto sharpe 7 -running
+
+
+# sp500 dsr 1
+
+# === Best Trial (dsr) ===
+# Value: -22.774434161186218
+# Params: {'latent_dim': 16, 'hidden_dim': 768, 'vae_lr': 0.0004168866266434878, 'policy_lr': 6.352625921335406e-05, 'vae_beta': 0.02290780543112849, 'entropy_coef': 0.044993274822514355, 'ppo_clip_ratio': 0.24029892440847633, 'eta': 0.09898951901674358, 'reward_lookback': 14}
+# (venv) root@C.26465698:/workspace/Thesis$ 
 
 
     # sp500 sharpe 4
@@ -114,9 +123,6 @@ if __name__ == "__main__":
 # 'eta': 0.001069954956673335, 
 # 'reward_lookback': 27}
 
-    
-
-
     # sp500 drawdown 5
 #     === Best Trial (drawdown) ===
 # Value: 37.967431259155276
@@ -130,5 +136,3 @@ if __name__ == "__main__":
 # 'eta': 0.004665718933151942, 
 # reward_lookback': 50}
 
-
-# crypto drawdown 6
