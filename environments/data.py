@@ -235,7 +235,7 @@ class PortfolioDataset:
         
         if self.full_data['date'].dt.tz is not None:
             self.full_data['date'] = self.full_data['date'].dt.tz_localize(None)
-            
+
         if self.proportional:
             # Proportional splitting
             unique_dates = sorted(self.full_data['date'].unique())
@@ -583,7 +583,7 @@ class PortfolioDataset:
             current_start = current_end
         
         total_chunks_expected = len(chunks) + len(completed_chunks)
-        logger.info(f"   📊 Total chunks: {total_chunks} ({len(chunks)} remaining)")
+        logger.info(f"   📊 Total chunks: {total_chunks_expected} ({len(chunks)} remaining)")
         
         # Download each chunk
         for i, chunk in enumerate(chunks):
