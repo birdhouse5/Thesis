@@ -371,7 +371,7 @@ class PPOTrainer:
     def train_on_task(self) -> Dict[str, float]:
         """Train over multiple episodes on same task (BAMDP) - MEMORY OPTIMIZED"""
         
-        log_memory("Task start")
+        #log_memory("Task start")
         
         # Sample task once
         task = self.env.sample_task()
@@ -403,19 +403,19 @@ class PPOTrainer:
         
         # Multiple episodes on same task
         for episode_idx in range(self.config.episodes_per_task):
-            log_memory(f"Episode {episode_idx} start")
+            #log_memory(f"Episode {episode_idx} start")
             
             # Collect trajectory with MINIMAL context
             trajectory = self.collect_trajectory_with_context_v2(
                 context_obs_list, context_act_list, context_rew_list
             )
-            log_memory(f"Episode {episode_idx} collected")
+            #log_memory(f"Episode {episode_idx} collected")
             
             episode_reward = float(trajectory["rewards"].sum().item())
             episode_rewards.append(episode_reward)
 
             self.vae_buffer.append(trajectory)  # Store for VAE training
-            logger.debug(f"  Added trajectory to VAE buffer (size: {len(self.vae_buffer)})")
+            #logger.debug(f"  Added trajectory to VAE buffer (size: {len(self.vae_buffer)})")
 
             # NEW: Track where this episode ends in the accumulated trajectory
             traj_length = len(trajectory["observations"])
