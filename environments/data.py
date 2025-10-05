@@ -233,6 +233,9 @@ class PortfolioDataset:
         """Set up train/val/test splits"""
         self.full_data['date'] = pd.to_datetime(self.full_data['date'])
         
+        if self.full_data['date'].dt.tz is not None:
+            self.full_data['date'] = self.full_data['date'].dt.tz_localize(None)
+            
         if self.proportional:
             # Proportional splitting
             unique_dates = sorted(self.full_data['date'].unique())
@@ -579,13 +582,13 @@ class PortfolioDataset:
             
             current_start = current_end
         
-        total_chunks = len(chunks) + len(completed_chunks)
+        total_chunks_expected = len(chunks) + len(completed_chunks)
         logger.info(f"   📊 Total chunks: {total_chunks} ({len(chunks)} remaining)")
         
         # Download each chunk
         for i, chunk in enumerate(chunks):
-            chunk_num = len(completed_chunks) + i + 1
-            logger.info(f"\n📦 Chunk {chunk_num}/{total_chunks}: {chunk['start'].date()} to {chunk['end'].date()}")
+            absolute_chunk_num = len(completed_chunks) + i + 1
+            logger.info(f"\n📦 Chunk {absolute_chunk_num}/{total_chunks_expected}: {chunk['start'].date()} to {chunk['end'].date()}")
             
             chunk_data = self._download_chunk(
                 symbols=symbols,
@@ -633,8 +636,21 @@ class PortfolioDataset:
         
         # Cleanup progress file on success
         if progress_file.exists():
-            progress_file.unlink()
-            logger.info(f"   🧹 Cleaned up progress file")
+            with open(progress_file, 'rb') as f:
+                saved_state = pickle.load(f)
+                # Verify parameters match
+                saved_params = saved_state.get('params', {})
+                current_params = {
+                    'start_date': start_date, 
+                    'end_date': end_date,
+                    'chunk_days': chunk_days
+                }
+                if saved_params != current_params:
+                    logger.warning("Parameters changed, starting fresh")
+                    progress_file.unlink()
+                    completed_chunks = set()
+                    all_chunks = []
+                    logger.info(f"   🧹 Cleaned up progress file")
         
         return combined_data
 
