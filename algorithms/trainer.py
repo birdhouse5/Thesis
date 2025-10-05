@@ -452,9 +452,9 @@ class PPOTrainer:
             all_transitions["dones"][boundary_idx] = False
         
         # Single update on entire BAMDP trajectory
-        log_memory("Before update")
+        #log_memory("Before update")
         total_loss, update_info = self.update_ppo_and_vae(all_transitions)
-        log_memory("After update")
+        #log_memory("After update")
         
         # Build results BEFORE cleanup
         final_capital = self.env.current_capital
@@ -503,7 +503,7 @@ class PPOTrainer:
             torch.cuda.empty_cache()
         gc.collect()
         
-        log_memory("After aggressive cleanup")
+        #log_memory("After aggressive cleanup")
         return results
 
     def collect_trajectory_with_context_v2(self, context_obs, context_act, context_rew):
