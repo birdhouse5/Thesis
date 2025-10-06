@@ -153,7 +153,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         val_episodes=50,
         test_episodes=100, #-> we do final test on these number of episodes
         ppo_clip_ratio=0.19086925122925438, # optuna result1 - best # 0.13374380455551138, #0.1473333435286036, optuna 2 # 
-        value_loss_coef=0.5, # optuna 2 0.9981350917703767, 
+        value_loss_coef=1.0 #0.5, # optuna 2 0.9981350917703767, 
         max_grad_norm=1.0, # let's try to fix  entropy TODO# 0.5, before
         gae_lambda=0.95,
         discount_factor=0.99,
