@@ -244,17 +244,25 @@ class TrainingCSVLogger:
             self._write_headers()
     
     def _write_headers(self):
+        # headers = [
+        #     'experiment_name', 'seed', 'asset_class', 'encoder', 'episode',
+        #     'policy_loss', 'value_loss', 'entropy', 'vae_loss',
+        #     'vae_recon_obs', 'vae_recon_reward', 'vae_kl', 'vae_total', 
+        #     'vae_context_len', 'vae_latent_mu_mean', 'vae_latent_logvar_mean',
+        #     'hmm_converged', 'hmm_log_likelihood', 
+        #     'hmm_regime_0_prob', 'hmm_regime_1_prob', 'hmm_regime_2_prob', 'hmm_regime_3_prob',
+        #     'episode_sum_reward', 'episode_final_capital', 'episode_total_return', 
+        #     'steps_per_episode', 'episode_count'
+        # ]
         headers = [
-            'experiment_name', 'seed', 'asset_class', 'encoder', 'episode',
+            'experiment_name', 'seed', 'asset_class', 'encoder', 'cumulative_episodes',
             'policy_loss', 'value_loss', 'entropy', 'vae_loss',
-            'vae_recon_obs', 'vae_recon_reward', 'vae_kl', 'vae_total', 
-            'vae_context_len', 'vae_latent_mu_mean', 'vae_latent_logvar_mean',
-            'hmm_converged', 'hmm_log_likelihood', 
-            'hmm_regime_0_prob', 'hmm_regime_1_prob', 'hmm_regime_2_prob', 'hmm_regime_3_prob',
-            'episode_sum_reward', 'episode_final_capital', 'episode_total_return', 
-            'steps_per_episode', 'episode_count'
+            # Task-level metrics (what you actually have)
+            'task_total_reward', 'task_avg_reward_per_episode', 
+            'task_final_capital', 'task_cumulative_return',
+            'total_steps', 'episodes_per_task', 'task_count'
         ]
-        
+
         with open(self.csv_path, 'w') as f:
             f.write(','.join(headers) + '\n')
     
