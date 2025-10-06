@@ -284,7 +284,7 @@ class TrainingCSVLogger:
 
         # Fallbacks for expected metrics
         row = [
-            self.experiment_name, self.seed, self.asset_class, self.encoder, episode,
+            self.experiment_name, self.seed, self.asset_class, self.encoder, task,
             metrics.get('policy_loss', 0.0),
             metrics.get('value_loss', 0.0),
             metrics.get('entropy', 0.0),
