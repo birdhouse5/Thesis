@@ -275,9 +275,9 @@ class TrainingCSVLogger:
     def log_task(self, task: int, metrics: Dict[str, Any]):
         """Log one training episode or task summary."""
         logger = logging.getLogger(__name__)
-        logger.info(f"=== TrainingCSVLogger.log_episode DEBUG ===")
-        logger.info(f"  Task: {task}")
-        logger.info(f"  Received metrics keys: {list(metrics.keys())}")
+        # logger.info(f"=== TrainingCSVLogger.log_episode DEBUG ===")
+        # logger.info(f"  Task: {task}")
+        # logger.info(f"  Received metrics keys: {list(metrics.keys())}")
 
         # Extract VAE and HMM metrics
         vae_metrics = {k[4:]: v for k, v in metrics.items() if k.startswith('vae_')}
