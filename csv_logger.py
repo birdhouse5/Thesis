@@ -256,7 +256,8 @@ class TrainingCSVLogger:
         # ]
         headers = [
             'experiment_name', 'seed', 'asset_class', 'encoder', 'cumulative_episodes',
-            'policy_loss', 'value_loss', 'entropy', 'vae_loss',
+            'policy_loss', 'value_loss', 'entropy', 'advantages_mean', 'advantages_std', 
+            'advantages_min', 'advantages_max', 'vae_loss',
             'vae_recon_obs', 'vae_recon_reward', 'vae_kl', 'vae_total', 
             'vae_context_len', 'vae_latent_mu_mean', 'vae_latent_logvar_mean',
             'hmm_converged', 'hmm_log_likelihood', 
@@ -288,6 +289,10 @@ class TrainingCSVLogger:
             metrics.get('policy_loss', 0.0),
             metrics.get('value_loss', 0.0),
             metrics.get('entropy', 0.0),
+            metrics.get('advantages_mean', 0.0),
+            metrics.get('advantages_std', 0.0),
+            metrics.get('advantages_min', 0.0),
+            metrics.get('advantages_max', 0.0),
             metrics.get('vae_loss', 0.0),
             vae_metrics.get('recon_obs', 0.0),
             vae_metrics.get('recon_reward', 0.0),

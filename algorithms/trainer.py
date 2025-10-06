@@ -917,6 +917,10 @@ class PPOTrainer:
                         "policy_loss": float(policy_loss.item()),
                         "value_loss": float(value_loss.item()),
                         "entropy": float(entropy.mean().item()),
+                        "advantages_mean": float(advantages.mean().item()), #TODO
+                        "advantages_std": float(advantages.std().item()),
+                        "advantages_min": float(advantages.min().item()),
+                        "advantages_max": float(advantages.max().item()),
                     }
                 
                 final_ratio_mean = float(ratio.mean().item())
