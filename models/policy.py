@@ -59,6 +59,9 @@ class PortfolioPolicy(nn.Module):
         if latent.shape[1] == 0:  # handle latent_dim=0
             latent = torch.zeros(B, 1, device=obs.device)
 
+        # latent normalization TODO 
+        latent = (latent - latent.mean(dim=0, keepdim=True)) / (latent.std(dim=0, keepdim=True) + 1e-8)
+
         latent_features = self.latent_encoder(latent)
         combined = torch.cat([obs_features, latent_features], dim=-1)
         shared = self.shared_layers(combined)
