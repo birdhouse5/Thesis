@@ -60,7 +60,9 @@ class PortfolioPolicy(nn.Module):
             latent = torch.zeros(B, 1, device=obs.device)
 
         # latent normalization TODO 
-        latent = (latent - latent.mean(dim=0, keepdim=True)) / (latent.std(dim=0, keepdim=True) + 1e-8)
+        latent = (latent - latent.mean(dim=0, keepdim=True)) / (latent.std(dim=0, keepdim=True) + 1e-6)
+        latent = torch.nan_to_num(latent, nan=0.0, posinf=0.0, neginf=0.0)
+        latent = torch.clamp(latent, -10, 10)
 
         latent_features = self.latent_encoder(latent)
         combined = torch.cat([obs_features, latent_features], dim=-1)
