@@ -365,10 +365,22 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         environments, split_tensors, datasets = prepare_environments(cfg)
         train_env, val_env, test_env = environments['train'], environments['val'], environments['test']
 
-        # Get observation shape
-        task = train_env.sample_task()
-        train_env.set_task(task)
-        obs_shape = train_env.reset().shape
+        # === Define observation shape depending on encoder type === TODO
+        if cfg.encoder == "none":
+            logger.info("🧠 Running basic PPO training on entire training set (no task sampling)")
+            # Use full dataset as single environment
+            train_env.current_task = {
+                "features": train_env.dataset["features"],
+                "raw_prices": train_env.dataset["raw_prices"]
+            }
+            train_env.set_task({"sequence": train_env.current_task, "task_id": 0})
+            obs_shape = train_env.reset().shape
+            
+        else:
+            # Get observation shape
+            task = train_env.sample_task()
+            train_env.set_task(task)
+            obs_shape = train_env.reset().shape
 
         # Create models
         encoder, policy = create_models(cfg, obs_shape)
@@ -416,9 +428,17 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
             while episodes_trained < cfg.max_episodes and not early_stopped:
                 
                 # Train on one task (multiple episodes with persistent context)
-                result = trainer.train_on_task()
+                # Select training mode depending on encoder
+                if cfg.encoder == "none":
+                    # Basic RL — single PPO episode training
+                    result = trainer.train_episode()
+                    episodes_trained += 1
+                else:
+                    # Meta-RL — multiple episodes per sampled task
+                    result = trainer.train_on_task()
+                    episodes_trained += cfg.episodes_per_task
+                
                 tasks_trained += 1
-                episodes_trained += cfg.episodes_per_task
                 pbar.update(1)
                 
                 logger.info(f"=== main.py train_on_task RESULT DEBUG ===")
