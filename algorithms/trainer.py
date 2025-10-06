@@ -352,7 +352,6 @@ class PPOTrainer:
             
             # Environment step
             next_obs, reward_scalar, done_flag, info = self.env.step(actions_raw.squeeze(0))
-            logger.info(f"\n--------------------------REWARD SIGNAL-------------------------{reward_scalar}\n")
             
             # Store step data
             observations[step] = obs_tensor.squeeze(0)
