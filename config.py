@@ -80,13 +80,15 @@ class TrainingConfig:
     max_horizon: int
     eta: float
     ppo_minibatch_size: int
-    inflation_rate: float    
+    inflation_rate: float   
+    use_cpu_context: bool
     rf_rate: float = 0.02
     transaction_cost_rate: float = 0.001
     force_recreate: bool = False
     reward_type: str = "dsr"
     reward_lookback: int = 20
     vae_num_elbo_terms: int = 8
+    
     
 
 def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
@@ -164,7 +166,8 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         reward_lookback=39, # optuna result1 - best
         inflation_rate=exp.inflation_rate if exp.inflation_rate is not None else 0.1,
         ppo_minibatch_size = 128,
-        vae_num_elbo_terms = 8
+        vae_num_elbo_terms = 8,
+        use_cpu_context = False
     )
 
     if hasattr(exp, '_hpo_path'):

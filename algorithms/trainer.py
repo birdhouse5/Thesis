@@ -202,10 +202,15 @@ class PPOTrainer:
             
             # Update context (move to CPU immediately)
             T = len(trajectory["observations"])
+            #if self.config.use_cpu_context:
             for t in range(T):
                 context_obs_list.append(trajectory["observations"][t].detach().cpu())
                 context_act_list.append(trajectory["actions"][t].detach().cpu())
                 context_rew_list.append(trajectory["rewards"][t].detach().cpu())
+            # else:
+            #     context_obs_list.append(trajectory["observations"][t].detach())
+            #     context_act_list.append(trajectory["actions"][t].detach())
+            #     context_rew_list.append(trajectory["rewards"][t].detach())
             
             # CRITICAL: Delete trajectory immediately after copying
             del trajectory
@@ -904,6 +909,13 @@ class PPOTrainer:
                 # Update
                 self.policy_optimizer.zero_grad()
                 ppo_loss.backward()
+
+                if hasattr(self.policy, "actor_logstd"):
+                    grad = self.policy.actor_logstd.grad
+                    if grad is None:
+                        logger.info("actor_logstd.grad = None (no gradient)")
+                    else:
+                        logger.info("actor_logstd grad norm:", grad.norm().item())
 
                 # Log gradient norm before clipping
                 policy_grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), float('inf'))

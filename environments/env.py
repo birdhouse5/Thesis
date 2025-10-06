@@ -25,7 +25,8 @@ def normalize_with_budget_constraint(raw_actions, eps: float = 1e-8):
     if is_torch:
         return weights_t, w_cash_t
     else:
-        return weights_t.detach().cpu().numpy(), float(w_cash_t.detach().cpu().item())
+        #return weights_t.detach().cpu().numpy(), float(w_cash_t.detach().cpu().item())
+        return weights_t.detach(), w_cash_t.detach()
 
 
 class MetaEnv:
