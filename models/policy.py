@@ -46,7 +46,8 @@ class PortfolioPolicy(nn.Module):
             nn.Linear(hidden_dim // 2, num_assets),
             nn.Tanh()  # ← bounding outputs to [-1, 1]
         )
-        self.actor_logstd = nn.Parameter(torch.zeros(num_assets))
+        # self.actor_logstd = nn.Parameter(torch.zeros(num_assets)) TODO
+        self.actor_logstd = nn.Parameter(torch.zeros(num_assets) * -1.0)
         # Critic
         self.critic_head = nn.Linear(hidden_dim // 2, 1)           # Value function
         
