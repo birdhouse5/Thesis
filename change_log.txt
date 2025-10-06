@@ -1,0 +1,5 @@
+
+
+1) Clamping the logvar values with torch.clamp(logvar, min=-10, max=2) limits the range of the latent variance during reparameterization in a Variational Autoencoder (VAE). This prevents the standard deviation (std = exp(0.5 * logvar)) from becoming either too small—leading to vanishing gradients and posterior collapse—or too large—causing unstable, noisy samples and exploding gradients. By constraining logvar to a reasonable range, the model maintains numerical stability and ensures smoother, more reliable training of the latent space.
+
+

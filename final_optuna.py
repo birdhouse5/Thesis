@@ -97,8 +97,8 @@ if __name__ == "__main__":
     print(f"Params: {study.best_trial.params}")
 
 
-# crypto dsr 2 - dead, restarting on new instance
-# crypto drawdown 6 -running
+# crypto dsr 1 - running
+
 # crypto sharpe 7 -running
 
 
@@ -136,3 +136,16 @@ if __name__ == "__main__":
 # 'eta': 0.004665718933151942, 
 # reward_lookback': 50}
 
+# crypto drawdown 6
+
+# === Best Trial (drawdown) ===
+# Value: 31.651033639907837
+# Params: {'latent_dim': 64, 
+# 'hidden_dim': 768, 
+# 'vae_lr': 1.0889137593040411e-05, 
+# 'policy_lr': 0.0002520226318151366, 
+# 'vae_beta': 0.17699799843877007, 
+# 'entropy_coef': 0.0041456955802857695, 
+# 'ppo_clip_ratio': 0.10342265483394283, 
+# 'eta': 0.026641331384536962, 
+# 'reward_lookback': 50}

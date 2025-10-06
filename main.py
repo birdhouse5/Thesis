@@ -669,7 +669,15 @@ if __name__ == "__main__":
 
 
 # full studies 
-# t1: sp500 DSR - running
-# t2: sp500 Sharpe - running
+# t1: sp500 DSR - done
+# t2: sp500 Sharpe - done
+
+# t1: crypto Sharpe HPO
+# t2: crypto 
+
+
+
 # t1: sp500 drawdown - running on new instance
-# t2 crypto DSR
+# t2 crypto drawdown
+
+
