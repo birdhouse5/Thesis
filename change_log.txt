@@ -6,3 +6,5 @@
 2) Advantage scaling
 
 3) Entropy Coef. Annealing
+
+4) latent normalization
