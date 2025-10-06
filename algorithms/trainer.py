@@ -829,7 +829,7 @@ class PPOTrainer:
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         # 🔥 Scale advantage magnitude to strengthen PPO signal TODO
-        adv_scale = 5.0
+        adv_scale = 1.0 # 5.0 too strong??
         advantages = advantages * adv_scale
 
 
