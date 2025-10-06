@@ -19,7 +19,7 @@ def log_memory(label):
     if torch.cuda.is_available():
         allocated = torch.cuda.memory_allocated() / 1024**3
         reserved = torch.cuda.memory_reserved() / 1024**3
-        logger.info(f"[{label}] GPU: {allocated:.2f}GB alloc, {reserved:.2f}GB reserved")
+        #logger.info(f"[{label}] GPU: {allocated:.2f}GB alloc, {reserved:.2f}GB reserved")
 
 def diagnose_gpu_tensors():
     """Find all tensors on GPU"""
@@ -235,14 +235,14 @@ class PPOTrainer:
         cumulative_return = final_capital / self.env.initial_capital - 1.0
         total_steps = int(all_transitions["rewards"].shape[0])
         
-        logger.info(f"=== train_on_task DEBUG (Task {self.task_count}) ===")
-        logger.info(f"  Episodes per task: {self.config.episodes_per_task}")
-        logger.info(f"  Total steps in task: {total_steps}")
-        logger.info(f"  Episode rewards: {episode_rewards}")
-        logger.info(f"  update_info keys: {list(update_info.keys())}")
-        logger.info(f"  update_info values: {update_info}")
-        logger.info(f"  Final capital: {final_capital}")
-        logger.info(f"  Cumulative return: {cumulative_return}")
+        # logger.info(f"=== train_on_task DEBUG (Task {self.task_count}) ===")
+        # logger.info(f"  Episodes per task: {self.config.episodes_per_task}")
+        # logger.info(f"  Total steps in task: {total_steps}")
+        # logger.info(f"  Episode rewards: {episode_rewards}")
+        # logger.info(f"  update_info keys: {list(update_info.keys())}")
+        # logger.info(f"  update_info values: {update_info}")
+        # logger.info(f"  Final capital: {final_capital}")
+        # logger.info(f"  Cumulative return: {cumulative_return}")
 
         results = {
             "policy_loss": update_info.get("policy_loss", 0.0),
@@ -855,15 +855,15 @@ class PPOTrainer:
             last_value = last_value.detach().to(self.device)
         
 
-        logger.info(f"=== PRE-GAE DIAGNOSTICS ===")
-        logger.info(f"Rewards: mean={rewards.mean():.6f}, std={rewards.std():.6f}, min={rewards.min():.6f}, max={rewards.max():.6f}")
-        logger.info(f"Values: mean={values.mean():.6f}, std={values.std():.6f}")
+        # logger.info(f"=== PRE-GAE DIAGNOSTICS ===")
+        # logger.info(f"Rewards: mean={rewards.mean():.6f}, std={rewards.std():.6f}, min={rewards.min():.6f}, max={rewards.max():.6f}")
+        # logger.info(f"Values: mean={values.mean():.6f}, std={values.std():.6f}")
         
         # Compute advantages once
         advantages, returns = self.compute_gae(rewards, values, dones, last_value)
 
-        logger.info(f"=== POST-GAE DIAGNOSTICS ===")
-        logger.info(f"Raw advantages (pre-detach): mean={advantages.mean():.6f}, std={advantages.std():.6f}, min={advantages.min():.6f}, max={advantages.max():.6f}")
+        # logger.info(f"=== POST-GAE DIAGNOSTICS ===")
+        # logger.info(f"Raw advantages (pre-detach): mean={advantages.mean():.6f}, std={advantages.std():.6f}, min={advantages.min():.6f}, max={advantages.max():.6f}")
 
         advantages = advantages.detach()
         returns = returns.detach()
@@ -945,12 +945,12 @@ class PPOTrainer:
                 self.policy_optimizer.zero_grad()
                 ppo_loss.backward()
 
-                if hasattr(self.policy, "actor_logstd"):
-                    grad = self.policy.actor_logstd.grad
-                    if grad is None:
-                        logger.info(f"----------------------------actor_logstd.grad = None (no gradient)----------------------------")
-                    else:
-                        logger.info(f"----------------------------actor_logstd grad norm: {grad.norm().item()} ----------------------------")
+                # if hasattr(self.policy, "actor_logstd"):
+                #     grad = self.policy.actor_logstd.grad
+                #     if grad is None:
+                #         logger.info(f"----------------------------actor_logstd.grad = None (no gradient)----------------------------")
+                #     else:
+                #         logger.info(f"----------------------------actor_logstd grad norm: {grad.norm().item()} ----------------------------")
 
                 # Log gradient norm before clipping
                 policy_grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), float('inf'))
@@ -974,13 +974,13 @@ class PPOTrainer:
         if self.vae_enabled:
             logger.debug(f"VAE enabled, checking update condition: episode_count={self.episode_count}, vae_update_freq={self.config.vae_update_freq}, modulo={self.episode_count % self.config.vae_update_freq}")
 
-        logger.info(f"=== update_ppo_and_vae DEBUG ===")
-        logger.info(f"  VAE enabled: {self.vae_enabled}")
-        logger.info(f"  Episode count: {self.episode_count}")
-        logger.info(f"  VAE update freq: {self.config.vae_update_freq}")
-        logger.info(f"  Update condition: {self.episode_count % self.config.vae_update_freq == 0}")
-        logger.info(f"  VAE buffer size: {len(self.vae_buffer)}")
-        logger.info(f"  first_epoch_metrics before VAE: {first_epoch_metrics}")
+        # logger.info(f"=== update_ppo_and_vae DEBUG ===")
+        # logger.info(f"  VAE enabled: {self.vae_enabled}")
+        # logger.info(f"  Episode count: {self.episode_count}")
+        # logger.info(f"  VAE update freq: {self.config.vae_update_freq}")
+        # logger.info(f"  Update condition: {self.episode_count % self.config.vae_update_freq == 0}")
+        # logger.info(f"  VAE buffer size: {len(self.vae_buffer)}")
+        # logger.info(f"  first_epoch_metrics before VAE: {first_epoch_metrics}")
 
         # VAE UPDATE with aggressive cleanup
         vae_loss_val = 0.0
@@ -1047,10 +1047,10 @@ class PPOTrainer:
                         prior_logvar=prior_logvar_batch
                     )
                     
-                    logger.info(f"  VAE loss computed: {vae_loss.item()}")
-                    logger.info(f"  VAE info keys: {list(vae_info.keys())}")
-                    logger.info(f"  VAE info values: {vae_info}")
-                    logger.info(f"  Adding to first_epoch_metrics: {[f'vae_{k}' for k in vae_info.keys()]}")
+                    # logger.info(f"  VAE loss computed: {vae_loss.item()}")
+                    # logger.info(f"  VAE info keys: {list(vae_info.keys())}")
+                    # logger.info(f"  VAE info values: {vae_info}")
+                    # logger.info(f"  Adding to first_epoch_metrics: {[f'vae_{k}' for k in vae_info.keys()]}")
 
                     
                     # logger.info(f"  Loss breakdown:")
