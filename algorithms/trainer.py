@@ -261,20 +261,32 @@ class PPOTrainer:
         del context_act_list  
         del context_rew_list
         
-        # Clear optimizer state periodically (every 10 tasks)
+        # Clear optimizers state periodically (every 10 tasks)
         if self.task_count % 10 == 0:
-            self.optimizer.zero_grad(set_to_none=True)
-            # Force optimizer state reset
-            for group in self.optimizer.param_groups:
+            self.policy_optimizer.zero_grad(set_to_none=True)
+            for group in self.policy_optimizer.param_groups:
                 for p in group['params']:
                     if p.grad is not None:
                         p.grad.detach_()
                         p.grad = None
-                    state = self.optimizer.state.get(p, None)
+                    state = self.policy_optimizer.state.get(p, None)
                     if state is not None:
                         for k, v in state.items():
                             if torch.is_tensor(v):
                                 state[k] = v.detach()
+            
+            if self.vae_optimizer:
+                self.vae_optimizer.zero_grad(set_to_none=True)
+                for group in self.vae_optimizer.param_groups:
+                    for p in group['params']:
+                        if p.grad is not None:
+                            p.grad.detach_()
+                            p.grad = None
+                        state = self.vae_optimizer.state.get(p, None)
+                        if state is not None:
+                            for k, v in state.items():
+                                if torch.is_tensor(v):
+                                    state[k] = v.detach()
         
         if torch.cuda.is_available():
             torch.cuda.synchronize()
