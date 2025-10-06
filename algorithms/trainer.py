@@ -987,7 +987,7 @@ class PPOTrainer:
                         prior_mu=prior_mu_batch,
                         prior_logvar=prior_logvar_batch
                     )
-
+                    
                     logger.info(f"  VAE loss computed: {vae_loss.item()}")
                     logger.info(f"  VAE info keys: {list(vae_info.keys())}")
                     logger.info(f"  VAE info values: {vae_info}")
@@ -1040,6 +1040,11 @@ class PPOTrainer:
         first_epoch_metrics["vae_loss"] = vae_loss_val
         first_epoch_metrics["ratio_mean"] = final_ratio_mean
         
+        # Map VAE-specific metrics for logger compatibility
+        if "vae_num_elbo_terms" in first_epoch_metrics:
+            first_epoch_metrics["vae_context_len"] = first_epoch_metrics["vae_num_elbo_terms"]
+
+
         return torch.tensor(0.0), first_epoch_metrics
 
     def compute_advantages(self, trajectory):
