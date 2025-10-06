@@ -366,9 +366,8 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         train_env, val_env, test_env = environments['train'], environments['val'], environments['test']
 
         # === Define observation shape depending on encoder type === TODO
-        if cfg.encoder == "none":
-            logger.info("🧠 Running basic PPO training on entire training set (no task sampling)")
-            # Use full dataset as single environment
+        if cfg.encoder in ["none", "hmm"]:
+            logger.info("🧠 Running basic PPO training on full dataset (no task sampling)")
             train_env.current_task = {
                 "features": train_env.dataset["features"],
                 "raw_prices": train_env.dataset["raw_prices"]
@@ -427,9 +426,9 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         with tqdm(total=total_tasks, desc=f"Training Progress (tasks)") as pbar:
             while episodes_trained < cfg.max_episodes and not early_stopped:
                 
-                # Train on one task (multiple episodes with persistent context)
+                # Train on one task (multiple episodes with persistent context) TODO
                 # Select training mode depending on encoder
-                if cfg.encoder == "none":
+                if cfg.encoder in ["none", "hmm"]:
                     # Basic RL — single PPO episode training
                     result = trainer.train_episode()
                     episodes_trained += 1

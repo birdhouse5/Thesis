@@ -1207,32 +1207,71 @@ class PPOTrainer:
             self.vae_optimizer.load_state_dict(state["vae_optimizer"])
 
     def _get_latent_for_step(self, obs_tensor, trajectory_context):
-        """Get latent encoding for current step, supporting both episodic and sequential modes."""
-        if getattr(self.config, "disable_vae", False):
+        """
+        Get latent encoding for current step, supporting both VAE and HMM.
+        For HMM we want to use the frozen encoder outputs even though disable_vae=True.
+        """
+        # If no encoder at all, just zeros
+        if self.vae is None:
             return torch.zeros(1, self.config.latent_dim, device=self.device)
-        
-        # Choose context source based on mode
+
+        # Build a short context from current trajectory (same as before)
         if self.sequential_mode and len(self.rolling_context) > 0:
-            # Sequential mode: use rolling context
             context_list = list(self.rolling_context)
             obs_seq = torch.stack([ctx['observations'] for ctx in context_list]).unsqueeze(0)
             act_seq = torch.stack([ctx['actions'] for ctx in context_list]).unsqueeze(0)
             rew_seq = torch.stack([ctx['rewards'] for ctx in context_list]).unsqueeze(0).unsqueeze(-1)
         elif len(trajectory_context["observations"]) == 0:
-            # No context available
             return torch.zeros(1, self.config.latent_dim, device=self.device)
         else:
-            # Episodic mode: use trajectory context
             obs_seq = torch.stack(trajectory_context["observations"]).unsqueeze(0)
             act_seq = torch.stack(trajectory_context["actions"]).unsqueeze(0)
             rew_seq = torch.stack(trajectory_context["rewards"]).unsqueeze(0).unsqueeze(-1)
-        
+
         try:
-            mu, logvar, _ = self.vae.encode(obs_seq, act_seq, rew_seq)
-            return self.vae.reparameterize(mu, logvar)
+            if self.config.encoder == "hmm":
+                # Use the pre-trained HMM encoder as a frozen feature extractor
+                with torch.no_grad():
+                    regime_probs = self.vae.encode(obs_seq, act_seq, rew_seq)  # (1, 4)
+                    latent = regime_probs.detach()
+            else:
+                # VAE path (only when not disabled)
+                if getattr(self.config, "disable_vae", False):
+                    return torch.zeros(1, self.config.latent_dim, device=self.device)
+                mu, logvar, _ = self.vae.encode(obs_seq, act_seq, rew_seq)
+                latent = self.vae.reparameterize(mu, logvar)
+            return latent
         except Exception as e:
-            logger.warning(f"VAE encoding failed: {e}, using zero latent")
+            logger.warning(f"Latent encoding failed: {e}, using zero latent")
             return torch.zeros(1, self.config.latent_dim, device=self.device)
+
+    # def _get_latent_for_step(self, obs_tensor, trajectory_context):
+    #     """Get latent encoding for current step, supporting both episodic and sequential modes."""
+    #     if getattr(self.config, "disable_vae", False):
+    #         return torch.zeros(1, self.config.latent_dim, device=self.device)
+        
+    #     # Choose context source based on mode
+    #     if self.sequential_mode and len(self.rolling_context) > 0:
+    #         # Sequential mode: use rolling context
+    #         context_list = list(self.rolling_context)
+    #         obs_seq = torch.stack([ctx['observations'] for ctx in context_list]).unsqueeze(0)
+    #         act_seq = torch.stack([ctx['actions'] for ctx in context_list]).unsqueeze(0)
+    #         rew_seq = torch.stack([ctx['rewards'] for ctx in context_list]).unsqueeze(0).unsqueeze(-1)
+    #     elif len(trajectory_context["observations"]) == 0:
+    #         # No context available
+    #         return torch.zeros(1, self.config.latent_dim, device=self.device)
+    #     else:
+    #         # Episodic mode: use trajectory context
+    #         obs_seq = torch.stack(trajectory_context["observations"]).unsqueeze(0)
+    #         act_seq = torch.stack(trajectory_context["actions"]).unsqueeze(0)
+    #         rew_seq = torch.stack(trajectory_context["rewards"]).unsqueeze(0).unsqueeze(-1)
+        
+    #     try:
+    #         mu, logvar, _ = self.vae.encode(obs_seq, act_seq, rew_seq)
+    #         return self.vae.reparameterize(mu, logvar)
+    #     except Exception as e:
+    #         logger.warning(f"VAE encoding failed: {e}, using zero latent")
+    #         return torch.zeros(1, self.config.latent_dim, device=self.device)
 
 
 # ---------------------------------------------------------------------
