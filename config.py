@@ -81,7 +81,7 @@ class TrainingConfig:
     eta: float
     ppo_minibatch_size: int
     inflation_rate: float   
-    use_cpu_context: bool
+    #use_cpu_context: bool
     rf_rate: float = 0.02
     transaction_cost_rate: float = 0.001
     force_recreate: bool = False
@@ -139,7 +139,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         batch_size=8192,
         vae_batch_size=1024,
         ppo_epochs=8, # TODO
-        entropy_coef=0.0009083214087882104, # optuna result1 - best # 0.006439257494565313, # 0.047315891962627706, optuna 2 # 
+        entropy_coef=0.01 #TODO # 0.0009083214087882104, # optuna result1 - best # 0.006439257494565313, # 0.047315891962627706, optuna 2 # 
         joint_loss_lambda=1.0,
         max_episodes=10000,
         early_stopping_patience=10,
@@ -154,7 +154,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         test_episodes=100, #-> we do final test on these number of episodes
         ppo_clip_ratio=0.19086925122925438, # optuna result1 - best # 0.13374380455551138, #0.1473333435286036, optuna 2 # 
         value_loss_coef=0.5, # optuna 2 0.9981350917703767, 
-        max_grad_norm=0.5,
+        max_grad_norm=1.0 # let's try to fix  entropy TODO# 0.5, before
         gae_lambda=0.95,
         discount_factor=0.99,
         min_horizon=exp.min_horizon,
@@ -167,7 +167,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         inflation_rate=exp.inflation_rate if exp.inflation_rate is not None else 0.1,
         ppo_minibatch_size = 128,
         vae_num_elbo_terms = 8,
-        use_cpu_context = False
+        #use_cpu_context = False
     )
 
     if hasattr(exp, '_hpo_path'):
