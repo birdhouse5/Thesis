@@ -900,7 +900,7 @@ class PPOTrainer:
                 entropy_loss = -entropy.mean()
                 
                 # Entropy coefficient annealing
-                progress = min(1.0, self.episode_count / float(self.config.total_episodes))
+                progress = min(1.0, self.episode_count / float(self.config.max_episodes))
                 current_entropy_coef = self.config.entropy_coef * (1.0 - 0.9 * progress)
 
                 ppo_loss = (policy_loss +
