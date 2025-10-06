@@ -104,13 +104,10 @@ class PPOTrainer:
         # Track VAE enablement
         self.vae_enabled = (vae is not None) and (not getattr(config, "disable_vae", False))
 
-        # Optimizer: include VAE params only if enabled/present
-        param_groups = [
-            {"params": policy.parameters(), "lr": config.policy_lr}
-        ]
-        if self.vae_enabled:
-            param_groups.append({"params": vae.parameters(), "lr": config.vae_lr})
-        self.optimizer = Adam(param_groups)
+        # Optimizer: instantiate for both models
+        self.policy_optimizer = Adam(policy.parameters(), lr=config.policy_lr)
+        self.vae_optimizer = Adam(vae.parameters(), lr=config.vae_lr) if self.vae_enabled else None
+
         # Experience buffers
         self.experience_buffer = ExperienceBuffer(config.batch_size)  # for PPO
         self.vae_buffer = deque(maxlen=1000)  # TODO recent trajectories for VAE
@@ -233,6 +230,15 @@ class PPOTrainer:
         cumulative_return = final_capital / self.env.initial_capital - 1.0
         total_steps = int(all_transitions["rewards"].shape[0])
         
+        logger.info(f"=== train_on_task DEBUG (Task {self.task_count}) ===")
+        logger.info(f"  Episodes per task: {self.config.episodes_per_task}")
+        logger.info(f"  Total steps in task: {total_steps}")
+        logger.info(f"  Episode rewards: {episode_rewards}")
+        logger.info(f"  update_info keys: {list(update_info.keys())}")
+        logger.info(f"  update_info values: {update_info}")
+        logger.info(f"  Final capital: {final_capital}")
+        logger.info(f"  Cumulative return: {cumulative_return}")
+
         results = {
             "policy_loss": update_info.get("policy_loss", 0.0),
             "vae_loss": update_info.get("vae_loss", 0.0),
@@ -884,10 +890,16 @@ class PPOTrainer:
                 final_ratio_mean = float(ratio.mean().item())
                 
                 # Update
-                self.optimizer.zero_grad()
+                self.policy_optimizer.zero_grad()
                 ppo_loss.backward()
+
+                # Log gradient norm before clipping
+                policy_grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), float('inf'))
+                if policy_grad_norm > self.config.max_grad_norm * 2:  # Only log if concerning
+                    logger.warning(f"Policy grad norm: {policy_grad_norm:.2f} (clipping at {self.config.max_grad_norm})")
+
                 torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
-                self.optimizer.step()
+                self.policy_optimizer.step()
                 
                 # CRITICAL: Explicit cleanup of batch tensors
                 del new_values, new_logp, entropy, surr1, surr2, ratio
@@ -902,6 +914,15 @@ class PPOTrainer:
         
         if self.vae_enabled:
             logger.debug(f"VAE enabled, checking update condition: episode_count={self.episode_count}, vae_update_freq={self.config.vae_update_freq}, modulo={self.episode_count % self.config.vae_update_freq}")
+
+        logger.info(f"=== update_ppo_and_vae DEBUG ===")
+        logger.info(f"  VAE enabled: {self.vae_enabled}")
+        logger.info(f"  Episode count: {self.episode_count}")
+        logger.info(f"  VAE update freq: {self.config.vae_update_freq}")
+        logger.info(f"  Update condition: {self.episode_count % self.config.vae_update_freq == 0}")
+        logger.info(f"  VAE buffer size: {len(self.vae_buffer)}")
+        logger.info(f"  first_epoch_metrics before VAE: {first_epoch_metrics}")
+
         # VAE UPDATE with aggressive cleanup
         vae_loss_val = 0.0
         if self.vae_enabled and (self.episode_count % self.config.vae_update_freq == 0):
@@ -966,6 +987,12 @@ class PPOTrainer:
                         prior_mu=prior_mu_batch,
                         prior_logvar=prior_logvar_batch
                     )
+
+                    logger.info(f"  VAE loss computed: {vae_loss.item()}")
+                    logger.info(f"  VAE info keys: {list(vae_info.keys())}")
+                    logger.info(f"  VAE info values: {vae_info}")
+                    logger.info(f"  Adding to first_epoch_metrics: {[f'vae_{k}' for k in vae_info.keys()]}")
+
                     
                     # logger.info(f"  Loss breakdown:")
                     # logger.info(f"    Total: {vae_info['total']:.4f}")
@@ -974,13 +1001,18 @@ class PPOTrainer:
                     # logger.info(f"    KL: {vae_info['kl']:.4f}")
                     # logger.info(f"  Timesteps sampled: {vae_info['num_elbo_terms']} -> {vae_info['timesteps_sampled']}")
                     
-                    self.optimizer.zero_grad()
+                    # VAE update
+                    self.vae_optimizer.zero_grad()
                     vae_loss.backward()
 
-                    vae_grad_norm = torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
-                    #logger.info(f"  VAE grad norm: {vae_grad_norm:.4f}")
-                    
-                    self.optimizer.step()
+                    # Log gradient norm before clipping
+                    vae_grad_norm = torch.nn.utils.clip_grad_norm_(self.vae.parameters(), float('inf'))
+                    if vae_grad_norm > self.config.max_grad_norm * 2:  # Only log if concerning
+                        logger.warning(f"VAE grad norm: {vae_grad_norm:.2f} (clipping at {self.config.max_grad_norm})")
+
+                    torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
+                    self.vae_optimizer.step()
+
                     #logger.info(f"  ✓ VAE weights updated") 
 
                     vae_loss_val = float(vae_loss.item())
@@ -1031,83 +1063,83 @@ class PPOTrainer:
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         return advantages, returns
 
-    def update_joint(self, trajectory):
-        """
-        Update PPO (policy + value) and VAE (if enabled).
-        trajectory: dict with observations, actions, rewards, values, log_probs, dones
-        """
-        obs = torch.stack(trajectory["observations"]).to(self.device)
-        actions = torch.stack(trajectory["actions"]).to(self.device)
-        rewards = torch.tensor(trajectory["rewards"], dtype=torch.float32, device=self.device)
-        values = torch.stack(trajectory["values"]).to(self.device).squeeze(-1)
-        old_log_probs = torch.stack(trajectory["log_probs"]).to(self.device).squeeze(-1)
+    # def update_joint(self, trajectory):
+    #     """
+    #     Update PPO (policy + value) and VAE (if enabled).
+    #     trajectory: dict with observations, actions, rewards, values, log_probs, dones
+    #     """
+    #     obs = torch.stack(trajectory["observations"]).to(self.device)
+    #     actions = torch.stack(trajectory["actions"]).to(self.device)
+    #     rewards = torch.tensor(trajectory["rewards"], dtype=torch.float32, device=self.device)
+    #     values = torch.stack(trajectory["values"]).to(self.device).squeeze(-1)
+    #     old_log_probs = torch.stack(trajectory["log_probs"]).to(self.device).squeeze(-1)
 
-        # === Compute returns & advantages ===
-        returns = []
-        G = 0
-        for r in reversed(rewards.tolist()):
-            G = r + self.config.discount_factor * G
-            returns.insert(0, G)
-        returns = torch.tensor(returns, dtype=torch.float32, device=self.device)
+    #     # === Compute returns & advantages ===
+    #     returns = []
+    #     G = 0
+    #     for r in reversed(rewards.tolist()):
+    #         G = r + self.config.discount_factor * G
+    #         returns.insert(0, G)
+    #     returns = torch.tensor(returns, dtype=torch.float32, device=self.device)
 
-        advantages = returns - values.detach()
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+    #     advantages = returns - values.detach()
+    #     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-        # === PPO update ===
-        policy_loss, value_loss, entropy_loss = 0.0, 0.0, 0.0
+    #     # === PPO update ===
+    #     policy_loss, value_loss, entropy_loss = 0.0, 0.0, 0.0
 
-        for _ in range(self.config.ppo_epochs):
-            mean, logstd, value_preds = self.policy.forward(obs, torch.stack(trajectory["latents"]).to(self.device))
-            dist = torch.distributions.Normal(mean, logstd.exp())
-            new_log_probs = dist.log_prob(actions).sum(-1)
+    #     for _ in range(self.config.ppo_epochs):
+    #         mean, logstd, value_preds = self.policy.forward(obs, torch.stack(trajectory["latents"]).to(self.device))
+    #         dist = torch.distributions.Normal(mean, logstd.exp())
+    #         new_log_probs = dist.log_prob(actions).sum(-1)
 
-            ratio = torch.exp(new_log_probs - old_log_probs)
-            surr1 = ratio * advantages
-            surr2 = torch.clamp(ratio, 1 - self.config.ppo_clip_ratio, 1 + self.config.ppo_clip_ratio) * advantages
-            policy_loss = -torch.min(surr1, surr2).mean()
+    #         ratio = torch.exp(new_log_probs - old_log_probs)
+    #         surr1 = ratio * advantages
+    #         surr2 = torch.clamp(ratio, 1 - self.config.ppo_clip_ratio, 1 + self.config.ppo_clip_ratio) * advantages
+    #         policy_loss = -torch.min(surr1, surr2).mean()
 
-            value_loss = F.mse_loss(value_preds.squeeze(-1), returns)
+    #         value_loss = F.mse_loss(value_preds.squeeze(-1), returns)
 
-            entropy_loss = -dist.entropy().sum(-1).mean()
+    #         entropy_loss = -dist.entropy().sum(-1).mean()
 
-            total_loss = (policy_loss
-                        + self.config.value_loss_coef * value_loss
-                        + self.config.entropy_coef * entropy_loss)
+    #         total_loss = (policy_loss
+    #                     + self.config.value_loss_coef * value_loss
+    #                     + self.config.entropy_coef * entropy_loss)
 
-            # === Optimize ===
-            self.optimizer.zero_grad()
-            total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
-            self.optimizer.step()
+    #         # === Optimize ===
+    #         self.optimizer.zero_grad()
+    #         total_loss.backward()
+    #         torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
+    #         self.optimizer.step()
 
-        # === VAE update ===
-        vae_loss_val = 0.0
-        if self.vae_enabled:
-            obs_seq = obs.unsqueeze(0)  # (1, T, N, F)
-            # Normalize actions to portfolio weights for VAE (sum(|w|)+w_cash=1 budget)
-            denom = actions.abs().sum(dim=-1, keepdim=True) + 1.0 + 1e-8
-            vae_actions = actions / denom
-            act_seq = vae_actions.unsqueeze(0)  # (1, T, N)
-            rew_seq = rewards.unsqueeze(0).unsqueeze(-1)  # (1, T, 1)
-            try:
-                vae_loss, vae_info = self.vae.compute_loss(
-                    obs_seq, act_seq, rew_seq, beta=self.config.vae_beta
-                )
-                self.optimizer.zero_grad()
-                vae_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
-                self.optimizer.step()
-                vae_loss_val = float(vae_loss.item())
-            except Exception as e:
-                logger.warning(f"VAE loss computation failed: {e}")
-                vae_loss_val = 0.0
+    #     # === VAE update ===
+    #     vae_loss_val = 0.0
+    #     if self.vae_enabled:
+    #         obs_seq = obs.unsqueeze(0)  # (1, T, N, F)
+    #         # Normalize actions to portfolio weights for VAE (sum(|w|)+w_cash=1 budget)
+    #         denom = actions.abs().sum(dim=-1, keepdim=True) + 1.0 + 1e-8
+    #         vae_actions = actions / denom
+    #         act_seq = vae_actions.unsqueeze(0)  # (1, T, N)
+    #         rew_seq = rewards.unsqueeze(0).unsqueeze(-1)  # (1, T, 1)
+    #         try:
+    #             vae_loss, vae_info = self.vae.compute_loss(
+    #                 obs_seq, act_seq, rew_seq, beta=self.config.vae_beta
+    #             )
+    #             self.optimizer.zero_grad()
+    #             vae_loss.backward()
+    #             torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
+    #             self.optimizer.step()
+    #             vae_loss_val = float(vae_loss.item())
+    #         except Exception as e:
+    #             logger.warning(f"VAE loss computation failed: {e}")
+    #             vae_loss_val = 0.0
 
-        return {
-            "policy_loss": float(policy_loss.item()),
-            "value_loss": float(value_loss.item()),
-            "entropy": float(entropy_loss.item()),
-            "vae_loss": float(vae_loss_val),
-        }
+    #     return {
+    #         "policy_loss": float(policy_loss.item()),
+    #         "value_loss": float(value_loss.item()),
+    #         "entropy": float(entropy_loss.item()),
+    #         "vae_loss": float(vae_loss_val),
+    #     }
 
 
 
@@ -1118,14 +1150,17 @@ class PPOTrainer:
         return {
             "episode_count": self.episode_count,
             "total_steps": self.total_steps,
-            "optimizer": self.optimizer.state_dict(),
+            "policy_optimizer": self.policy_optimizer.state_dict(),
+            "vae_optimizer": self.vae_optimizer.state_dict() if self.vae_optimizer else None,
         }
 
     def load_state(self, state):
         self.episode_count = state.get("episode_count", 0)
         self.total_steps = state.get("total_steps", 0)
-        if "optimizer" in state:
-            self.optimizer.load_state_dict(state["optimizer"])
+        if "policy_optimizer" in state:
+            self.policy_optimizer.load_state_dict(state["policy_optimizer"])
+        if "vae_optimizer" in state and self.vae_optimizer:
+            self.vae_optimizer.load_state_dict(state["vae_optimizer"])
 
     def _get_latent_for_step(self, obs_tensor, trajectory_context):
         """Get latent encoding for current step, supporting both episodic and sequential modes."""
