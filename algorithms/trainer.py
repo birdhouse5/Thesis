@@ -853,17 +853,32 @@ class PPOTrainer:
         if isinstance(last_value, torch.Tensor):
             last_value = last_value.detach().to(self.device)
         
+
+        logger.info(f"=== PRE-GAE DIAGNOSTICS ===")
+        logger.info(f"Rewards: mean={rewards.mean():.6f}, std={rewards.std():.6f}, min={rewards.min():.6f}, max={rewards.max():.6f}")
+        logger.info(f"Values: mean={values.mean():.6f}, std={values.std():.6f}")
+        
         # Compute advantages once
         advantages, returns = self.compute_gae(rewards, values, dones, last_value)
+
+        logger.info(f"=== POST-GAE DIAGNOSTICS ===")
+        logger.info(f"Raw advantages (pre-detach): mean={advantages.mean():.6f}, std={advantages.std():.6f}, min={advantages.min():.6f}, max={advantages.max():.6f}")
+
         advantages = advantages.detach()
         returns = returns.detach()
+
+        first_epoch_metrics = {
+            "advantages_mean": float(advantages.mean().item()),
+            "advantages_std": float(advantages.std().item()),
+            "advantages_min": float(advantages.min().item()),
+            "advantages_max": float(advantages.max().item()),
+        }
         
         # Mini-batch setup
         batch_size = min(self.config.ppo_minibatch_size, len(obs))
         num_samples = len(obs)
         #logger.info(f"PPO update: trajectory size={len(obs)}, mini-batch={batch_size}")
         
-        first_epoch_metrics = {}
         final_ratio_mean = 1.0
         
         # PPO UPDATE with explicit cleanup
@@ -913,7 +928,7 @@ class PPOTrainer:
                 
                 # Capture first batch metrics
                 if epoch == 0 and start_idx == 0:
-                    first_epoch_metrics = {
+                    first_epoch_metrics.update({
                         "policy_loss": float(policy_loss.item()),
                         "value_loss": float(value_loss.item()),
                         "entropy": float(entropy.mean().item()),
@@ -921,7 +936,7 @@ class PPOTrainer:
                         "advantages_std": float(advantages.std().item()),
                         "advantages_min": float(advantages.min().item()),
                         "advantages_max": float(advantages.max().item()),
-                    }
+                    })
                 
                 final_ratio_mean = float(ratio.mean().item())
                 
