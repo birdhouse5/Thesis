@@ -271,7 +271,7 @@ class TrainingCSVLogger:
             f.write(','.join(headers) + '\n')
     
 
-    def log_task(self, episode: int, metrics: Dict[str, Any]):
+    def log_task(self, task: int, metrics: Dict[str, Any]):
         """Log one training episode or task summary."""
         logger = logging.getLogger(__name__)
         logger.info(f"=== TrainingCSVLogger.log_episode DEBUG ===")
