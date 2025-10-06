@@ -827,6 +827,13 @@ class PPOTrainer:
             next_value = values[t]
 
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+        # 🔥 Scale advantage magnitude to strengthen PPO signal TODO
+        adv_scale = 5.0
+        advantages = advantages * adv_scale
+
+
+
         return advantages, returns
 
 
