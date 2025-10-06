@@ -435,7 +435,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                         logger.info(f"    {k}: {type(v)} (len={len(v) if hasattr(v, '__len__') else 'N/A'})")
 
                 # Log to CSV
-                training_logger.log_episode(episodes_trained, result)
+                training_logger.log_task(episodes_trained, result)
                 
                 # Checkpoint every 10 tasks
                 if tasks_trained % 10 == 0:
