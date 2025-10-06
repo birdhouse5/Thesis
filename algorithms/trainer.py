@@ -913,9 +913,9 @@ class PPOTrainer:
                 if hasattr(self.policy, "actor_logstd"):
                     grad = self.policy.actor_logstd.grad
                     if grad is None:
-                        logger.info("actor_logstd.grad = None (no gradient)")
+                        logger.info("----------------------------actor_logstd.grad = None (no gradient)----------------------------")
                     else:
-                        logger.info("actor_logstd grad norm:", grad.norm().item())
+                        logger.info("----------------------------actor_logstd grad norm:", grad.norm().item(), "----------------------------")
 
                 # Log gradient norm before clipping
                 policy_grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), float('inf'))
