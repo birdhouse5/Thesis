@@ -33,7 +33,7 @@ class VAE(nn.Module):
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
-        
+
     def encode(self, obs_sequence, action_sequence, reward_sequence):
         """
         Encode trajectory to latent distribution.
@@ -77,108 +77,7 @@ class VAE(nn.Module):
             return latent, mu, logvar, hidden_state
         else:
             return mu, logvar, hidden_state
-    
-    # def compute_loss(
-    #     self,
-    #     obs_seq, action_seq, reward_seq,   # full trajectory τ
-    #     beta=0.1,
-    #     num_elbo_terms=8,
-    #     prev_mu=None, prev_logvar=None     # recursive prior
-    # ):
-    #     """
-    #     VariBAD-style VAE loss with ASYMMETRIC encoding:
-    #     - Randomly truncate input to context_len (between H/2 and H)
-    #     - Encode ONLY truncated context τ[:context_len] to posterior q(m|τ[:context_len])
-    #     - Decode FULL trajectory τ[:H]
-    #     - This forces encoder to learn task-identifying features from incomplete information
-        
-    #     Args:
-    #         obs_seq: (batch, H, N, F) - full observation trajectory
-    #         action_seq: (batch, H, N) - full action trajectory
-    #         reward_seq: (batch, H, 1) - full reward trajectory
-    #         beta: KL divergence weight
-    #         num_elbo_terms: number of timesteps to sample for ELBO computation
-    #         prev_mu, prev_logvar: recursive prior parameters (optional)
-        
-    #     Returns:
-    #         total_loss: scalar loss
-    #         info_dict: dictionary with loss components and diagnostics
-    #     """
-
-    #     B, H = obs_seq.shape[:2]
-    #     # Sample multiple timesteps for ELBO computation
-    #     if num_elbo_terms >= H:
-    #         # Use all timesteps
-    #         timesteps = list(range(1, H + 1))
-    #     else:
-    #         # Randomly sample timesteps, ensure diversity across trajectory
-    #         timesteps = torch.randint(1, H + 1, (num_elbo_terms,)).tolist()
-    #         timesteps = sorted(list(set(timesteps)))
-        
-    #     # === ASYMMETRIC TRUNCATION: Randomly sample context length ===
-    #     # Context is between 50% and 100% of full trajectory
-    #     min_context = max(1, H // 2)
-    #     context_len = torch.randint(min_context, H, (1,)).item()
-        
-    #     # Truncate sequences for encoder input (τ:context_len)
-    #     encode_obs = obs_seq[:, :context_len]
-    #     encode_actions = action_seq[:, :context_len]
-    #     encode_rewards = reward_seq[:, :context_len]
-
-    #     # === Encode truncated context to latent distribution ===
-    #     mu, logvar, _ = self.encode(encode_obs, encode_actions, encode_rewards)
-
-    #     # Sample latent
-    #     latent = self.reparameterize(mu, logvar)
-
-    #     # === Decode FULL trajectory (asymmetric reconstruction) ===
-    #     # Decoder sees full trajectory including future steps beyond context
-    #     pred_next_obs = self.obs_decoder.forward_seq(
-    #         latent, obs_seq[:, :-1], action_seq[:, :-1]
-    #     )   # (B, H-1, N, F)
-
-    #     pred_rewards = self.reward_decoder.forward_seq(
-    #         latent, obs_seq[:, :-1], action_seq[:, :-1], obs_seq[:, 1:]
-    #     )   # (B, H-1, 1)
-
-    #     # === Reconstruction losses over FULL trajectory ===
-    #     recon_obs_loss = F.mse_loss(pred_next_obs, obs_seq[:, 1:])
-    #     recon_reward_loss = F.mse_loss(pred_rewards, reward_seq[:, 1:])
-
-    #     # === Recursive KL divergence ===
-    #     if prev_mu is not None and prev_logvar is not None:
-    #         # KL(q_t || q_{t-1})
-    #         var_post = logvar.exp()
-    #         var_prior = prev_logvar.exp()
-    #         kl_elements = (
-    #             var_post / var_prior
-    #             + (mu - prev_mu).pow(2) / var_prior
-    #             - 1
-    #             + prev_logvar - logvar
-    #         )
-    #         kl_loss = 0.5 * torch.sum(kl_elements, dim=1).mean()
-    #     else:
-    #         # KL(q || N(0,I))
-    #         kl_loss = -0.5 * torch.sum(
-    #             1 + logvar - mu.pow(2) - logvar.exp(), dim=1
-    #         ).mean()
-
-    #     # Total loss
-    #     total_loss = recon_obs_loss + recon_reward_loss + beta * kl_loss
-
-    #     # === Return diagnostics including context information ===
-    #     context_fraction = context_len / H
-        
-    #     return total_loss, {
-    #         "total": total_loss.item(),
-    #         "recon_obs": recon_obs_loss.item(),
-    #         "recon_reward": recon_reward_loss.item(),
-    #         "kl": kl_loss.item(),
-    #         "context_len": context_len,  # Actual context length used
-    #         "context_fraction": context_fraction,  # Fraction of trajectory encoded (0.5-1.0)
-    #         "latent_mu_mean": mu.mean().item(),
-    #         "latent_logvar_mean": logvar.mean().item(),
-    #     }
+ 
  
     def compute_loss(
         self,
@@ -289,6 +188,14 @@ class VAE(nn.Module):
         
         total_loss = avg_recon_obs + avg_recon_reward + beta * avg_kl
         
+        logger = logging.getLogger(__name__)
+        logger.info(f"=== VAE.compute_loss DEBUG ===")
+        logger.info(f"  Input shapes: obs={obs_seq.shape}, actions={action_seq.shape}, rewards={reward_seq.shape}")
+        logger.info(f"  Num ELBO terms requested: {num_elbo_terms}")
+        logger.info(f"  Timesteps sampled: {timesteps}")
+        logger.info(f"  Prior provided: {prior_mu is not None}")
+        logger.info(f"  Returning info dict keys: {list(info_dict.keys()) if 'info_dict' in locals() else 'NOT YET CREATED'}")
+
         return total_loss, {
             "total": total_loss.item(),
             "recon_obs": avg_recon_obs.item(),

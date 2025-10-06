@@ -260,12 +260,29 @@ class TrainingCSVLogger:
     
     def log_episode(self, episode: int, metrics: Dict[str, Any]):
         """Log one training episode."""
+
+        logger = logging.getLogger(__name__)
+        logger.info(f"=== TrainingCSVLogger.log_episode DEBUG ===")
+        logger.info(f"  Episode: {episode}")
+        logger.info(f"  Received metrics keys: {list(metrics.keys())}")
+        logger.info(f"  Received metrics values: {metrics}")
+
         # Extract VAE metrics if present
         vae_metrics = {k[4:]: v for k, v in metrics.items() if k.startswith('vae_')}
+        logger.info(f"  Extracted VAE metrics: {vae_metrics}")
         
         # Extract HMM metrics if present (would need to be passed from trainer)
         hmm_metrics = {k[4:]: v for k, v in metrics.items() if k.startswith('hmm_')}
         
+        expected_fields = [
+            'policy_loss', 'value_loss', 'entropy', 'vae_loss',
+            'episode_sum_reward', 'episode_final_capital', 'episode_total_return',
+            'steps_per_episode', 'episode_count'
+        ]
+        missing_fields = [f for f in expected_fields if f not in metrics]
+        if missing_fields:
+            logger.warning(f"  MISSING EXPECTED FIELDS: {missing_fields}")
+
         row = [
             self.experiment_name, self.seed, self.asset_class, self.encoder, episode,
             metrics.get('policy_loss', 0.0),

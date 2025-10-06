@@ -412,6 +412,19 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                 episodes_trained += cfg.episodes_per_task
                 pbar.update(1)
                 
+                logger.info(f"=== main.py train_on_task RESULT DEBUG ===")
+                logger.info(f"  Task: {tasks_trained}/{total_tasks}")
+                logger.info(f"  Episodes trained: {episodes_trained}")
+                logger.info(f"  Result keys: {list(result.keys())}")
+                logger.info(f"  Result values sample:")
+                for k, v in result.items():
+                    if isinstance(v, (int, float, str, bool)):
+                        logger.info(f"    {k}: {v}")
+                    elif isinstance(v, list) and len(v) <= 5:
+                        logger.info(f"    {k}: {v}")
+                    else:
+                        logger.info(f"    {k}: {type(v)} (len={len(v) if hasattr(v, '__len__') else 'N/A'})")
+
                 # Log to CSV
                 training_logger.log_episode(episodes_trained, result)
                 
@@ -449,71 +462,7 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                         logger.info(f"Early stopping triggered at episode {episodes_trained}")
                         early_stopped = True
                         break
-        # logger.info(f"Starting training: {cfg.exp_name}")
-        # logger.info(f"Asset class: {cfg.asset_class}, Encoder: {cfg.encoder}, Seed: {cfg.seed}")
-
-        # early_stopped = False
-        # # === Training loop ===
-        # with tqdm(total=cfg.max_episodes, initial=episodes_trained,
-        #           desc=f"Training Progress (total episodes: {cfg.max_episodes})") as pbar:
-        #     while episodes_trained < cfg.max_episodes and not early_stopped:
-        #         task_idx = int(episodes_trained // cfg.episodes_per_task) + 1
-        #         total_tasks = cfg.max_episodes // cfg.episodes_per_task
-        #         pbar.set_postfix(task=f"{task_idx}/{total_tasks}")
-
-        #         task = train_env.sample_task()
-        #         train_env.set_task(task)
-
-        #         for _ in range(cfg.episodes_per_task):
-        #             if episodes_trained >= cfg.max_episodes:
-        #                 break
-
-        #             # Training step
-        #             result = trainer.train_episode()
-        #             episodes_trained += 1
-        #             pbar.update(1)
-
-        #             # === LOGGING (via mlflow_integration) ===
-        #             # mlflow_integration.log_training_episode(episodes_trained, result)
-        #             # mlflow_integration.log_portfolio_episode(episodes_trained, result)
-        #             training_logger.log_episode(episodes_trained, result)
-
-        #             # Save checkpoint every 50 episodes
-        #             if episodes_trained % 50 == 0:
-        #                 checkpoint_state = {
-        #                     "episodes_trained": episodes_trained,
-        #                     "best_val_reward": best_val_reward,
-        #                     "policy": policy.state_dict(),
-        #                     "encoder": encoder.state_dict() if encoder else None,
-        #                     "optimizer": trainer.optimizer.state_dict(),
-        #                     "torch_rng": torch.get_rng_state(),
-        #                     "numpy_rng": np.random.get_state(),
-        #                     "py_rng": __import__("random").getstate(),
-        #                 }
-        #                 #save_checkpoint(ckpt_dir, checkpoint_state) #TODO enable for full run
-
-        #             # Validation
-        #             if episodes_trained % cfg.val_interval == 0:
-        #                 val_results = evaluate(val_env, policy, encoder, cfg, "validation", cfg.val_episodes)
-        #                 #print(f"DEBUG: val_results keys: {list(val_results.keys())}")
-        #                 #print(f"DEBUG: val_results: {val_results}")
-        #                 #mlflow_integration.log_validation_results(episodes_trained, val_results)
-        #                 validation_logger.log_validation(episodes_trained, val_results)
-
-        #                 current_val_reward = val_results.get("validation: avg_reward", -1e9)
-        #                 logger.info(f"Validation at ep {episodes_trained}: {current_val_reward}")
-        #                 if current_val_reward > best_val_reward:
-        #                     best_val_reward = current_val_reward
-        #                     patience_counter = 0
-        #                 else:
-        #                     patience_counter += 1
-                            
-        #                 if (episodes_trained >= cfg.min_episodes_before_stopping and 
-        #                     patience_counter >= cfg.early_stopping_patience):
-        #                     logger.info(f"Early stopping triggered at episode {episodes_trained}")
-        #                     early_stopped = True
-        #                     break
-
+        
         # Final evaluation & backtest
         logger.info("Running final evaluation and backtest...")
         test_results = evaluate(test_env, policy, encoder, cfg, "test", cfg.test_episodes)
@@ -570,10 +519,6 @@ def run_experiment_batch(experiments, experiment_name: str = "test_001", force_r
     return manager.run_all_experiments(experiment_name)
 
 
-# def ensure_mlflow_setup():
-#     """Ensure MLflow is properly configured."""
-#     from mlflow_logger import setup_mlflow
-#     return setup_mlflow()
 
 def main():
     """Main experiment runner."""
