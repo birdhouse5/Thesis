@@ -385,12 +385,21 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
             policy.load_state_dict(resume_state["policy"])
             if encoder and resume_state.get("encoder"):
                 encoder.load_state_dict(resume_state["encoder"])
-            trainer.optimizer.load_state_dict(resume_state["optimizer"])
+            
+            # Load optimizers (handle both old and new checkpoint formats)
+            if "policy_optimizer" in resume_state:
+                trainer.policy_optimizer.load_state_dict(resume_state["policy_optimizer"])
+                if trainer.vae_optimizer and resume_state.get("vae_optimizer"):
+                    trainer.vae_optimizer.load_state_dict(resume_state["vae_optimizer"])
+            elif "optimizer" in resume_state:
+                # Old checkpoint format - load into policy optimizer only
+                trainer.policy_optimizer.load_state_dict(resume_state["optimizer"])
+            
             torch.set_rng_state(resume_state["torch_rng"])
             np.random.set_state(tuple(resume_state["numpy_rng"]))
             import random
             random.setstate(tuple(resume_state["py_rng"]))
-            logger.info("✅ Restored model, optimizer, and RNG state")
+            logger.info("✅ Restored model, optimizer(s), and RNG state")
 
         # corrected loop now with task appending
         logger.info(f"Starting training: {cfg.exp_name}")
