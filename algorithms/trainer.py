@@ -391,39 +391,40 @@ class PPOTrainer:
 
     def _get_latent_from_context_v2(self, obs_tensor, context_obs, context_act, context_rew):
         """Get latent with EXPLICIT tensor lifecycle management."""
-        if getattr(self.config, "disable_vae", False) or self.vae is None:
+        if self.vae is None:
             return torch.zeros(1, self.config.latent_dim, device=self.device)
         
         if len(context_obs) == 0:
             return torch.zeros(1, self.config.latent_dim, device=self.device)
-        
-        # # Limit context window (CRITICAL for memory)
-        # max_context_len = 200  # Reduced from 200
-        # start_idx = max(0, len(context_obs) - max_context_len)
-        
-        # # Create GPU tensors ONLY for encoding, then DELETE immediately
-        # obs_seq = torch.stack(context_obs[start_idx:]).to(self.device).unsqueeze(0)
-        # act_seq = torch.stack(context_act[start_idx:]).to(self.device).unsqueeze(0)
-        # rew_seq = torch.stack(context_rew[start_idx:]).to(self.device).unsqueeze(0).unsqueeze(-1)
         
         obs_seq = torch.stack(context_obs).to(self.device).unsqueeze(0)
         act_seq = torch.stack(context_act).to(self.device).unsqueeze(0)
         rew_seq = torch.stack(context_rew).to(self.device).unsqueeze(0).unsqueeze(-1)
 
         try:
-            with torch.no_grad():  # CRITICAL: No gradients for context encoding
-                mu, logvar, _ = self.vae.encode(obs_seq, act_seq, rew_seq)
-                latent = self.vae.reparameterize(mu, logvar).clone()  # Clone to detach from encoder
+            with torch.no_grad():
+                if self.config.encoder == "hmm":
+                    # Use the pre-trained HMM encoder as a frozen feature extractor
+                    regime_probs = self.vae.encode(obs_seq, act_seq, rew_seq)  # (1, 4)
+                    latent = regime_probs.detach()
+                elif getattr(self.config, "disable_vae", False):
+                    # Encoder is disabled
+                    latent = torch.zeros(1, self.config.latent_dim, device=self.device)
+                else:
+                    # VAE path
+                    mu, logvar, _ = self.vae.encode(obs_seq, act_seq, rew_seq)
+                    latent = self.vae.reparameterize(mu, logvar).clone()
+            
+            return latent
+            
         except Exception as e:
             logger.warning(f"VAE encoding failed: {e}, using zero latent")
-            latent = torch.zeros(1, self.config.latent_dim, device=self.device)
+            return torch.zeros(1, self.config.latent_dim, device=self.device)
         finally:
             # EXPLICIT cleanup of temporary tensors
             del obs_seq, act_seq, rew_seq
             if 'mu' in locals():
                 del mu, logvar
-        
-        return latent
 
     def collect_trajectory_with_context(self, persistent_context):
         """
