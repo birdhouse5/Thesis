@@ -270,35 +270,23 @@ class TrainingCSVLogger:
         with open(self.csv_path, 'w') as f:
             f.write(','.join(headers) + '\n')
     
-    def log_episode(self, episode: int, metrics: Dict[str, Any]):
-        """Log one training episode."""
 
+    def log_task(self, episode: int, metrics: Dict[str, Any]):
+        """Log one training episode or task summary."""
         logger = logging.getLogger(__name__)
         logger.info(f"=== TrainingCSVLogger.log_episode DEBUG ===")
-        logger.info(f"  Episode: {episode}")
+        logger.info(f"  Task: {task}")
         logger.info(f"  Received metrics keys: {list(metrics.keys())}")
-        logger.info(f"  Received metrics values: {metrics}")
 
-        # Extract VAE metrics if present
+        # Extract VAE and HMM metrics
         vae_metrics = {k[4:]: v for k, v in metrics.items() if k.startswith('vae_')}
-        logger.info(f"  Extracted VAE metrics: {vae_metrics}")
-        
-        # Extract HMM metrics if present (would need to be passed from trainer)
         hmm_metrics = {k[4:]: v for k, v in metrics.items() if k.startswith('hmm_')}
-        
-        expected_fields = [
-            'policy_loss', 'value_loss', 'entropy', 'vae_loss',
-            'episode_sum_reward', 'episode_final_capital', 'episode_total_return',
-            'steps_per_episode', 'episode_count'
-        ]
-        missing_fields = [f for f in expected_fields if f not in metrics]
-        if missing_fields:
-            logger.warning(f"  MISSING EXPECTED FIELDS: {missing_fields}")
 
+        # Fallbacks for expected metrics
         row = [
             self.experiment_name, self.seed, self.asset_class, self.encoder, episode,
             metrics.get('policy_loss', 0.0),
-            metrics.get('value_loss', 0.0), 
+            metrics.get('value_loss', 0.0),
             metrics.get('entropy', 0.0),
             metrics.get('vae_loss', 0.0),
             vae_metrics.get('recon_obs', 0.0),
@@ -311,18 +299,76 @@ class TrainingCSVLogger:
             hmm_metrics.get('converged', 0),
             hmm_metrics.get('log_likelihood', 0.0),
             hmm_metrics.get('regime_0_prob', 0.0),
-            hmm_metrics.get('regime_1_prob', 0.0), 
+            hmm_metrics.get('regime_1_prob', 0.0),
             hmm_metrics.get('regime_2_prob', 0.0),
             hmm_metrics.get('regime_3_prob', 0.0),
-            metrics.get('episode_sum_reward', 0.0),
-            metrics.get('episode_final_capital', 0.0),
-            metrics.get('episode_total_return', 0.0),
-            metrics.get('steps_per_episode', 0),
-            metrics.get('episode_count', 0)
+
+            # ✅ Now include task-level metrics
+            metrics.get('task_total_reward', 0.0),
+            metrics.get('task_avg_reward_per_episode', 0.0),
+            metrics.get('task_final_capital', 0.0),
+            metrics.get('task_cumulative_return', 0.0),
+            metrics.get('total_steps', 0),
+            metrics.get('episodes_per_task', 0),
+            metrics.get('task_count', 0),
         ]
-        
+
         with open(self.csv_path, 'a') as f:
             f.write(','.join(map(str, row)) + '\n')
+
+    # def log_episode(self, episode: int, metrics: Dict[str, Any]):
+    #     """Log one training episode."""
+
+    #     logger = logging.getLogger(__name__)
+    #     logger.info(f"=== TrainingCSVLogger.log_episode DEBUG ===")
+    #     logger.info(f"  Episode: {episode}")
+    #     logger.info(f"  Received metrics keys: {list(metrics.keys())}")
+    #     logger.info(f"  Received metrics values: {metrics}")
+
+    #     # Extract VAE metrics if present
+    #     vae_metrics = {k[4:]: v for k, v in metrics.items() if k.startswith('vae_')}
+    #     logger.info(f"  Extracted VAE metrics: {vae_metrics}")
+        
+    #     # Extract HMM metrics if present (would need to be passed from trainer)
+    #     hmm_metrics = {k[4:]: v for k, v in metrics.items() if k.startswith('hmm_')}
+        
+    #     expected_fields = [
+    #         'policy_loss', 'value_loss', 'entropy', 'vae_loss',
+    #         'episode_sum_reward', 'episode_final_capital', 'episode_total_return',
+    #         'steps_per_episode', 'episode_count'
+    #     ]
+    #     missing_fields = [f for f in expected_fields if f not in metrics]
+    #     if missing_fields:
+    #         logger.warning(f"  MISSING EXPECTED FIELDS: {missing_fields}")
+
+    #     row = [
+    #         self.experiment_name, self.seed, self.asset_class, self.encoder, episode,
+    #         metrics.get('policy_loss', 0.0),
+    #         metrics.get('value_loss', 0.0), 
+    #         metrics.get('entropy', 0.0),
+    #         metrics.get('vae_loss', 0.0),
+    #         vae_metrics.get('recon_obs', 0.0),
+    #         vae_metrics.get('recon_reward', 0.0),
+    #         vae_metrics.get('kl', 0.0),
+    #         vae_metrics.get('total', 0.0),
+    #         vae_metrics.get('context_len', 0),
+    #         vae_metrics.get('latent_mu_mean', 0.0),
+    #         vae_metrics.get('latent_logvar_mean', 0.0),
+    #         hmm_metrics.get('converged', 0),
+    #         hmm_metrics.get('log_likelihood', 0.0),
+    #         hmm_metrics.get('regime_0_prob', 0.0),
+    #         hmm_metrics.get('regime_1_prob', 0.0), 
+    #         hmm_metrics.get('regime_2_prob', 0.0),
+    #         hmm_metrics.get('regime_3_prob', 0.0),
+    #         metrics.get('episode_sum_reward', 0.0),
+    #         metrics.get('episode_final_capital', 0.0),
+    #         metrics.get('episode_total_return', 0.0),
+    #         metrics.get('steps_per_episode', 0),
+    #         metrics.get('episode_count', 0)
+    #     ]
+        
+    #     with open(self.csv_path, 'a') as f:
+    #         f.write(','.join(map(str, row)) + '\n')
 
 class ValidationCSVLogger:
     """Validation-specific CSV logger with fixed schema."""
