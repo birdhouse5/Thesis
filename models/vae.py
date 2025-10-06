@@ -25,11 +25,15 @@ class VAE(nn.Module):
         self.training_step = 0
     
     def reparameterize(self, mu, logvar):
-        """Reparameterization trick for backpropagation through sampling."""
+        logvar_clamped = torch.clamp(logvar, min=-10, max=2)
+        if (logvar != logvar_clamped).any():  # Only log when clipping occurred
+            logger.debug(f"Clamped logvar - before: [{logvar.min():.2f}, {logvar.max():.2f}], "
+                        f"after: [{logvar_clamped.min():.2f}, {logvar_clamped.max():.2f}]")
+        logvar = logvar_clamped
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
-    
+        
     def encode(self, obs_sequence, action_sequence, reward_sequence):
         """
         Encode trajectory to latent distribution.
