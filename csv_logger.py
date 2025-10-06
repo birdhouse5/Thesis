@@ -257,8 +257,12 @@ class TrainingCSVLogger:
         headers = [
             'experiment_name', 'seed', 'asset_class', 'encoder', 'cumulative_episodes',
             'policy_loss', 'value_loss', 'entropy', 'vae_loss',
+            'vae_recon_obs', 'vae_recon_reward', 'vae_kl', 'vae_total', 
+            'vae_context_len', 'vae_latent_mu_mean', 'vae_latent_logvar_mean',
+            'hmm_converged', 'hmm_log_likelihood', 
+            'hmm_regime_0_prob', 'hmm_regime_1_prob', 'hmm_regime_2_prob', 'hmm_regime_3_prob',
             # Task-level metrics (what you actually have)
-            'task_total_reward', 'task_avg_reward_per_episode', 
+            'task_total_reward', 'task_avg_reward_per_episode',
             'task_final_capital', 'task_cumulative_return',
             'total_steps', 'episodes_per_task', 'task_count'
         ]
