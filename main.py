@@ -421,18 +421,18 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                 tasks_trained += 1
                 pbar.update(1)
                 
-                logger.info(f"=== main.py train_on_task RESULT DEBUG ===")
-                logger.info(f"  Task: {tasks_trained}/{total_tasks}")
-                logger.info(f"  Episodes trained: {episodes_trained}")
-                logger.info(f"  Result keys: {list(result.keys())}")
-                logger.info(f"  Result values sample:")
-                for k, v in result.items():
-                    if isinstance(v, (int, float, str, bool)):
-                        logger.info(f"    {k}: {v}")
-                    elif isinstance(v, list) and len(v) <= 5:
-                        logger.info(f"    {k}: {v}")
-                    else:
-                        logger.info(f"    {k}: {type(v)} (len={len(v) if hasattr(v, '__len__') else 'N/A'})")
+                # logger.info(f"=== main.py train_on_task RESULT DEBUG ===")
+                # logger.info(f"  Task: {tasks_trained}/{total_tasks}")
+                # logger.info(f"  Episodes trained: {episodes_trained}")
+                # logger.info(f"  Result keys: {list(result.keys())}")
+                # logger.info(f"  Result values sample:")
+                # for k, v in result.items():
+                #     if isinstance(v, (int, float, str, bool)):
+                #         logger.info(f"    {k}: {v}")
+                #     elif isinstance(v, list) and len(v) <= 5:
+                #         logger.info(f"    {k}: {v}")
+                #     else:
+                #         logger.info(f"    {k}: {type(v)} (len={len(v) if hasattr(v, '__len__') else 'N/A'})")
 
                 # Log to CSV
                 training_logger.log_task(tasks_trained, result)
@@ -590,12 +590,12 @@ def main():
     if args.datatype:
         experiments = [exp for exp in experiments if exp.asset_class == args.datatype]
 
-    logger.info(f"Generated {len(experiments)} experiment configurations")
-    logger.info("Experiment matrix:")
-    logger.info("- Asset classes: SP500, Crypto")
-    logger.info("- Encoders: VAE, None, HMM")
-    logger.info("- Seeds: 0-9 (10 seeds per combination)")
-    logger.info(f"- Total: {len(experiments)} experiments")
+    # logger.info(f"Generated {len(experiments)} experiment configurations")
+    # logger.info("Experiment matrix:")
+    # logger.info("- Asset classes: SP500, Crypto")
+    # logger.info("- Encoders: VAE, None, HMM")
+    # logger.info("- Seeds: 0-9 (10 seeds per combination)")
+    # logger.info(f"- Total: {len(experiments)} experiments")
     
     # Store HPO path in experiments
     if args.load_hpo_params:

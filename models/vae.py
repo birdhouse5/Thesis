@@ -192,12 +192,12 @@ class VAE(nn.Module):
         total_loss = avg_recon_obs + avg_recon_reward + beta * avg_kl
         
         logger = logging.getLogger(__name__)
-        logger.info(f"=== VAE.compute_loss DEBUG ===")
-        logger.info(f"  Input shapes: obs={obs_seq.shape}, actions={action_seq.shape}, rewards={reward_seq.shape}")
-        logger.info(f"  Num ELBO terms requested: {num_elbo_terms}")
-        logger.info(f"  Timesteps sampled: {timesteps}")
-        logger.info(f"  Prior provided: {prior_mu is not None}")
-        logger.info(f"  Returning info dict keys: {list(info_dict.keys()) if 'info_dict' in locals() else 'NOT YET CREATED'}")
+        # logger.info(f"=== VAE.compute_loss DEBUG ===")
+        # logger.info(f"  Input shapes: obs={obs_seq.shape}, actions={action_seq.shape}, rewards={reward_seq.shape}")
+        # logger.info(f"  Num ELBO terms requested: {num_elbo_terms}")
+        # logger.info(f"  Timesteps sampled: {timesteps}")
+        # logger.info(f"  Prior provided: {prior_mu is not None}")
+        # logger.info(f"  Returning info dict keys: {list(info_dict.keys()) if 'info_dict' in locals() else 'NOT YET CREATED'}")
 
         return total_loss, {
             "total": total_loss.item(),
