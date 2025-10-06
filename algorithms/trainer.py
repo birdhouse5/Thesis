@@ -899,9 +899,17 @@ class PPOTrainer:
                 value_loss = F.mse_loss(new_values, batch_returns)
                 entropy_loss = -entropy.mean()
                 
-                ppo_loss = (policy_loss + 
-                        self.config.value_loss_coef * value_loss + 
-                        self.config.entropy_coef * entropy_loss)
+                # Entropy coefficient annealing
+                progress = min(1.0, self.episode_count / float(self.config.total_episodes))
+                current_entropy_coef = self.config.entropy_coef * (1.0 - 0.9 * progress)
+
+                ppo_loss = (policy_loss +
+                self.config.value_loss_coef * value_loss +
+                current_entropy_coef * entropy_loss)
+
+                # ppo_loss = (policy_loss + 
+                #         self.config.value_loss_coef * value_loss + 
+                #         self.config.entropy_coef * entropy_loss)
                 
                 # Capture first batch metrics
                 if epoch == 0 and start_idx == 0:
