@@ -1066,8 +1066,8 @@ class PPOTrainer:
 
                     # Log gradient norm before clipping
                     vae_grad_norm = torch.nn.utils.clip_grad_norm_(self.vae.parameters(), float('inf'))
-                    if vae_grad_norm > self.config.max_grad_norm * 2:  # Only log if concerning
-                        logger.warning(f"VAE grad norm: {vae_grad_norm:.2f} (clipping at {self.config.max_grad_norm})")
+                    # if vae_grad_norm > self.config.max_grad_norm * 2:  # Only log if concerning
+                    #     logger.warning(f"VAE grad norm: {vae_grad_norm:.2f} (clipping at {self.config.max_grad_norm})")
 
                     torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
                     self.vae_optimizer.step()
