@@ -1,0 +1,18 @@
+{
+  "study_name": "ppo_vae_crypto_sharpe",
+  "asset_class": "crypto",
+  "reward_type": "sharpe",
+  "best_value": -415.79782218933104,
+  "best_params": {
+    "latent_dim": 64,
+    "hidden_dim": 512,
+    "vae_lr": 0.0009079802470436535,
+    "policy_lr": 7.630569454720238e-05,
+    "vae_beta": 0.010292008585920743,
+    "entropy_coef": 0.023948408857504218,
+    "ppo_clip_ratio": 0.243871194043717,
+    "eta": 0.06951746489732144,
+    "reward_lookback": 27
+  },
+  "n_trials": 50
+}
