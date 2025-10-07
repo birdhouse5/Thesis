@@ -1,0 +1,18 @@
+{
+  "study_name": "ppo_vae_crypto_dsr",
+  "asset_class": "crypto",
+  "reward_type": "dsr",
+  "best_value": -20.501021873950958,
+  "best_params": {
+    "latent_dim": 64,
+    "hidden_dim": 256,
+    "vae_lr": 0.0007463894277096005,
+    "policy_lr": 1.0925559034764345e-05,
+    "vae_beta": 0.9640136543844965,
+    "entropy_coef": 0.03404334119511376,
+    "ppo_clip_ratio": 0.10730552919277014,
+    "eta": 0.09294928444927805,
+    "reward_lookback": 49
+  },
+  "n_trials": 50
+}
