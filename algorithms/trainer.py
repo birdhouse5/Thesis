@@ -954,8 +954,8 @@ class PPOTrainer:
 
                 # Log gradient norm before clipping
                 policy_grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), float('inf'))
-                if policy_grad_norm > self.config.max_grad_norm * 2:  # Only log if concerning
-                    logger.warning(f"Policy grad norm: {policy_grad_norm:.2f} (clipping at {self.config.max_grad_norm})")
+                # if policy_grad_norm > self.config.max_grad_norm * 2:  # Only log if concerning
+                #     logger.warning(f"Policy grad norm: {policy_grad_norm:.2f} (clipping at {self.config.max_grad_norm})")
 
                 torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
                 self.policy_optimizer.step()
