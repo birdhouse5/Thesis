@@ -276,6 +276,10 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
             # --- Policy step ---
             action, _, _ = policy.act(current_obs_tensor, latent, deterministic=True)
 
+            # --- Normalization (fix) ---
+
+            weights, w_cash = normalize_with_budget_constraint(action.squeeze(0))
+
             # --- Environment reward step ---
             env.current_step = t
             reward, weights, w_cash, turnover, cost, equal_weight_return, relative_excess_return = env.compute_reward_with_capital(action.squeeze(0))
@@ -287,12 +291,10 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
 
             # Calculate exposures using standard definitions
             # Ensure proper normalization (defensive programming)
-            weights_normalized, w_cash_normalized = normalize_with_budget_constraint(weights)
-
-            # Calculate exposures using properly normalized weights
-            long_exp = float(weights_normalized[weights_normalized > 0].sum().item())
-            short_exp = float(torch.abs(weights_normalized[weights_normalized < 0]).sum().item()) 
-            cash_pos = float(w_cash_normalized)
+            # Calculate exposures directly from returned weights (already normalized)
+            long_exp = float(weights[weights > 0].sum().item())
+            short_exp = float(torch.abs(weights[weights < 0]).sum().item()) 
+            cash_pos = float(w_cash)
             net_exp = long_exp - short_exp
             gross_exp = long_exp + short_exp
             backtest_logger.log_step(
