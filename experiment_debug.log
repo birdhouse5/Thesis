@@ -1,0 +1,12 @@
+2025-10-18 21:29:47,094 - environments.data - INFO - Loading existing dataset: environments\data\sp500_rl_ready_cleaned.parquet
+2025-10-18 21:29:47,464 - environments.data - INFO - Loaded dataset: (263520, 54), features: 25
+2025-10-18 21:29:47,680 - environments.data - INFO - Dataset split 'train': 195600 rows, 6520 days, 30 assets, 25 features
+2025-10-18 21:29:47,680 - environments.data - INFO - Dataset split 'val': 37770 rows, 1259 days, 30 assets, 25 features
+2025-10-18 21:29:47,680 - environments.data - INFO - Dataset split 'test': 30150 rows, 1005 days, 30 assets, 25 features
+2025-10-18 21:29:47,680 - environments.data - INFO - Created splits using Date-based splits (train_end=2015-12-31, val_end=2020-12-31)
+2025-10-18 21:29:48,172 - environments.env - INFO - MetaEnv initialized:
+2025-10-18 21:29:48,172 - environments.env - INFO -   steps_per_year=252, rf_step_log=0.00007858
+2025-10-18 21:29:48,179 - environments.env - INFO - MetaEnv initialized:
+2025-10-18 21:29:48,179 - environments.env - INFO -   steps_per_year=252, rf_step_log=0.00007858
+2025-10-18 21:29:48,179 - environments.env - INFO - MetaEnv initialized:
+2025-10-18 21:29:48,179 - environments.env - INFO -   steps_per_year=252, rf_step_log=0.00007858

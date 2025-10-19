@@ -357,10 +357,11 @@ class PPOTrainer:
             
             # Environment step
             next_obs, reward_scalar, done_flag, info = self.env.step(actions_raw.squeeze(0))
-            
+            normalized_weights = info['weights'].detach()  # Get actual portfolio weights used
+
             # Store step data
             observations[step] = obs_tensor.squeeze(0)
-            actions[step] = actions_raw.squeeze(0).to(self.device)
+            actions[step] = normalized_weights.to(self.device)
             values[step] = value_t.squeeze(0)
             log_probs[step] = log_prob_t.squeeze(0)
             latents[step] = latent.squeeze(0)
@@ -917,7 +918,7 @@ class PPOTrainer:
                 
                 # Entropy coefficient annealing
                 progress = min(1.0, self.episode_count / float(self.config.max_episodes))
-                current_entropy_coef = self.config.entropy_coef * (1.0 - 0.9 * progress)
+                current_entropy_coef = self.config.entropy_coef * (1.0 - 0.5 * progress) # lowered entropy coefficient decay from 0.9 to 0.5
 
                 ppo_loss = (policy_loss +
                 self.config.value_loss_coef * value_loss +

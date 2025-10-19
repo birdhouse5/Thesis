@@ -163,40 +163,23 @@ def evaluate(env, policy, encoder, config, mode, num_episodes: int = 50) -> Dict
 def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> Dict[str, float]:
     """
     Run comprehensive sequential backtest on entire validation/test dataset using rolling context window.
-    
-    Args:
-        datasets: Dictionary with 'train', 'val', 'test' Dataset objects  
-        policy: Trained policy network
-        encoder: Trained encoder (VAE/HMM/None)
-        config: Training configuration
-        split: Which dataset split to backtest on ('val' or 'test')
-        
-    Returns:
-        Dictionary with backtest results
+    FIXED: Now maintains actual action/reward history instead of zeros.
     """
     from environments.env import MetaEnv, normalize_with_budget_constraint
     
     device = torch.device(config.device)
 
-    # Select dataset split first
+    # Select dataset split
     dataset = datasets[split]
-    # In evaluation_backtest.py, add at the start of run_sequential_backtest:
-    logger.info(f"Dataset type: {type(dataset)}")
-    logger.info(f"Dataset attributes: {dir(dataset)}")
-    if hasattr(dataset, 'get_window_tensor'):
-        logger.info("✓ get_window_tensor method exists")
-    else:
-        logger.error("✗ get_window_tensor method missing")
-
-    # Print info after dataset is defined
-    print(f"Running sequential backtest on {split} split:")
+    
+    logger.info(f"Running sequential backtest on {split} split:")
     if hasattr(dataset, 'get_split_info'):
         try:
-            print(f"  Dataset period: {dataset.get_split_info().get('date_range', 'unknown')}")
+            logger.info(f"  Dataset period: {dataset.get_split_info().get('date_range', 'unknown')}")
         except Exception:
-            print(f"  Dataset period: unknown")
-    print(f"  Total timesteps: {len(dataset)}")
-    print(f"  Context window: {config.seq_len}")
+            logger.info(f"  Dataset period: unknown")
+    logger.info(f"  Total timesteps: {len(dataset)}")
+    logger.info(f"  Context window: {config.seq_len}")
     
     policy.eval()
     if encoder is not None:
@@ -212,18 +195,21 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
         eta=getattr(config, 'eta', 0.05),
         rf_rate=getattr(config, 'rf_rate', 0.02),
         transaction_cost_rate=getattr(config, 'transaction_cost_rate', 0.001),
-        steps_per_year=252 if config.asset_class == 'sp500' else 35040
+        steps_per_year=252 if config.asset_class == 'sp500' else 35040,
+        inflation_rate=getattr(config, 'inflation_rate', 0.0),  # Use config value
+        reward_type=getattr(config, 'reward_type', 'dsr'),
+        reward_lookback=getattr(config, 'reward_lookback', 20),
     )
 
     backtest_logger = BacktestCSVLogger(
         config.exp_name, config.seed, config.asset_class, 
         config.encoder, dataset.num_assets, config.latent_dim
-        )
+    )
 
     # Enable sequential mode
     env.set_sequential_mode(True)
-    env.config = config  # Ensure config is available for _get_latent_for_step
-    env.vae = encoder  # Ensure VAE is available
+    env.config = config
+    env.vae = encoder
     
     env.set_task({
         "sequence": {
@@ -233,12 +219,16 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
         "task_id": f"{split}_sequential"
     })
 
+    # 🔥 FIX: Initialize history buffers for actual context
+    obs_history = []
+    action_history = []
+    reward_history = []
+    
     # Initialize tracking
     daily_returns = []
     daily_capital = []
     portfolio_values = []
     
-    # Initialize capital tracking
     initial_capital = 100_000.0
     env.current_capital = initial_capital
     env.initial_capital = initial_capital
@@ -247,56 +237,61 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
     env.excess_log_returns = []
     env.alpha = 0.0
     env.beta = 0.0
-    # Initialize previous weights on env device
     env.prev_weights = torch.zeros(dataset.num_assets, dtype=torch.float32, device=env.device)
     
     with torch.no_grad():
         for t in range(len(dataset) - 1):
-            # --- Get current observation ---
+            # Get current observation
             current_obs_tensor = full_window['features'][t].to(device).to(torch.float32).unsqueeze(0)
 
-            # --- Build rolling context for VAE ---
+            # 🔥 FIX: Build rolling context from actual history
             if encoder is None or getattr(config, 'disable_vae', False):
                 latent = torch.zeros(1, config.latent_dim, device=device)
             else:
-                # Slice the last seq_len steps (or fewer if t < seq_len)
-                start = max(0, t - config.seq_len + 1)
-                end = t + 1
-                ctx_obs = full_window['features'][start:end]           # [L, N, F]
-                ctx_acts = torch.zeros((end - start, dataset.num_assets), device=device)  # placeholder
-                ctx_rews = torch.zeros((end - start, 1), device=device)                  # placeholder
+                if len(obs_history) == 0:
+                    # First step: use zero latent
+                    latent = torch.zeros(1, config.latent_dim, device=device)
+                else:
+                    # Use actual history for context
+                    start_idx = max(0, len(obs_history) - config.seq_len)
+                    ctx_obs = torch.stack(obs_history[start_idx:]).unsqueeze(0).to(device)
+                    ctx_acts = torch.stack(action_history[start_idx:]).unsqueeze(0).to(device)
+                    ctx_rews = torch.stack(reward_history[start_idx:]).unsqueeze(0).unsqueeze(-1).to(device)
 
-                ctx_obs = ctx_obs.unsqueeze(0).to(device)   # [1, L, N, F]
-                ctx_acts = ctx_acts.unsqueeze(0)            # [1, L, N]
-                ctx_rews = ctx_rews.unsqueeze(0)            # [1, L, 1]
+                    try:
+                        if config.encoder == "hmm":
+                            latent = encoder.encode(ctx_obs, ctx_acts, ctx_rews)
+                        else:  # VAE
+                            mu, logvar, _ = encoder.encode(ctx_obs, ctx_acts, ctx_rews)
+                            latent = encoder.reparameterize(mu, logvar)
+                    except Exception as e:
+                        logger.warning(f"Encoder failed at step {t}: {e}, using zero latent")
+                        latent = torch.zeros(1, config.latent_dim, device=device)
 
-                mu, logvar, _ = encoder.encode(ctx_obs, ctx_acts, ctx_rews)
-                latent = encoder.reparameterize(mu, logvar)
-
-            # --- Policy step ---
+            # Policy step
             action, _, _ = policy.act(current_obs_tensor, latent, deterministic=True)
 
-            # --- Normalization (fix) ---
-
-            weights, w_cash = normalize_with_budget_constraint(action.squeeze(0))
-
-            # --- Environment reward step ---
+            # Get normalized weights from environment
             env.current_step = t
-            reward, weights, w_cash, turnover, cost, equal_weight_return, relative_excess_return = env.compute_reward_with_capital(action.squeeze(0))
+            reward, weights, w_cash, turnover, cost, equal_weight_return, relative_excess_return = \
+                env.compute_reward_with_capital(action.squeeze(0))
 
-            # --- Tracking ---
+            # 🔥 FIX: Store actual normalized weights in history (not raw actions)
+            obs_history.append(current_obs_tensor.squeeze(0).detach().cpu())
+            action_history.append(weights.detach().cpu())  # Store NORMALIZED weights
+            reward_history.append(torch.tensor(reward, dtype=torch.float32))
+
+            # Rest of tracking code...
             excess_return = env.excess_log_returns[-1] if env.excess_log_returns else 0.0
             log_return = env.log_returns[-1] if env.log_returns else 0.0
             weights_np = weights.detach().cpu().numpy()
 
-            # Calculate exposures using standard definitions
-            # Ensure proper normalization (defensive programming)
-            # Calculate exposures directly from returned weights (already normalized)
             long_exp = float(weights[weights > 0].sum().item())
-            short_exp = float(torch.abs(weights[weights < 0]).sum().item()) 
+            short_exp = float(torch.abs(weights[weights < 0]).sum().item())
             cash_pos = float(w_cash)
             net_exp = long_exp - short_exp
             gross_exp = long_exp + short_exp
+            
             backtest_logger.log_step(
                 step=t, capital=env.current_capital, log_return=log_return, excess_return=excess_return,
                 reward=reward, weights=weights_np, long_exposure=long_exp, short_exposure=short_exp,
@@ -304,45 +299,35 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
                 turnover=turnover, transaction_cost=cost, latent=latent.squeeze().cpu().numpy()
             )
 
-            # Keep minimal tracking for summary metrics
             daily_returns.append(excess_return)
             daily_capital.append(env.current_capital)
             portfolio_values.append(env.current_capital / initial_capital)
 
             if t % 100 == 0:
                 current_return = (env.current_capital - initial_capital) / initial_capital
-                print(f"  Step {t:4d}/{len(dataset)-1}: "
-                    f"Return = {current_return:.3%}, "
-                    f"Capital = ${env.current_capital:,.0f}")
+                logger.info(f"  Step {t:4d}/{len(dataset)-1}: "
+                          f"Return = {current_return:.3%}, "
+                          f"Capital = ${env.current_capital:,.0f}")
 
-    
-    # Calculate comprehensive metrics
+    # Calculate metrics (unchanged)
     returns_array = np.array(daily_returns)
     capital_array = np.array(daily_capital)
-    
-    # Determine annualization factor
     steps_per_year = 252 if config.asset_class == 'sp500' else 35040
     
-    # Performance metrics
     total_return = (capital_array[-1] - initial_capital) / initial_capital
     annual_return = np.mean(returns_array) * steps_per_year
     annual_volatility = np.std(returns_array) * np.sqrt(steps_per_year)
     sharpe_ratio = annual_return / annual_volatility if annual_volatility > 0 else 0
     
-    # Risk metrics
     negative_returns = returns_array[returns_array < 0]
     downside_volatility = np.std(negative_returns) * np.sqrt(steps_per_year) if len(negative_returns) > 0 else 0
     sortino_ratio = annual_return / downside_volatility if downside_volatility > 0 else 0
     
-    # Maximum drawdown
     peak = np.maximum.accumulate(capital_array)
     drawdown = (capital_array - peak) / peak
     max_drawdown = np.min(drawdown)
-    
-    # Calmar ratio
     calmar_ratio = annual_return / abs(max_drawdown) if max_drawdown != 0 else 0
     
-    # Additional metrics
     win_rate = np.sum(returns_array > 0) / len(returns_array) if len(returns_array) > 0 else 0
     var_95 = np.percentile(returns_array, 5) if len(returns_array) > 0 else 0
     
@@ -359,22 +344,20 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
         'num_trades': len(returns_array),
         'final_capital': capital_array[-1],
         'initial_capital': initial_capital,
-        'avg_turnover': 0.0,  # Turnover now tracked per-step in CSV
-        # Detailed data for further analysis
+        'avg_turnover': 0.0,
         'daily_returns': returns_array.tolist(),
         'daily_capital': capital_array.tolist(),
         'portfolio_values': portfolio_values
     }
     
-    print(f"\nSequential Backtest Results ({split} split):")
-    print(f"  Total Return: {total_return:.2%}")
-    print(f"  Annual Return: {annual_return:.2%}")
-    print(f"  Annual Volatility: {annual_volatility:.2%}")
-    print(f"  Sharpe Ratio: {sharpe_ratio:.3f}")
-    print(f"  Max Drawdown: {max_drawdown:.2%}")
-    print(f"  Win Rate: {win_rate:.2%}")
+    logger.info(f"\nSequential Backtest Results ({split} split):")
+    logger.info(f"  Total Return: {total_return:.2%}")
+    logger.info(f"  Annual Return: {annual_return:.2%}")
+    logger.info(f"  Annual Volatility: {annual_volatility:.2%}")
+    logger.info(f"  Sharpe Ratio: {sharpe_ratio:.3f}")
+    logger.info(f"  Max Drawdown: {max_drawdown:.2%}")
+    logger.info(f"  Win Rate: {win_rate:.2%}")
     
-    # Reset models to training mode
     policy.train()
     if encoder is not None:
         encoder.train()

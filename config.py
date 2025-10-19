@@ -159,12 +159,12 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         discount_factor=0.99,
         min_horizon=exp.min_horizon,
         max_horizon=exp.max_horizon,
-        eta=0.026057381475720114, # optuna result1 - best
+        eta=0.1 # 0.026057381475720114 optuna result1 - best (now trying 0.1 - which arguably works better for our short horizon)
         rf_rate=0.02,
-        transaction_cost_rate=exp.transaction_cost_rate if exp.transaction_cost_rate is not None else 0.001,
+        transaction_cost_rate=exp.transaction_cost_rate if exp.transaction_cost_rate is not None else 0.0,
         reward_type=exp.reward_type if hasattr(exp, 'reward_type') else "dsr",
         reward_lookback=39, # optuna result1 - best
-        inflation_rate=exp.inflation_rate if exp.inflation_rate is not None else 0.1,
+        inflation_rate=exp.inflation_rate if exp.inflation_rate is not None else 0.0,
         ppo_minibatch_size = 128,
         vae_num_elbo_terms = 8,
         #use_cpu_context = False
