@@ -229,6 +229,8 @@ class PPOTrainer:
         #log_memory("Before update")
         total_loss, update_info = self.update_ppo_and_vae(all_transitions)
         #log_memory("After update")
+
+        self.episode_count += self.config.episodes_per_task
         
         # Build results BEFORE cleanup
         final_capital = self.env.current_capital
