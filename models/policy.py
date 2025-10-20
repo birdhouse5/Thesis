@@ -72,8 +72,9 @@ class PortfolioPolicy(nn.Module):
         shared = self.shared_layers(combined)
 
         mean = self.actor_mean(shared) * self.action_scale
-        logstd = self.actor_logstd_head(shared)
-        logstd_clamped = torch.clamp(logstd, min=-3.0, max=-0.3)
+        raw_logstd = self.actor_logstd_head(shared)
+        min_logstd, max_logstd = -3.0, -0.3
+        logstd_clamped = min_logstd + (max_logstd - min_logstd) * torch.sigmoid(raw_logstd)
 
 
         value = self.critic_head(shared)
