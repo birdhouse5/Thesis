@@ -48,7 +48,9 @@ class PortfolioPolicy(nn.Module):
         )
         # self.actor_logstd = nn.Parameter(torch.zeros(num_assets)) TODO
         #self.actor_logstd = nn.Parameter(torch.zeros(num_assets) * -1.0)
-        self.actor_logstd = nn.Parameter(torch.zeros(num_assets))
+        #self.actor_logstd = nn.Parameter(torch.zeros(num_assets))
+        self.actor_logstd_head = nn.Linear(hidden_dim // 2, num_assets)
+
         # Critic
         self.critic_head = nn.Linear(hidden_dim // 2, 1)           # Value function
         
@@ -70,8 +72,9 @@ class PortfolioPolicy(nn.Module):
         shared = self.shared_layers(combined)
 
         mean = self.actor_mean(shared) * self.action_scale
+        logstd = self.actor_logstd_head(shared)
+        logstd_clamped = torch.clamp(logstd, min=-3.0, max=-0.3)
 
-        logstd_clamped = torch.clamp(self.actor_logstd, min=-5.0, max=2.0)
 
         value = self.critic_head(shared)
         return mean, logstd_clamped.expand_as(mean), value
