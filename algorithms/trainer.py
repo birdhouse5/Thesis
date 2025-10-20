@@ -830,13 +830,23 @@ class PPOTrainer:
             returns[t] = gae + values[t]
             next_value = values[t]
 
+
+        if torch.isnan(advantages).any() or torch.isinf(advantages).any():
+            logger.error("NaN/Inf detected in raw advantages!")
+            advantages = torch.zeros_like(advantages)
+            returns = values.clone()
+
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-        if advantages.std() < 1e-8:
-            logger.warning(f"Advantage std too small: {advantages.std():.2e}, skipping normalization")
-            advantages = advantages * 0.0  # Zero out to prevent NaN
+        adv_std = advantages.std()
+        if adv_std < 1e-4:  # Changed from 1e-8 to 1e-4
+            logger.warning(f"Advantage std too small ({adv_std:.2e}), using zeros")
+            advantages = torch.zeros_like(advantages)
         else:
-            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+            # Normalize with clipping
+            advantages = (advantages - advantages.mean()) / (adv_std + 1e-6)
+            advantages = torch.clamp(advantages, -10.0, 10.0)  # Clamp after normalization
+        
 
         # 🔥 Scale advantage magnitude to strengthen PPO signal TODO
         adv_scale = 1.0 # 5.0 too strong??
