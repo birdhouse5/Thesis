@@ -101,6 +101,6 @@ class PortfolioPolicy(nn.Module):
         std = logstd.exp()
         dist = Normal(mean, std)
         log_probs = dist.log_prob(raw_actions).sum(-1, keepdim=True)
-        entropy = dist.entropy().sum(-1, keepdim=True)
+        entropy = dist.entropy().mean(-1, keepdim=True)  # normalize per dimension
 
         return value, log_probs, entropy
