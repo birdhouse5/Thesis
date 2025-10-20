@@ -934,17 +934,18 @@ class PPOTrainer:
                 
                 # PPO losses
                 ratio = torch.exp(new_logp - batch_old_logp)
+                ratio = torch.clamp(ratio, 0.1, 10.0)
                 eps = self.config.ppo_clip_ratio
                 surr1 = ratio * batch_advantages
                 surr2 = torch.clamp(ratio, 1.0 - eps, 1.0 + eps) * batch_advantages
                 policy_loss = -torch.min(surr1, surr2).mean()
                 value_loss = F.mse_loss(new_values, batch_returns)
-                #entropy_loss = -entropy.mean() <not normalized
-                entropy_loss = -entropy.mean() / (abs(policy_loss.item()) + 1e-6) # normalized
+                entropy_loss = -entropy.mean() # not normalized
+                #entropy_loss = -entropy.mean() / (abs(policy_loss.item()) + 1e-6) # normalized
                 
                 # Entropy coefficient annealing
                 progress = min(1.0, self.episode_count / float(self.config.max_episodes))
-                current_entropy_coef = self.config.entropy_coef * (1.0 - 0.2 * progress) # lowered entropy coefficient decay from 0.9 to 0.5. Now down to 0.2
+                current_entropy_coef = self.config.entropy_coef * (1.0 - 0.1 * progress) # lowered entropy coefficient decay from 0.9 to 0.5. Now down to 0.2
 
                 ppo_loss = (policy_loss +
                 self.config.value_loss_coef * value_loss +
