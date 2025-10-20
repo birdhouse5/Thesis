@@ -13,7 +13,8 @@ class ExperimentConfig:
     exp_name: Optional[str] = None
     force_recreate: bool = False
     transaction_cost_rate: Optional[float] = None
-    inflation_rate: Optional[float] = None    
+    inflation_rate: Optional[float] = None
+    n_assets: Optional[int] = None  
 
 
 # --- 2. Generator for all 60 configs ---
@@ -82,12 +83,14 @@ class TrainingConfig:
     ppo_minibatch_size: int
     inflation_rate: float   
     #use_cpu_context: bool
+    n_assets_limit: Optional[int] = None
     rf_rate: float = 0.02
     transaction_cost_rate: float = 0.001
     force_recreate: bool = False
     reward_type: str = "dsr"
     reward_lookback: int = 20
     vae_num_elbo_terms: int = 8
+    
     
     
 
@@ -124,6 +127,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         exp_name=exp.exp_name or default_name,
         asset_class=exp.asset_class,
         data_path=data_paths[exp.asset_class],
+        n_assets_limit=exp.n_assets,
         encoder=exp.encoder,
         disable_vae=disable_vae,
         latent_dim=latent_dim, # optuna result1

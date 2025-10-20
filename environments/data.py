@@ -19,15 +19,27 @@ import time
 logger = logging.getLogger(__name__)
 
 # Constants from original data_preparation.py
+# SP500_TICKERS = [
+#     'IBM', 'MSFT', 'ORCL', 'INTC', 'HPQ', 'CSCO',  # Tech
+#     'JPM', 'BAC', 'WFC', 'C', 'AXP',              # Financial
+#     'JNJ', 'PFE', 'MRK', 'ABT',                   # Healthcare
+#     'KO', 'PG', 'WMT', 'PEP',                     # Consumer Staples
+#     'XOM', 'CVX', 'COP',                          # Energy
+#     'GE', 'CAT', 'BA',                            # Industrials
+#     'HD', 'MCD',                                  # Consumer Disc
+#     'SO', 'D',                                    # Utilities
+#     'DD'                                          # Materials
+# ]
+
 SP500_TICKERS = [
-    'IBM', 'MSFT', 'ORCL', 'INTC', 'HPQ', 'CSCO',  # Tech
-    'JPM', 'BAC', 'WFC', 'C', 'AXP',              # Financial
-    'JNJ', 'PFE', 'MRK', 'ABT',                   # Healthcare
-    'KO', 'PG', 'WMT', 'PEP',                     # Consumer Staples
-    'XOM', 'CVX', 'COP',                          # Energy
-    'GE', 'CAT', 'BA',                            # Industrials
-    'HD', 'MCD',                                  # Consumer Disc
-    'SO', 'D',                                    # Utilities
+    'IBM', #'MSFT', 'ORCL', 'INTC', 'HPQ', 'CSCO',  # Tech
+    'JPM', #'BAC', 'WFC', 'C', 'AXP',              # Financial
+    'JNJ', #'PFE', 'MRK', 'ABT',                   # Healthcare
+    'KO', #'PG', 'WMT', 'PEP',                     # Consumer Staples
+    'XOM', #'CVX', 'COP',                          # Energy
+    'GE', #'CAT', 'BA',                            # Industrials
+    'HD', #'MCD',                                  # Consumer Disc
+    'SO', #'D',                                    # Utilities
     'DD'                                          # Materials
 ]
 

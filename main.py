@@ -176,8 +176,29 @@ def prepare_environments(cfg: TrainingConfig):
             proportional=False
         )
     
+
+
     # Get all splits
     datasets = dataset.get_all_splits()
+
+    if cfg.n_assets_limit is not None:
+        logger.info(f"Limiting to first {cfg.n_assets_limit} assets (from {datasets['train'].num_assets})")
+        
+        # Filter each split
+        for split_name, dataset_split in datasets.items():
+            # Get first n tickers
+            selected_tickers = sorted(dataset_split.tickers)[:cfg.n_assets_limit]
+            
+            # Filter the dataframe
+            dataset_split.data = dataset_split.data[
+                dataset_split.data['ticker'].isin(selected_tickers)
+            ].copy()
+            
+            # Update metadata
+            dataset_split.tickers = selected_tickers
+            dataset_split.num_assets = len(selected_tickers)
+            
+            logger.info(f"  {split_name}: {dataset_split.num_assets} assets, {len(dataset_split.data)} rows")
     
     # Update num_assets from actual data
     cfg.num_assets = datasets['train'].num_assets
@@ -551,7 +572,9 @@ def main():
     parser.add_argument("--inflation_rate", type=float, default=None,
                     help="Override inflation rate (default: 0.1)")
     parser.add_argument("--load_hpo_params", type=str, default=None,
-                    help="Path to HPO results JSON")                    
+                    help="Path to HPO results JSON")
+    parser.add_argument("--n_assets", type=int, default=None,
+                        help="Number of assets to use (default: all 30)")                  
 
     args = parser.parse_args()
 
@@ -574,6 +597,9 @@ def main():
         # Store HPO path for later application
         if args.load_hpo_params:
             exp._hpo_path = args.load_hpo_params
+        
+        if args.n_assets is not None:
+            exp.n_assets = args.n_assets
         
         # Cost/inflation overrides
         if args.disable_transaction_costs:
