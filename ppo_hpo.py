@@ -1,67 +1,130 @@
+import optuna
+import numpy as np
+import torch
+import argparse
 import json
 from pathlib import Path
-from config import TrainingConfig
 
-def load_hpo_params(json_path: str, cfg: TrainingConfig) -> TrainingConfig:
-    """
-    Load HPO parameters from JSON and apply to config.
+from config import ExperimentConfig, experiment_to_training_config
+from main import prepare_environments, create_models
+from algorithms.trainer import PPOTrainer
+
+
+def objective(trial, asset_class, reward_type, encoder):
+    """Optimize only PPO parameters with fixed encoder architecture."""
     
-    Args:
-        json_path: Path to JSON file with best parameters
-        cfg: Training configuration to update
+    # === PPO Parameters to Optimize ===
+    policy_lr = trial.suggest_loguniform("policy_lr", 1e-5, 3e-4)
+    ppo_clip_ratio = trial.suggest_uniform("ppo_clip_ratio", 0.1, 0.3)
+    entropy_coef = trial.suggest_uniform("entropy_coef", 0.0, 0.05)
+    ppo_epochs = trial.suggest_int("ppo_epochs", 4, 16)
+    value_loss_coef = trial.suggest_uniform("value_loss_coef", 0.3, 2.0)
+    max_grad_norm = trial.suggest_uniform("max_grad_norm", 0.3, 2.0)
+    gae_lambda = trial.suggest_uniform("gae_lambda", 0.90, 0.99)
+    discount_factor = trial.suggest_uniform("discount_factor", 0.95, 0.999)
+    ppo_minibatch_size = trial.suggest_categorical("ppo_minibatch_size", [64, 128, 256])
+    
+    # === Config ===
+    exp = ExperimentConfig(
+        seed=0,
+        asset_class=asset_class,
+        encoder=encoder
+    )
+    cfg = experiment_to_training_config(exp)
+    
+    # Apply PPO hyperparameters
+    cfg.policy_lr = policy_lr
+    cfg.ppo_clip_ratio = ppo_clip_ratio
+    cfg.entropy_coef = entropy_coef
+    cfg.ppo_epochs = ppo_epochs
+    cfg.value_loss_coef = value_loss_coef
+    cfg.max_grad_norm = max_grad_norm
+    cfg.gae_lambda = gae_lambda
+    cfg.discount_factor = discount_factor
+    cfg.ppo_minibatch_size = ppo_minibatch_size
+    cfg.reward_type = reward_type
+    
+    # === Prepare envs and models ===
+    envs, split_tensors, datasets = prepare_environments(cfg)
+    train_env = envs["train"]
+    obs_shape = (cfg.num_assets, len(split_tensors["train"]["feature_columns"]))
+    vae, policy = create_models(cfg, obs_shape)
+    trainer = PPOTrainer(train_env, policy, vae, cfg)
+    
+    # === Training loop ===
+    rewards = []
+    max_tasks = 50  # Reduced for HPO
+    
+    for task_idx in range(max_tasks):
+        task = train_env.sample_task()
+        train_env.set_task(task)
+        result = trainer.train_on_task()
+        rewards.append(result["task_total_reward"])
         
-    Returns:
-        Updated configuration
-    """
-    with open(json_path, 'r') as f:
-        hpo_data = json.load(f)
+        # Optuna pruning
+        trial.report(np.mean(rewards[-10:]), step=task_idx)
+        if trial.should_prune():
+            raise optuna.TrialPruned()
     
-    params = hpo_data['best_params']
+    return float(np.mean(rewards[-20:]))
+
+
+def print_best_callback(study, trial):
+    """Print current best parameters after each trial."""
+    print(f"\n--- Trial {trial.number} complete ---")
+    print(f"Current trial value: {trial.value}")
+    print(f"Best value so far: {study.best_value}")
+    print(f"Best params so far: {study.best_params}")
+    print("-" * 50)
+
+
+def save_best_params(study, asset_class, reward_type, encoder):
+    """Save best parameters to JSON file."""
+    output_dir = Path("hpo_results")
+    output_dir.mkdir(exist_ok=True)
     
-    # === Original VAE parameters ===
-    if 'latent_dim' in params:
-        cfg.latent_dim = params['latent_dim']
-    if 'hidden_dim' in params:
-        cfg.hidden_dim = params['hidden_dim']
-    if 'vae_lr' in params:
-        cfg.vae_lr = params['vae_lr']
-    if 'vae_beta' in params:
-        cfg.vae_beta = params['vae_beta']
+    output_file = output_dir / f"best_params_{asset_class}_{reward_type}_{encoder}_ppo_only.json"
     
-    # === PPO parameters (original) ===
-    if 'policy_lr' in params:
-        cfg.policy_lr = params['policy_lr']
-    if 'entropy_coef' in params:
-        cfg.entropy_coef = params['entropy_coef']
-    if 'ppo_clip_ratio' in params:
-        cfg.ppo_clip_ratio = params['ppo_clip_ratio']
+    result = {
+        "study_name": study.study_name,
+        "asset_class": asset_class,
+        "reward_type": reward_type,
+        "encoder": encoder,
+        "best_value": study.best_trial.value,
+        "best_params": study.best_trial.params,
+        "n_trials": len(study.trials)
+    }
     
-    # === NEW: PPO-only parameters ===
-    if 'ppo_epochs' in params:
-        cfg.ppo_epochs = params['ppo_epochs']
-    if 'value_loss_coef' in params:
-        cfg.value_loss_coef = params['value_loss_coef']
-    if 'max_grad_norm' in params:
-        cfg.max_grad_norm = params['max_grad_norm']
-    if 'gae_lambda' in params:
-        cfg.gae_lambda = params['gae_lambda']
-    if 'discount_factor' in params:
-        cfg.discount_factor = params['discount_factor']
-    if 'ppo_minibatch_size' in params:
-        cfg.ppo_minibatch_size = params['ppo_minibatch_size']
+    with open(output_file, 'w') as f:
+        json.dump(result, f, indent=2)
     
-    # === Environment parameters ===
-    if 'eta' in params:
-        cfg.eta = params['eta']
-    if 'reward_lookback' in params:
-        cfg.reward_lookback = params['reward_lookback']
+    print(f"\n✅ Best parameters saved to {output_file}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--asset_class", type=str, default="sp500", choices=["sp500", "crypto"])
+    parser.add_argument("--reward_type", type=str, default="dsr", choices=["dsr", "sharpe", "drawdown"])
+    parser.add_argument("--encoder", type=str, default="vae", choices=["vae", "hmm", "none"])
+    parser.add_argument("--n_trials", type=int, default=50)
+    args = parser.parse_args()
     
-    # Apply reward type from HPO study
-    if 'reward_type' in hpo_data:
-        cfg.reward_type = hpo_data['reward_type']
+    study_name = f"ppo_only_{args.asset_class}_{args.reward_type}_{args.encoder}"
     
-    print(f"✅ Loaded HPO parameters from {json_path}")
-    print(f"   Best value: {hpo_data['best_value']:.4f}")
-    print(f"   Applied params: {list(params.keys())}")
+    study = optuna.create_study(
+        study_name=study_name,
+        direction="maximize",
+        pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=10)
+    )
     
-    return cfg
+    study.optimize(
+        lambda trial: objective(trial, args.asset_class, args.reward_type, args.encoder),
+        n_trials=args.n_trials,
+        callbacks=[print_best_callback]
+    )
+    
+    print(f"\n=== Best Trial (PPO-only for {args.encoder}) ===")
+    print(f"Value: {study.best_trial.value}")
+    print(f"Params: {study.best_trial.params}")
+    
+    save_best_params(study, args.asset_class, args.reward_type, args.encoder)

@@ -18,21 +18,39 @@ def load_hpo_params(json_path: str, cfg: TrainingConfig) -> TrainingConfig:
     
     params = hpo_data['best_params']
     
-    # Apply hyperparameters
+    # === Original VAE parameters ===
     if 'latent_dim' in params:
         cfg.latent_dim = params['latent_dim']
     if 'hidden_dim' in params:
         cfg.hidden_dim = params['hidden_dim']
     if 'vae_lr' in params:
         cfg.vae_lr = params['vae_lr']
-    if 'policy_lr' in params:
-        cfg.policy_lr = params['policy_lr']
     if 'vae_beta' in params:
         cfg.vae_beta = params['vae_beta']
+    
+    # === PPO parameters (original) ===
+    if 'policy_lr' in params:
+        cfg.policy_lr = params['policy_lr']
     if 'entropy_coef' in params:
         cfg.entropy_coef = params['entropy_coef']
     if 'ppo_clip_ratio' in params:
         cfg.ppo_clip_ratio = params['ppo_clip_ratio']
+    
+    # === NEW: PPO-only parameters ===
+    if 'ppo_epochs' in params:
+        cfg.ppo_epochs = params['ppo_epochs']
+    if 'value_loss_coef' in params:
+        cfg.value_loss_coef = params['value_loss_coef']
+    if 'max_grad_norm' in params:
+        cfg.max_grad_norm = params['max_grad_norm']
+    if 'gae_lambda' in params:
+        cfg.gae_lambda = params['gae_lambda']
+    if 'discount_factor' in params:
+        cfg.discount_factor = params['discount_factor']
+    if 'ppo_minibatch_size' in params:
+        cfg.ppo_minibatch_size = params['ppo_minibatch_size']
+    
+    # === Environment parameters ===
     if 'eta' in params:
         cfg.eta = params['eta']
     if 'reward_lookback' in params:
@@ -44,6 +62,6 @@ def load_hpo_params(json_path: str, cfg: TrainingConfig) -> TrainingConfig:
     
     print(f"✅ Loaded HPO parameters from {json_path}")
     print(f"   Best value: {hpo_data['best_value']:.4f}")
-    print(f"   Applied params: {params}")
+    print(f"   Applied params: {list(params.keys())}")
     
     return cfg
