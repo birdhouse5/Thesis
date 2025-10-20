@@ -27,6 +27,12 @@ def load_hpo_params(json_path: str, cfg: TrainingConfig) -> TrainingConfig:
         cfg.vae_lr = params['vae_lr']
     if 'vae_beta' in params:
         cfg.vae_beta = params['vae_beta']
+
+    # === VAE-specific parameters (new) ===
+    if 'vae_update_freq' in params:
+        cfg.vae_update_freq = params['vae_update_freq']
+    if 'vae_num_elbo_terms' in params:
+        cfg.vae_num_elbo_terms = params['vae_num_elbo_terms']
     
     # === PPO parameters (original) ===
     if 'policy_lr' in params:
