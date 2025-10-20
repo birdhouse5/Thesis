@@ -931,6 +931,11 @@ class PPOTrainer:
                 new_values = new_values.squeeze(-1)
                 new_logp = new_logp.squeeze(-1)
                 entropy = entropy.squeeze(-1)
+
+                min_entropy_threshold = 1.0  # Minimum acceptable entropy per action dim
+                if entropy.mean() < min_entropy_threshold:
+                    logger.warning(f"Entropy too low ({entropy.mean():.3f}), skipping update")
+                    continue
                 
                 # PPO losses
                 ratio = torch.exp(new_logp - batch_old_logp)
@@ -945,7 +950,9 @@ class PPOTrainer:
                 
                 # Entropy coefficient annealing
                 progress = min(1.0, self.episode_count / float(self.config.max_episodes))
-                current_entropy_coef = self.config.entropy_coef * (1.0 - 0.1 * progress) # lowered entropy coefficient decay from 0.9 to 0.5. Now down to 0.2
+                #current_entropy_coef = self.config.entropy_coef * (1.0 - 0.1 * progress) # lowered entropy coefficient decay from 0.9 to 0.5. Now down to 0.2
+                current_entropy_coef = self.config.entropy_coef # annealing removed
+
 
                 ppo_loss = (policy_loss +
                 self.config.value_loss_coef * value_loss +

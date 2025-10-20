@@ -324,7 +324,7 @@ class MetaEnv:
         self.beta  = beta_new
 
         # DSR scaling: TODO
-        dsr_t = dsr_t * 10.0
+        dsr_t = dsr_t * 2.0 #10.0
 
         if self.current_step < 2:  # gate very-early steps
             dsr_t = torch.tensor(0.0, dtype=torch.float32, device=self.device)

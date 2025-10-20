@@ -139,7 +139,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         batch_size=8192,
         vae_batch_size=1024,
         ppo_epochs=8, # TODO
-        entropy_coef=0.001, #TODO # 0.0009083214087882104, # optuna result1 - best # 0.006439257494565313, # 0.047315891962627706, optuna 2 # 
+        entropy_coef=0.05 # 0.001, #TODO # 0.0009083214087882104, # optuna result1 - best # 0.006439257494565313, # 0.047315891962627706, optuna 2 # 
         joint_loss_lambda=1.0,
         max_episodes=9000, #TODO
         early_stopping_patience=10,
