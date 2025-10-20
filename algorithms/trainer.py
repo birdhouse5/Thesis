@@ -815,11 +815,7 @@ class PPOTrainer:
         lam = self.config.gae_lambda
         T = len(rewards)
 
-        if advantages.std() < 1e-8:
-            logger.warning(f"Advantage std too small: {advantages.std():.2e}, skipping normalization")
-            advantages = advantages * 0.0  # Zero out to prevent NaN
-        else:
-            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        advantages = torch.zeros_like(rewards, device=self.device)
         returns = torch.zeros_like(rewards, device=self.device)
 
         gae = 0.0
@@ -833,6 +829,12 @@ class PPOTrainer:
             next_value = values[t]
 
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+        if advantages.std() < 1e-8:
+            logger.warning(f"Advantage std too small: {advantages.std():.2e}, skipping normalization")
+            advantages = advantages * 0.0  # Zero out to prevent NaN
+        else:
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         # 🔥 Scale advantage magnitude to strengthen PPO signal TODO
         adv_scale = 1.0 # 5.0 too strong??
