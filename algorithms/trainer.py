@@ -1159,6 +1159,16 @@ class PPOTrainer:
         advantages = torch.zeros_like(rewards)
         returns = torch.zeros_like(rewards)
 
+        with torch.no_grad():
+            sample_size = min(128, len(obs))
+            _, _, sample_entropy = self.policy.evaluate_actions(
+                obs[:sample_size], 
+                latents[:sample_size], 
+                actions[:sample_size]
+            )
+            current_entropy = sample_entropy.mean().item()
+            logger.info(f"📊 Current policy entropy: {current_entropy:.3f}")
+
         gae = 0.0
         next_value = 0.0
 
