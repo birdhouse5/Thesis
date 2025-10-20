@@ -889,10 +889,22 @@ class PPOTrainer:
 
         # After computing advantages
         logger.info(f"Diagnostics - Episode {self.episode_count}:")
-        logger.info(f"  actor_logstd range: [{self.policy.actor_logstd.min():.2f}, {self.policy.actor_logstd.max():.2f}]")
-        logger.info(f"  std range: [{self.policy.actor_logstd.exp().min():.4f}, {self.policy.actor_logstd.exp().max():.4f}]")
+
+        # Safely compute logstd statistics depending on policy type
+        with torch.no_grad():
+            if hasattr(self.policy, "actor_logstd"):  # old global version
+                logstd = self.policy.actor_logstd
+            else:  # new state-dependent version
+                # Use a representative batch of recent states to estimate the range
+                sample_obs = torch.randn(8, *self.policy.obs_shape, device=self.device)
+                sample_latent = torch.randn(8, self.policy.latent_dim if self.policy.latent_dim > 0 else 1, device=self.device)
+                _, logstd, _ = self.policy.forward(sample_obs, sample_latent)
+
+        logger.info(f"  actor_logstd range: [{logstd.min():.2f}, {logstd.max():.2f}]")
+        logger.info(f"  std range: [{logstd.exp().min():.4f}, {logstd.exp().max():.4f}]")
         logger.info(f"  advantages: mean={advantages.mean():.4f}, std={advantages.std():.4f}, max={advantages.abs().max():.4f}")
         logger.info(f"  rewards: mean={rewards.mean():.4f}, std={rewards.std():.4f}")
+
 
         first_epoch_metrics = {
             "advantages_mean": float(advantages.mean().item()),
