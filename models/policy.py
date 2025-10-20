@@ -69,8 +69,11 @@ class PortfolioPolicy(nn.Module):
         shared = self.shared_layers(combined)
 
         mean = self.actor_mean(shared) * self.action_scale
+
+        logstd_clamped = torch.clamp(self.actor_logstd, min=-5.0, max=2.0)
+
         value = self.critic_head(shared)
-        return mean, self.actor_logstd.expand_as(mean), value
+        return mean, logstd_clamped.expand_as(mean), value
 
     def act(self, obs, latent, deterministic=False):
         mean, logstd, value = self.forward(obs, latent)
