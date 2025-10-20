@@ -929,11 +929,12 @@ class PPOTrainer:
                 surr2 = torch.clamp(ratio, 1.0 - eps, 1.0 + eps) * batch_advantages
                 policy_loss = -torch.min(surr1, surr2).mean()
                 value_loss = F.mse_loss(new_values, batch_returns)
-                entropy_loss = -entropy.mean()
+                #entropy_loss = -entropy.mean() <not normalized
+                entropy_loss = -entropy.mean() / (abs(policy_loss.item()) + 1e-6) # normalized
                 
                 # Entropy coefficient annealing
                 progress = min(1.0, self.episode_count / float(self.config.max_episodes))
-                current_entropy_coef = self.config.entropy_coef * (1.0 - 0.5 * progress) # lowered entropy coefficient decay from 0.9 to 0.5
+                current_entropy_coef = self.config.entropy_coef * (1.0 - 0.2 * progress) # lowered entropy coefficient decay from 0.9 to 0.5. Now down to 0.2
 
                 ppo_loss = (policy_loss +
                 self.config.value_loss_coef * value_loss +
@@ -976,6 +977,16 @@ class PPOTrainer:
                 torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
                 self.policy_optimizer.step()
                 
+                # Separately log actor_logstd gradient
+                logstd_grad = self.policy.actor_logstd.grad
+                if logstd_grad is not None:
+                    logger.info(f"actor_logstd grad: {logstd_grad.mean():.4f} ± {logstd_grad.std():.4f}")
+                    
+                # Log loss components
+                logger.info(f"Policy loss: {policy_loss.item():.4f}")
+                logger.info(f"Entropy loss: {entropy_loss.item():.4f} (coef={current_entropy_coef})")
+                logger.info(f"Value loss: {value_loss.item():.4f}")
+
                 # CRITICAL: Explicit cleanup of batch tensors
                 del new_values, new_logp, entropy, surr1, surr2, ratio
                 del policy_loss, value_loss, entropy_loss, ppo_loss
