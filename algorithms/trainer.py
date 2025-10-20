@@ -944,10 +944,10 @@ class PPOTrainer:
                 new_logp = new_logp.squeeze(-1)
                 entropy = entropy.squeeze(-1)
 
-                min_entropy_threshold = 1.0  # Minimum acceptable entropy per action dim
-                if entropy.mean() < min_entropy_threshold:
-                    logger.warning(f"Entropy too low ({entropy.mean():.3f}), skipping update")
-                    continue
+                # min_entropy_threshold = 1.0  # Minimum acceptable entropy per action dim
+                # if entropy.mean() < min_entropy_threshold:
+                #     logger.warning(f"Entropy too low ({entropy.mean():.3f}), skipping update")
+                #     continue
                 
                 # PPO losses
                 ratio = torch.exp(new_logp - batch_old_logp)
