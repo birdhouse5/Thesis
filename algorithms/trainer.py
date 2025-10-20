@@ -1007,10 +1007,20 @@ class PPOTrainer:
                 torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
                 self.policy_optimizer.step()
                 
-                # Separately log actor_logstd gradient
-                logstd_grad = self.policy.actor_logstd.grad
-                if logstd_grad is not None:
-                    logger.info(f"actor_logstd grad: {logstd_grad.mean():.4f} ± {logstd_grad.std():.4f}")
+                # Log actor_logstd gradients (supports both old and new architectures)
+                if hasattr(self.policy, "actor_logstd"):  # old global version
+                    logstd_grad = self.policy.actor_logstd.grad
+                    if logstd_grad is not None:
+                        logger.info(f"actor_logstd grad: {logstd_grad.mean():.4f} ± {logstd_grad.std():.4f}")
+                elif hasattr(self.policy, "actor_logstd_head"):  # new per-state version
+                    grads = []
+                    for p in self.policy.actor_logstd_head.parameters():
+                        if p.grad is not None:
+                            grads.append(p.grad.view(-1))
+                    if grads:
+                        all_grads = torch.cat(grads)
+                        logger.info(f"actor_logstd_head grad: {all_grads.mean():.4f} ± {all_grads.std():.4f}")
+
                     
                 # Log loss components
                 logger.info(f"Policy loss: {policy_loss.item():.4f}")
