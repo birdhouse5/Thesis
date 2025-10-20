@@ -869,6 +869,13 @@ class PPOTrainer:
         advantages = advantages.detach()
         returns = returns.detach()
 
+        # After computing advantages
+        logger.info(f"Diagnostics - Episode {self.episode_count}:")
+        logger.info(f"  actor_logstd range: [{self.policy.actor_logstd.min():.2f}, {self.policy.actor_logstd.max():.2f}]")
+        logger.info(f"  std range: [{self.policy.actor_logstd.exp().min():.4f}, {self.policy.actor_logstd.exp().max():.4f}]")
+        logger.info(f"  advantages: mean={advantages.mean():.4f}, std={advantages.std():.4f}, max={advantages.abs().max():.4f}")
+        logger.info(f"  rewards: mean={rewards.mean():.4f}, std={rewards.std():.4f}")
+
         first_epoch_metrics = {
             "advantages_mean": float(advantages.mean().item()),
             "advantages_std": float(advantages.std().item()),
