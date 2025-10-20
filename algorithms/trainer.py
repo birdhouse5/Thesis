@@ -815,7 +815,11 @@ class PPOTrainer:
         lam = self.config.gae_lambda
         T = len(rewards)
 
-        advantages = torch.zeros_like(rewards, device=self.device)
+        if advantages.std() < 1e-8:
+            logger.warning(f"Advantage std too small: {advantages.std():.2e}, skipping normalization")
+            advantages = advantages * 0.0  # Zero out to prevent NaN
+        else:
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         returns = torch.zeros_like(rewards, device=self.device)
 
         gae = 0.0
