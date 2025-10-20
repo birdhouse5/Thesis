@@ -888,7 +888,7 @@ class PPOTrainer:
         returns = returns.detach()
 
         # After computing advantages
-        logger.info(f"Diagnostics - Episode {self.episode_count}:")
+        #logger.info(f"Diagnostics - Episode {self.episode_count}:")
 
         # Safely compute logstd statistics depending on policy type
         with torch.no_grad():
@@ -900,10 +900,10 @@ class PPOTrainer:
                 sample_latent = torch.randn(8, self.policy.latent_dim if self.policy.latent_dim > 0 else 1, device=self.device)
                 _, logstd, _ = self.policy.forward(sample_obs, sample_latent)
 
-        logger.info(f"  actor_logstd range: [{logstd.min():.2f}, {logstd.max():.2f}]")
-        logger.info(f"  std range: [{logstd.exp().min():.4f}, {logstd.exp().max():.4f}]")
-        logger.info(f"  advantages: mean={advantages.mean():.4f}, std={advantages.std():.4f}, max={advantages.abs().max():.4f}")
-        logger.info(f"  rewards: mean={rewards.mean():.4f}, std={rewards.std():.4f}")
+        # logger.info(f"  actor_logstd range: [{logstd.min():.2f}, {logstd.max():.2f}]")
+        # logger.info(f"  std range: [{logstd.exp().min():.4f}, {logstd.exp().max():.4f}]")
+        # logger.info(f"  advantages: mean={advantages.mean():.4f}, std={advantages.std():.4f}, max={advantages.abs().max():.4f}")
+        # logger.info(f"  rewards: mean={rewards.mean():.4f}, std={rewards.std():.4f}")
 
 
         first_epoch_metrics = {
@@ -1010,8 +1010,8 @@ class PPOTrainer:
                 # Log actor_logstd gradients (supports both old and new architectures)
                 if hasattr(self.policy, "actor_logstd"):  # old global version
                     logstd_grad = self.policy.actor_logstd.grad
-                    if logstd_grad is not None:
-                        logger.info(f"actor_logstd grad: {logstd_grad.mean():.4f} ± {logstd_grad.std():.4f}")
+                    # if logstd_grad is not None:
+                    #     logger.info(f"actor_logstd grad: {logstd_grad.mean():.4f} ± {logstd_grad.std():.4f}")
                 elif hasattr(self.policy, "actor_logstd_head"):  # new per-state version
                     grads = []
                     for p in self.policy.actor_logstd_head.parameters():
@@ -1019,13 +1019,13 @@ class PPOTrainer:
                             grads.append(p.grad.view(-1))
                     if grads:
                         all_grads = torch.cat(grads)
-                        logger.info(f"actor_logstd_head grad: {all_grads.mean():.4f} ± {all_grads.std():.4f}")
+                #         logger.info(f"actor_logstd_head grad: {all_grads.mean():.4f} ± {all_grads.std():.4f}")
 
                     
-                # Log loss components
-                logger.info(f"Policy loss: {policy_loss.item():.4f}")
-                logger.info(f"Entropy loss: {entropy_loss.item():.4f} (coef={current_entropy_coef})")
-                logger.info(f"Value loss: {value_loss.item():.4f}")
+                # # Log loss components
+                # logger.info(f"Policy loss: {policy_loss.item():.4f}")
+                # logger.info(f"Entropy loss: {entropy_loss.item():.4f} (coef={current_entropy_coef})")
+                # logger.info(f"Value loss: {value_loss.item():.4f}")
 
                 # CRITICAL: Explicit cleanup of batch tensors
                 del new_values, new_logp, entropy, surr1, surr2, ratio
@@ -1189,7 +1189,7 @@ class PPOTrainer:
                 actions[:sample_size]
             )
             current_entropy = sample_entropy.mean().item()
-            logger.info(f"📊 Current policy entropy: {current_entropy:.3f}")
+            #logger.info(f"📊 Current policy entropy: {current_entropy:.3f}")
 
         gae = 0.0
         next_value = 0.0
