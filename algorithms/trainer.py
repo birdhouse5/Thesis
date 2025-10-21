@@ -374,15 +374,26 @@ class PPOTrainer:
             dones[step] = bool(done_flag)
 
             # === ADD LOGGING EVERY 10 STEPS ===
-            if step % 10 == 0:
-                w = normalized_weights.squeeze()
-                logger.info(f"[Training Step {step}] Weight Distribution:")
-                logger.info(f"  Min: {w.min().item():.4f}, Max: {w.max().item():.4f}, "
-                        f"Mean: {w.mean().item():.4f}, Std: {w.std().item():.4f}")
-                logger.info(f"  Long exposure: {w[w > 0].sum().item():.4f}, "
-                        f"Short exposure: {w[w < 0].abs().sum().item():.4f}")
-                logger.info(f"  Active positions (|w| > 0.01): {(w.abs() > 0.01).sum().item()}")
-                logger.info(f"  Top 3 weights: {w.abs().topk(3).values.tolist()}")
+            if step % 100 == 0:
+                w = normalized_weights.squeeze().cpu().numpy()
+                logger.info(f"\n{'='*80}")
+                logger.info(f"[TRAINING - Task {self.task_count}, Step {step}] Full Weight Array:")
+                logger.info(f"{'='*80}")
+                
+                # Print as formatted array with indices
+                for i in range(0, len(w), 5):  # 5 weights per row
+                    row_weights = w[i:i+5]
+                    indices = f"[{i:2d}-{min(i+4, len(w)-1):2d}]"
+                    weights_str = "  ".join([f"{val:+.4f}" for val in row_weights])
+                    logger.info(f"  {indices}: {weights_str}")
+                
+                # Summary stats
+                logger.info(f"{'-'*80}")
+                logger.info(f"  Summary: Min={w.min():.4f}, Max={w.max():.4f}, "
+                        f"Mean={w.mean():.4f}, Std={w.std():.4f}")
+                logger.info(f"  Long={w[w > 0].sum():.4f}, Short={abs(w[w < 0]).sum():.4f}, "
+                        f"Active (|w|>0.01)={np.sum(np.abs(w) > 0.01)}")
+                logger.info(f"{'='*80}\n")
             # === END LOGGING ===
             
             # Advance
