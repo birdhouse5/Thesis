@@ -348,18 +348,6 @@ class PPOTrainer:
         latents = torch.zeros((max_horizon, self.config.latent_dim), dtype=torch.float32, device=self.device)
         rewards = torch.zeros((max_horizon,), dtype=torch.float32, device=self.device)
         dones = torch.zeros((max_horizon,), dtype=torch.bool, device=self.device)
-
-        # === ADD LOGGING EVERY 10 STEPS ===
-        if step % 10 == 0:
-            w = normalized_weights.squeeze()
-            logger.info(f"[Training Step {step}] Weight Distribution:")
-            logger.info(f"  Min: {w.min().item():.4f}, Max: {w.max().item():.4f}, "
-                       f"Mean: {w.mean().item():.4f}, Std: {w.std().item():.4f}")
-            logger.info(f"  Long exposure: {w[w > 0].sum().item():.4f}, "
-                       f"Short exposure: {w[w < 0].abs().sum().item():.4f}")
-            logger.info(f"  Active positions (|w| > 0.01): {(w.abs() > 0.01).sum().item()}")
-            logger.info(f"  Top 3 weights: {w.abs().topk(3).values.tolist()}")
-        # === END LOGGING ===
         
         done, step = False, 0
         
@@ -384,6 +372,18 @@ class PPOTrainer:
             latents[step] = latent.squeeze(0)
             rewards[step] = float(reward_scalar)
             dones[step] = bool(done_flag)
+
+            # === ADD LOGGING EVERY 10 STEPS ===
+            if step % 10 == 0:
+                w = normalized_weights.squeeze()
+                logger.info(f"[Training Step {step}] Weight Distribution:")
+                logger.info(f"  Min: {w.min().item():.4f}, Max: {w.max().item():.4f}, "
+                        f"Mean: {w.mean().item():.4f}, Std: {w.std().item():.4f}")
+                logger.info(f"  Long exposure: {w[w > 0].sum().item():.4f}, "
+                        f"Short exposure: {w[w < 0].abs().sum().item():.4f}")
+                logger.info(f"  Active positions (|w| > 0.01): {(w.abs() > 0.01).sum().item()}")
+                logger.info(f"  Top 3 weights: {w.abs().topk(3).values.tolist()}")
+            # === END LOGGING ===
             
             # Advance
             done = bool(done_flag)
