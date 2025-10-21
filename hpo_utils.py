@@ -27,8 +27,8 @@ def load_hpo_params(json_path: str, cfg: TrainingConfig) -> TrainingConfig:
         cfg.vae_lr = params['vae_lr']
     if 'vae_beta' in params:
         cfg.vae_beta = params['vae_beta']
-
-    # === VAE-specific parameters (new) ===
+    
+    # === VAE-specific parameters ===
     if 'vae_update_freq' in params:
         cfg.vae_update_freq = params['vae_update_freq']
     if 'vae_num_elbo_terms' in params:
@@ -42,7 +42,7 @@ def load_hpo_params(json_path: str, cfg: TrainingConfig) -> TrainingConfig:
     if 'ppo_clip_ratio' in params:
         cfg.ppo_clip_ratio = params['ppo_clip_ratio']
     
-    # === NEW: PPO-only parameters ===
+    # === PPO-only parameters ===
     if 'ppo_epochs' in params:
         cfg.ppo_epochs = params['ppo_epochs']
     if 'value_loss_coef' in params:
@@ -66,8 +66,22 @@ def load_hpo_params(json_path: str, cfg: TrainingConfig) -> TrainingConfig:
     if 'reward_type' in hpo_data:
         cfg.reward_type = hpo_data['reward_type']
     
-    print(f"✅ Loaded HPO parameters from {json_path}")
-    print(f"   Best value: {hpo_data['best_value']:.4f}")
+    # Handle different JSON structures (single HPO vs merged)
+    if 'best_value' in hpo_data:
+        # Single HPO result
+        best_value = hpo_data['best_value']
+        print(f"✅ Loaded HPO parameters from {json_path}")
+        print(f"   Best value: {best_value:.4f}")
+    elif 'source' in hpo_data:
+        # Merged HPO result
+        vae_value = hpo_data['source']['vae_hpo']['value']
+        ppo_value = hpo_data['source']['ppo_hpo']['value']
+        print(f"✅ Loaded merged HPO parameters from {json_path}")
+        print(f"   VAE optimization value: {vae_value:.4f}")
+        print(f"   PPO optimization value: {ppo_value:.4f}")
+    else:
+        print(f"✅ Loaded HPO parameters from {json_path}")
+    
     print(f"   Applied params: {list(params.keys())}")
     
     return cfg
