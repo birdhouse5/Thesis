@@ -8,9 +8,10 @@ from pathlib import Path
 from config import ExperimentConfig, experiment_to_training_config
 from main import prepare_environments, create_models
 from algorithms.trainer import PPOTrainer
+from hpo_utils import load_hpo_params
 
 
-def objective(trial, asset_class, reward_type, encoder):
+def objective(trial, asset_class, reward_type, encoder, vae_params_path=None):
     """Optimize only PPO parameters with fixed encoder architecture."""
     
     # === PPO Parameters to Optimize ===
@@ -31,6 +32,11 @@ def objective(trial, asset_class, reward_type, encoder):
         encoder=encoder
     )
     cfg = experiment_to_training_config(exp)
+    
+    # === Load VAE parameters if provided ===
+    if vae_params_path:
+        cfg = load_hpo_params(vae_params_path, cfg)
+        print(f"✅ Loaded VAE params from {vae_params_path}")
     
     # Apply PPO hyperparameters
     cfg.policy_lr = policy_lr
@@ -78,12 +84,13 @@ def print_best_callback(study, trial):
     print("-" * 50)
 
 
-def save_best_params(study, asset_class, reward_type, encoder):
+def save_best_params(study, asset_class, reward_type, encoder, vae_params_path=None):
     """Save best parameters to JSON file."""
     output_dir = Path("hpo_results")
     output_dir.mkdir(exist_ok=True)
     
-    output_file = output_dir / f"best_params_{asset_class}_{reward_type}_{encoder}_ppo_only.json"
+    suffix = "_ppo_only" if not vae_params_path else "_ppo_with_vae"
+    output_file = output_dir / f"best_params_{asset_class}_{reward_type}_{encoder}{suffix}.json"
     
     result = {
         "study_name": study.study_name,
@@ -94,6 +101,11 @@ def save_best_params(study, asset_class, reward_type, encoder):
         "best_params": study.best_trial.params,
         "n_trials": len(study.trials)
     }
+    
+    # If VAE params were loaded, include reference
+    if vae_params_path:
+        result["vae_params_source"] = vae_params_path
+        result["note"] = "PPO optimization with fixed optimal VAE parameters"
     
     with open(output_file, 'w') as f:
         json.dump(result, f, indent=2)
@@ -107,9 +119,13 @@ if __name__ == "__main__":
     parser.add_argument("--reward_type", type=str, default="dsr", choices=["dsr", "sharpe", "drawdown"])
     parser.add_argument("--encoder", type=str, default="vae", choices=["vae", "hmm", "none"])
     parser.add_argument("--n_trials", type=int, default=50)
+    parser.add_argument("--load_vae_params", type=str, default=None,
+                       help="Path to VAE HPO results JSON to load optimal VAE parameters")
     args = parser.parse_args()
     
     study_name = f"ppo_only_{args.asset_class}_{args.reward_type}_{args.encoder}"
+    if args.load_vae_params:
+        study_name += "_with_vae"
     
     study = optuna.create_study(
         study_name=study_name,
@@ -118,7 +134,7 @@ if __name__ == "__main__":
     )
     
     study.optimize(
-        lambda trial: objective(trial, args.asset_class, args.reward_type, args.encoder),
+        lambda trial: objective(trial, args.asset_class, args.reward_type, args.encoder, args.load_vae_params),
         n_trials=args.n_trials,
         callbacks=[print_best_callback]
     )
@@ -127,4 +143,4 @@ if __name__ == "__main__":
     print(f"Value: {study.best_trial.value}")
     print(f"Params: {study.best_trial.params}")
     
-    save_best_params(study, args.asset_class, args.reward_type, args.encoder)
+    save_best_params(study, args.asset_class, args.reward_type, args.encoder, args.load_vae_params)
