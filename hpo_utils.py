@@ -55,6 +55,10 @@ def load_hpo_params(json_path: str, cfg: TrainingConfig) -> TrainingConfig:
         cfg.discount_factor = params['discount_factor']
     if 'ppo_minibatch_size' in params:
         cfg.ppo_minibatch_size = params['ppo_minibatch_size']
+    if 'min_logstd' in best_params:
+        cfg.min_logstd = best_params['min_logstd']
+    if 'max_logstd' in best_params:
+        cfg.max_logstd = best_params['max_logstd']
     
     # === Environment parameters ===
     if 'eta' in params:

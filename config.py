@@ -90,6 +90,8 @@ class TrainingConfig:
     reward_type: str = "dsr"
     reward_lookback: int = 20
     vae_num_elbo_terms: int = 8
+    min_logstd: float = -3.0
+    max_logstd: float = -0.3
     
     
     
@@ -171,6 +173,8 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         inflation_rate=exp.inflation_rate if exp.inflation_rate is not None else 0.0,
         ppo_minibatch_size = 128,
         vae_num_elbo_terms = 8,
+        min_logstd=-3.0,  # Conservative default (std ∈ [0.05, 0.74])
+        max_logstd=-0.3,
         #use_cpu_context = False
     )
 

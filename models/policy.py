@@ -8,7 +8,8 @@ from torch.distributions import Normal
 class PortfolioPolicy(nn.Module):
     def __init__(self, obs_shape, latent_dim, num_assets,
                  hidden_dim=256, noise_factor=0.0, random_policy=False,
-                 action_scale=1.0):
+                 action_scale=1.0,
+                 min_logstd=-3.0, max_logstd=-0.3):
                  
         super().__init__()
         self.obs_shape = obs_shape
@@ -18,6 +19,8 @@ class PortfolioPolicy(nn.Module):
         self.noise_factor = noise_factor
         self.random_policy = random_policy
         self.action_scale = action_scale
+        self.min_logstd = min_logstd
+        self.max_logstd = max_logstd
 
         obs_flat_dim = obs_shape[0] * obs_shape[1]
 
@@ -74,7 +77,7 @@ class PortfolioPolicy(nn.Module):
         mean = self.actor_mean(shared) * self.action_scale
         raw_logstd = self.actor_logstd_head(shared)
         min_logstd, max_logstd = -3.0, -0.3
-        logstd_clamped = min_logstd + (max_logstd - min_logstd) * torch.sigmoid(raw_logstd)
+        logstd_clamped = self.min_logstd + (self.max_logstd - self.min_logstd) * torch.sigmoid(raw_logstd)
 
 
         value = self.critic_head(shared)
