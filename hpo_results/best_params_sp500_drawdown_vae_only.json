@@ -1,0 +1,16 @@
+{
+  "study_name": "vae_only_sp500_drawdown",
+  "asset_class": "sp500",
+  "reward_type": "drawdown",
+  "encoder": "vae",
+  "best_value": 28.467164301872252,
+  "best_params": {
+    "latent_dim": 64,
+    "hidden_dim": 768,
+    "vae_lr": 0.0001919580175456516,
+    "vae_beta": 0.035522535261483634,
+    "vae_update_freq": 1,
+    "vae_num_elbo_terms": 32
+  },
+  "n_trials": 100
+}

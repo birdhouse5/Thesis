@@ -1,0 +1,19 @@
+{
+  "study_name": "ppo_only_sp500_drawdown_vae",
+  "asset_class": "sp500",
+  "reward_type": "drawdown",
+  "encoder": "vae",
+  "best_value": 29.245730805397034,
+  "best_params": {
+    "policy_lr": 0.00018632445828160212,
+    "ppo_clip_ratio": 0.2123394476129284,
+    "entropy_coef": 0.028207504315424684,
+    "ppo_epochs": 11,
+    "value_loss_coef": 0.8661152523729234,
+    "max_grad_norm": 0.7492700321869699,
+    "gae_lambda": 0.9008619763017085,
+    "discount_factor": 0.9690113326252275,
+    "ppo_minibatch_size": 256
+  },
+  "n_trials": 50
+}
