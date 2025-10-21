@@ -277,8 +277,10 @@ class MetaEnv:
 
         # --- 2) Use provided weights if already normalized; otherwise normalize
         # --- 2) ALWAYS normalize weights at entry point for consistency
-        weights, w_cash = normalize_with_budget_constraint(portfolio_weights, self.eps)
-        weights = weights.to(self.device, dtype=torch.float32)
+        weights = portfolio_weights
+        w_cash = 1.0 - torch.sum(torch.abs(weights))
+        w_cash = torch.clamp(w_cash, min=0.0)
+
         w_cash_scalar_t = w_cash if torch.is_tensor(w_cash) else torch.tensor(w_cash, dtype=torch.float32, device=self.device)
 
         # Transaction costs (proportional to turnover)
@@ -354,8 +356,10 @@ class MetaEnv:
 
         # === Weight normalization ===
         # === Weight normalization - ALWAYS normalize ===
-        weights, w_cash = normalize_with_budget_constraint(portfolio_weights, self.eps)
-        weights = weights.to(self.device, dtype=torch.float32)
+        weights = portfolio_weights
+        w_cash = 1.0 - torch.sum(torch.abs(weights))
+        w_cash = torch.clamp(w_cash, min=0.0)
+
         w_cash_scalar_t = w_cash if torch.is_tensor(w_cash) else torch.tensor(w_cash, dtype=torch.float32, device=self.device)
 
         # === Transaction costs ===
@@ -416,10 +420,10 @@ class MetaEnv:
         asset_log_returns = torch.log(next_prices) - torch.log(current_prices)
         equal_weight_log_return = torch.mean(asset_log_returns)
 
-        # === Weight normalization ===
-        # === Weight normalization - ALWAYS normalize ===
-        weights, w_cash = normalize_with_budget_constraint(portfolio_weights, self.eps)
-        weights = weights.to(self.device, dtype=torch.float32)
+        weights = portfolio_weights
+        w_cash = 1.0 - torch.sum(torch.abs(weights))
+        w_cash = torch.clamp(w_cash, min=0.0)
+
         w_cash_scalar_t = w_cash if torch.is_tensor(w_cash) else torch.tensor(w_cash, dtype=torch.float32, device=self.device)
 
         # === Transaction costs ===

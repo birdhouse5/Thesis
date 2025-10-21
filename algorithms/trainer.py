@@ -158,6 +158,7 @@ class PPOTrainer:
         all_transitions = {
             "observations": [],
             "actions": [],
+            "raw_actions": [],
             "rewards": [],
             "values": [],
             "log_probs": [],
@@ -341,11 +342,24 @@ class PPOTrainer:
         # Preallocate
         observations = torch.zeros((max_horizon,) + obs_shape, dtype=torch.float32, device=self.device)
         actions = torch.zeros((max_horizon, self.config.num_assets), dtype=torch.float32, device=self.device)
+        raw_actions = torch.zeros((max_horizon, self.config.num_assets), dtype=torch.float32, device=self.device) 
         values = torch.zeros((max_horizon,), dtype=torch.float32, device=self.device)
         log_probs = torch.zeros((max_horizon,), dtype=torch.float32, device=self.device)
         latents = torch.zeros((max_horizon, self.config.latent_dim), dtype=torch.float32, device=self.device)
         rewards = torch.zeros((max_horizon,), dtype=torch.float32, device=self.device)
         dones = torch.zeros((max_horizon,), dtype=torch.bool, device=self.device)
+
+        # === ADD LOGGING EVERY 10 STEPS ===
+        if step % 10 == 0:
+            w = normalized_weights.squeeze()
+            logger.info(f"[Training Step {step}] Weight Distribution:")
+            logger.info(f"  Min: {w.min().item():.4f}, Max: {w.max().item():.4f}, "
+                       f"Mean: {w.mean().item():.4f}, Std: {w.std().item():.4f}")
+            logger.info(f"  Long exposure: {w[w > 0].sum().item():.4f}, "
+                       f"Short exposure: {w[w < 0].abs().sum().item():.4f}")
+            logger.info(f"  Active positions (|w| > 0.01): {(w.abs() > 0.01).sum().item()}")
+            logger.info(f"  Top 3 weights: {w.abs().topk(3).values.tolist()}")
+        # === END LOGGING ===
         
         done, step = False, 0
         
@@ -355,15 +369,16 @@ class PPOTrainer:
             
             # Sample action
             with torch.no_grad():
-                actions_raw, value_t, log_prob_t = self.policy.act(obs_tensor, latent, deterministic=False)
+                weights, value_t, log_prob_t, raw_actions_t = self.policy.act(obs_tensor, latent, deterministic=False)
             
             # Environment step
-            next_obs, reward_scalar, done_flag, info = self.env.step(actions_raw.squeeze(0))
+            next_obs, reward_scalar, done_flag, info = self.env.step(weights.squeeze(0))
             normalized_weights = info['weights'].detach()  # Get actual portfolio weights used
 
             # Store step data
             observations[step] = obs_tensor.squeeze(0)
-            actions[step] = normalized_weights.to(self.device)
+            actions[step] = normalized_weights.to(self.device)  # normalized (for consistency)
+            raw_actions[step] = raw_actions_t.squeeze(0).to(self.device)
             values[step] = value_t.squeeze(0)
             log_probs[step] = log_prob_t.squeeze(0)
             latents[step] = latent.squeeze(0)
@@ -376,13 +391,14 @@ class PPOTrainer:
                 obs_tensor = next_obs.to(self.device, dtype=torch.float32).unsqueeze(0)
             step += 1
             
-            # CRITICAL: Delete intermediate tensors
-            del latent, actions_raw, value_t, log_prob_t
+            # CCleanup
+            del latent, weights, value_t, log_prob_t, raw_actions_t
         
         T = step if step > 0 else 1
         return {
             "observations": observations[:T],
             "actions": actions[:T],
+            "raw_actions": raw_actions[:T],
             "rewards": rewards[:T],
             "values": values[:T],
             "log_probs": log_probs[:T],
@@ -672,6 +688,7 @@ class PPOTrainer:
         # Preallocate tensors
         observations = torch.zeros((max_horizon,) + obs_shape, dtype=torch.float32, device=self.device)
         actions      = torch.zeros((max_horizon, self.config.num_assets), dtype=torch.float32, device=self.device)
+        raw_actions  = torch.zeros((max_horizon, self.config.num_assets), dtype=torch.float32, device=self.device)
         values       = torch.zeros((max_horizon,), dtype=torch.float32, device=self.device)
         log_probs    = torch.zeros((max_horizon,), dtype=torch.float32, device=self.device)
         latents      = torch.zeros((max_horizon, self.config.latent_dim), dtype=torch.float32, device=self.device)
@@ -687,7 +704,7 @@ class PPOTrainer:
 
             # === Sample action ===
             with torch.no_grad():
-                actions_raw, value_t, log_prob_t = self.policy.act(obs_tensor, latent, deterministic=False)
+                actions_raw, value_t, log_prob_t, raw_actions_t = self.policy.act(obs_tensor, latent, deterministic=False)
 
             # === Environment step with tensor action ===
             next_obs, reward_scalar, done_flag, info = self.env.step(actions_raw.squeeze(0))
@@ -695,6 +712,7 @@ class PPOTrainer:
             # === Write step data ===
             observations[step] = obs_tensor.squeeze(0)
             actions[step]      = actions_raw.squeeze(0).to(self.device)
+            raw_actions[step]  = raw_actions_t.squeeze(0).to(self.device)
             values[step]       = value_t.squeeze(0)
             log_probs[step]    = log_prob_t.squeeze(0)
             latents[step]      = latent.squeeze(0)
@@ -716,6 +734,7 @@ class PPOTrainer:
         traj = {
             "observations": observations[:T],
             "actions": actions[:T],
+            "raw_actions": raw_actions[:T],
             "rewards": rewards[:T],
             "values": values[:T],
             "log_probs": log_probs[:T],
@@ -863,6 +882,7 @@ class PPOTrainer:
         # Prepare data with DETACH
         obs = traj["observations"].detach()
         actions = traj["actions"].detach()
+        raw_actions = traj["raw_actions"].detach()
         latents = traj["latents"].detach()
         rewards = traj["rewards"].detach()
         dones = traj["dones"].detach()
@@ -931,6 +951,7 @@ class PPOTrainer:
                 # Extract mini-batch
                 batch_obs = obs[batch_indices]
                 batch_actions = actions[batch_indices]
+                batch_raw_actions = raw_actions[batch_indices]
                 batch_latents = latents[batch_indices]
                 batch_old_logp = old_logp[batch_indices]
                 batch_advantages = advantages[batch_indices]
@@ -938,7 +959,7 @@ class PPOTrainer:
                 
                 # Forward pass
                 new_values, new_logp, entropy = self.policy.evaluate_actions(
-                    batch_obs, batch_latents, batch_actions
+                    batch_obs, batch_latents, batch_raw_actions
                 )
                 new_values = new_values.squeeze(-1)
                 new_logp = new_logp.squeeze(-1)
@@ -1041,13 +1062,6 @@ class PPOTrainer:
         if self.vae_enabled:
             logger.debug(f"VAE enabled, checking update condition: episode_count={self.episode_count}, vae_update_freq={self.config.vae_update_freq}, modulo={self.episode_count % self.config.vae_update_freq}")
 
-        # logger.info(f"=== update_ppo_and_vae DEBUG ===")
-        # logger.info(f"  VAE enabled: {self.vae_enabled}")
-        # logger.info(f"  Episode count: {self.episode_count}")
-        # logger.info(f"  VAE update freq: {self.config.vae_update_freq}")
-        # logger.info(f"  Update condition: {self.episode_count % self.config.vae_update_freq == 0}")
-        # logger.info(f"  VAE buffer size: {len(self.vae_buffer)}")
-        # logger.info(f"  first_epoch_metrics before VAE: {first_epoch_metrics}")
 
         # VAE UPDATE with aggressive cleanup
         vae_loss_val = 0.0
@@ -1113,19 +1127,6 @@ class PPOTrainer:
                         prior_mu=prior_mu_batch,
                         prior_logvar=prior_logvar_batch
                     )
-                    
-                    # logger.info(f"  VAE loss computed: {vae_loss.item()}")
-                    # logger.info(f"  VAE info keys: {list(vae_info.keys())}")
-                    # logger.info(f"  VAE info values: {vae_info}")
-                    # logger.info(f"  Adding to first_epoch_metrics: {[f'vae_{k}' for k in vae_info.keys()]}")
-
-                    
-                    # logger.info(f"  Loss breakdown:")
-                    # logger.info(f"    Total: {vae_info['total']:.4f}")
-                    # logger.info(f"    Recon obs: {vae_info['recon_obs']:.4f}")
-                    # logger.info(f"    Recon reward: {vae_info['recon_reward']:.4f}")
-                    # logger.info(f"    KL: {vae_info['kl']:.4f}")
-                    # logger.info(f"  Timesteps sampled: {vae_info['num_elbo_terms']} -> {vae_info['timesteps_sampled']}")
                     
                     # VAE update
                     self.vae_optimizer.zero_grad()
@@ -1203,85 +1204,6 @@ class PPOTrainer:
 
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         return advantages, returns
-
-    # def update_joint(self, trajectory):
-    #     """
-    #     Update PPO (policy + value) and VAE (if enabled).
-    #     trajectory: dict with observations, actions, rewards, values, log_probs, dones
-    #     """
-    #     obs = torch.stack(trajectory["observations"]).to(self.device)
-    #     actions = torch.stack(trajectory["actions"]).to(self.device)
-    #     rewards = torch.tensor(trajectory["rewards"], dtype=torch.float32, device=self.device)
-    #     values = torch.stack(trajectory["values"]).to(self.device).squeeze(-1)
-    #     old_log_probs = torch.stack(trajectory["log_probs"]).to(self.device).squeeze(-1)
-
-    #     # === Compute returns & advantages ===
-    #     returns = []
-    #     G = 0
-    #     for r in reversed(rewards.tolist()):
-    #         G = r + self.config.discount_factor * G
-    #         returns.insert(0, G)
-    #     returns = torch.tensor(returns, dtype=torch.float32, device=self.device)
-
-    #     advantages = returns - values.detach()
-    #     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-
-    #     # === PPO update ===
-    #     policy_loss, value_loss, entropy_loss = 0.0, 0.0, 0.0
-
-    #     for _ in range(self.config.ppo_epochs):
-    #         mean, logstd, value_preds = self.policy.forward(obs, torch.stack(trajectory["latents"]).to(self.device))
-    #         dist = torch.distributions.Normal(mean, logstd.exp())
-    #         new_log_probs = dist.log_prob(actions).sum(-1)
-
-    #         ratio = torch.exp(new_log_probs - old_log_probs)
-    #         surr1 = ratio * advantages
-    #         surr2 = torch.clamp(ratio, 1 - self.config.ppo_clip_ratio, 1 + self.config.ppo_clip_ratio) * advantages
-    #         policy_loss = -torch.min(surr1, surr2).mean()
-
-    #         value_loss = F.mse_loss(value_preds.squeeze(-1), returns)
-
-    #         entropy_loss = -dist.entropy().sum(-1).mean()
-
-    #         total_loss = (policy_loss
-    #                     + self.config.value_loss_coef * value_loss
-    #                     + self.config.entropy_coef * entropy_loss)
-
-    #         # === Optimize ===
-    #         self.optimizer.zero_grad()
-    #         total_loss.backward()
-    #         torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
-    #         self.optimizer.step()
-
-    #     # === VAE update ===
-    #     vae_loss_val = 0.0
-    #     if self.vae_enabled:
-    #         obs_seq = obs.unsqueeze(0)  # (1, T, N, F)
-    #         # Normalize actions to portfolio weights for VAE (sum(|w|)+w_cash=1 budget)
-    #         denom = actions.abs().sum(dim=-1, keepdim=True) + 1.0 + 1e-8
-    #         vae_actions = actions / denom
-    #         act_seq = vae_actions.unsqueeze(0)  # (1, T, N)
-    #         rew_seq = rewards.unsqueeze(0).unsqueeze(-1)  # (1, T, 1)
-    #         try:
-    #             vae_loss, vae_info = self.vae.compute_loss(
-    #                 obs_seq, act_seq, rew_seq, beta=self.config.vae_beta
-    #             )
-    #             self.optimizer.zero_grad()
-    #             vae_loss.backward()
-    #             torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
-    #             self.optimizer.step()
-    #             vae_loss_val = float(vae_loss.item())
-    #         except Exception as e:
-    #             logger.warning(f"VAE loss computation failed: {e}")
-    #             vae_loss_val = 0.0
-
-    #     return {
-    #         "policy_loss": float(policy_loss.item()),
-    #         "value_loss": float(value_loss.item()),
-    #         "entropy": float(entropy_loss.item()),
-    #         "vae_loss": float(vae_loss_val),
-    #     }
-
 
 
     # ---------------------------------------------------------------------

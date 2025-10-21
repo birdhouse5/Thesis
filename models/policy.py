@@ -81,20 +81,29 @@ class PortfolioPolicy(nn.Module):
         return mean, logstd_clamped.expand_as(mean), value
 
     def act(self, obs, latent, deterministic=False):
+
         mean, logstd, value = self.forward(obs, latent)
         std = logstd.exp()
-
         dist = Normal(mean, std)
-        if deterministic:
-            raw_actions = mean
-        else:
-            raw_actions = dist.rsample()  # reparameterized sample
 
-        # Return raw actions; environment will handle normalization once
-        actions = raw_actions.to(device=obs.device, dtype=torch.float32)
+        # Sample actions
+        raw_actions = mean if deterministic else dist.rsample()
+
+        # Map to (-1, 1) range
+        bounded = torch.tanh(raw_actions)
+
+        # Normalize so total abs exposure <= 1
+        eps = 1e-8  # small constant for numerical safety
+        abs_sum = torch.sum(torch.abs(bounded), dim=-1, keepdim=True)
+        abs_sum = abs_sum + 1.0 + eps  # ensures denominator > 0
+        weights = bounded / abs_sum
+
+        # cash = 1.0 - torch.sum(torch.abs(weights), dim=-1, keepdim=True)
+        # cash = torch.clamp(cash, min=0.0)
 
         log_prob = dist.log_prob(raw_actions).sum(-1, keepdim=True)
-        return actions, value, log_prob
+
+        return weights, value, log_prob, raw_actions
 
     def evaluate_actions(self, obs, latent, raw_actions):
         mean, logstd, value = self.forward(obs, latent)

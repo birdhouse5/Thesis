@@ -80,7 +80,7 @@ def evaluate(env, policy, encoder, config, mode, num_episodes: int = 50) -> Dict
                         latent = torch.zeros(1, config.latent_dim, device=device)
                 
                 # Get action from policy
-                action, _, _ = policy.act(obs_tensor, latent, deterministic=True)
+                action, _, _, _ = policy.act(obs_tensor, latent, deterministic=True)
                 
                 # Take environment step (tensor input)
                 next_obs, reward, done, info = env.step(action.squeeze(0))
@@ -269,7 +269,7 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
                         latent = torch.zeros(1, config.latent_dim, device=device)
 
             # Policy step
-            action, _, _ = policy.act(current_obs_tensor, latent, deterministic=True)
+            action, _, _, _ = policy.act(current_obs_tensor, latent, deterministic=True)
 
             # Get normalized weights from environment
             env.current_step = t
