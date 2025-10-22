@@ -271,6 +271,8 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
             # Policy step
             action, _, _, _ = policy.act(current_obs_tensor, latent, deterministic=True)
 
+            action = action.to(env.device)
+
             # Get normalized weights from environment
             env.current_step = t
             reward, weights, w_cash, turnover, cost, equal_weight_return, relative_excess_return = \

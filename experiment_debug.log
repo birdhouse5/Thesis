@@ -1,16 +1,38 @@
-2025-10-20 12:32:18,459 - environments.data - INFO - Loading existing dataset: environments\data\sp500_rl_ready_cleaned.parquet
-2025-10-20 12:32:20,622 - environments.data - INFO - Loaded dataset: (263520, 54), features: 25
-2025-10-20 12:32:21,104 - environments.data - INFO - Dataset split 'train': 195600 rows, 6520 days, 30 assets, 25 features
-2025-10-20 12:32:21,131 - environments.data - INFO - Dataset split 'val': 37770 rows, 1259 days, 30 assets, 25 features
-2025-10-20 12:32:21,140 - environments.data - INFO - Dataset split 'test': 30150 rows, 1005 days, 30 assets, 25 features
-2025-10-20 12:32:21,140 - environments.data - INFO - Created splits using Date-based splits (train_end=2015-12-31, val_end=2020-12-31)
-2025-10-20 12:32:21,140 - main - INFO - Limiting to first 5 assets (from 30)
-2025-10-20 12:32:21,234 - main - INFO -   train: 5 assets, 32600 rows
-2025-10-20 12:32:21,253 - main - INFO -   val: 5 assets, 6295 rows
-2025-10-20 12:32:21,273 - main - INFO -   test: 5 assets, 5025 rows
-2025-10-20 12:32:21,769 - environments.env - INFO - MetaEnv initialized:
-2025-10-20 12:32:21,769 - environments.env - INFO -   steps_per_year=252, rf_step_log=0.00007858
-2025-10-20 12:32:21,773 - environments.env - INFO - MetaEnv initialized:
-2025-10-20 12:32:21,779 - environments.env - INFO -   steps_per_year=252, rf_step_log=0.00007858
-2025-10-20 12:32:21,781 - environments.env - INFO - MetaEnv initialized:
-2025-10-20 12:32:21,783 - environments.env - INFO -   steps_per_year=252, rf_step_log=0.00007858
+2025-10-22 19:46:15,659 - __main__ - INFO - 
+================================================================================
+2025-10-22 19:46:15,660 - __main__ - INFO - BACKTEST VERIFICATION TEST SUITE
+2025-10-22 19:46:15,661 - __main__ - INFO - ================================================================================
+2025-10-22 19:46:15,661 - __main__ - INFO - ================================================================================
+2025-10-22 19:46:15,661 - __main__ - INFO - TEST: Backtest Device Handling
+2025-10-22 19:46:15,662 - __main__ - INFO - ================================================================================
+2025-10-22 19:46:15,662 - __main__ - INFO - 
+Config:
+2025-10-22 19:46:15,666 - __main__ - INFO -   Asset class: sp500
+2025-10-22 19:46:15,668 - __main__ - INFO -   Encoder: vae
+2025-10-22 19:46:15,670 - __main__ - INFO -   Device: cuda
+2025-10-22 19:46:15,676 - __main__ - INFO -   N assets: 5
+2025-10-22 19:46:15,679 - __main__ - INFO - 
+1. Loading dataset and creating environments...
+2025-10-22 19:46:15,682 - environments.data - INFO - Loading existing dataset: environments\data\sp500_rl_ready_cleaned.parquet
+2025-10-22 19:46:17,005 - environments.data - INFO - Loaded dataset: (263520, 54), features: 25
+2025-10-22 19:46:17,394 - environments.data - INFO - Dataset split 'train': 195600 rows, 6520 days, 30 assets, 25 features
+2025-10-22 19:46:17,400 - environments.data - INFO - Dataset split 'val': 37770 rows, 1259 days, 30 assets, 25 features
+2025-10-22 19:46:17,406 - environments.data - INFO - Dataset split 'test': 30150 rows, 1005 days, 30 assets, 25 features
+2025-10-22 19:46:17,407 - environments.data - INFO - Created splits using Date-based splits (train_end=2015-12-31, val_end=2020-12-31)
+2025-10-22 19:46:17,408 - main - INFO - Limiting to first 5 assets (from 30)
+2025-10-22 19:46:17,542 - main - INFO -   train: 5 assets, 32600 rows
+2025-10-22 19:46:17,556 - main - INFO -   val: 5 assets, 6295 rows
+2025-10-22 19:46:17,572 - main - INFO -   test: 5 assets, 5025 rows
+2025-10-22 19:46:18,295 - environments.env - INFO - MetaEnv initialized:
+2025-10-22 19:46:18,295 - environments.env - INFO -   steps_per_year=252, rf_step_log=0.00007858
+2025-10-22 19:46:18,297 - environments.env - INFO - MetaEnv initialized:
+2025-10-22 19:46:18,300 - environments.env - INFO -   steps_per_year=252, rf_step_log=0.00007858
+2025-10-22 19:46:18,301 - environments.env - INFO - MetaEnv initialized:
+2025-10-22 19:46:18,302 - environments.env - INFO -   steps_per_year=252, rf_step_log=0.00007858
+2025-10-22 19:46:18,376 - __main__ - INFO - 
+2. Creating models...
+2025-10-22 19:46:18,472 - __main__ - ERROR - 
+Skipping device tests due to basic test failure
+2025-10-22 19:46:18,473 - __main__ - INFO - 
+================================================================================
+2025-10-22 19:46:18,483 - __main__ - INFO - ================================================================================
