@@ -1,0 +1,23 @@
+{
+  "study_name": "ppo_only_sp500_sharpe_vae_with_vae",
+  "asset_class": "sp500",
+  "reward_type": "sharpe",
+  "encoder": "vae",
+  "best_value": 35.92599016427994,
+  "best_params": {
+    "policy_lr": 0.0001343634117285696,
+    "ppo_clip_ratio": 0.22165037774077628,
+    "entropy_coef": 0.0031187220769685374,
+    "ppo_epochs": 13,
+    "value_loss_coef": 1.2160677651277623,
+    "max_grad_norm": 1.2131750627866746,
+    "gae_lambda": 0.9618688498951034,
+    "discount_factor": 0.9795403074531488,
+    "ppo_minibatch_size": 128,
+    "min_logstd": -3.812762631831736,
+    "max_logstd": 0.3273246185148746
+  },
+  "n_trials": 100,
+  "vae_params_source": "hpo_results/best_params_sp500_sharpe_vae_only.json",
+  "note": "PPO optimization with fixed optimal VAE parameters"
+}
