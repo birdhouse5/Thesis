@@ -24,6 +24,9 @@ def objective(trial, asset_class, reward_type, encoder, vae_params_path=None):
     gae_lambda = trial.suggest_uniform("gae_lambda", 0.90, 0.99)
     discount_factor = trial.suggest_uniform("discount_factor", 0.95, 0.999)
     ppo_minibatch_size = trial.suggest_categorical("ppo_minibatch_size", [64, 128, 256])
+    min_logstd = trial.suggest_uniform("min_logstd", -5.0, -2.0)  # std: 0.007 - 0.135
+    max_logstd = trial.suggest_uniform("max_logstd", 0.0, 2.5)    # std: 1.0 - 12.2
+
     
     # === Config ===
     exp = ExperimentConfig(
@@ -49,6 +52,8 @@ def objective(trial, asset_class, reward_type, encoder, vae_params_path=None):
     cfg.discount_factor = discount_factor
     cfg.ppo_minibatch_size = ppo_minibatch_size
     cfg.reward_type = reward_type
+    cfg.min_logstd = min_logstd
+    cfg.max_logstd = max_logstd
     
     # === Prepare envs and models ===
     envs, split_tensors, datasets = prepare_environments(cfg)
