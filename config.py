@@ -14,7 +14,8 @@ class ExperimentConfig:
     force_recreate: bool = False
     transaction_cost_rate: Optional[float] = None
     inflation_rate: Optional[float] = None
-    n_assets: Optional[int] = None  
+    n_assets: Optional[int] = None
+    concentration_penalty: Optional[bool] = None
 
 
 # --- 2. Generator for all 60 configs ---
@@ -92,6 +93,9 @@ class TrainingConfig:
     vae_num_elbo_terms: int = 8
     min_logstd: float = -3.0
     max_logstd: float = -0.3
+    concentration_penalty: bool = False
+    concentration_target: float = 0.10  # Target Herfindahl index (1/N for equal weight)
+    concentration_lambda: float = 0.1   # Penalty strength
     
     
     
@@ -175,6 +179,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         vae_num_elbo_terms = 8,
         min_logstd=-3.0,  # Conservative default (std ∈ [0.05, 0.74])
         max_logstd=-0.3,
+        concentration_penalty=exp.concentration_penalty if exp.concentration_penalty is not None else False,
         #use_cpu_context = False
     )
 

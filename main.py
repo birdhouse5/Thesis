@@ -255,6 +255,9 @@ def prepare_environments(cfg: TrainingConfig):
             inflation_rate=cfg.inflation_rate,
             reward_type=cfg.reward_type,
             reward_lookback=cfg.reward_lookback,
+            concentration_penalty=cfg.concentration_penalty,
+            concentration_target=cfg.concentration_target,
+            concentration_lambda=cfg.concentration_lambda,
         )
     
     return environments, split_tensors, datasets
@@ -574,7 +577,9 @@ def main():
     parser.add_argument("--load_hpo_params", type=str, default=None,
                     help="Path to HPO results JSON")
     parser.add_argument("--n_assets", type=int, default=None,
-                        help="Number of assets to use (default: all 30)")                  
+                        help="Number of assets to use (default: all 30)")
+    parser.add_argument("--enable_concentration_penalty", action="store_true",
+                        help="Enable concentration penalty to encourage diversification")              
 
     args = parser.parse_args()
 
@@ -611,6 +616,10 @@ def main():
             exp.inflation_rate = 0.0
         elif args.inflation_rate is not None:
             exp.inflation_rate = args.inflation_rate
+
+        if args.enable_concentration_penalty:
+        exp.concentration_penalty = True
+            
     if args.encoder:
         experiments = [exp for exp in experiments if exp.encoder == args.encoder]
     if args.datatype:

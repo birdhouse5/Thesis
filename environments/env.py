@@ -36,6 +36,9 @@ class MetaEnv:
                  steps_per_year: int = 252, eta: float = 0.05, eps: float = 1e-12, 
                  transaction_cost_rate: float = 0.001, inflation_rate: float = 0.0,
                  reward_type: str = "dsr", reward_lookback: int = 20,
+                 concentration_penalty: bool = False,  # NEW
+                 concentration_target: float = 0.10,   # NEW
+                 concentration_lambda: float = 0.1,
                  device: str = "cpu", eval_mode: bool = False):
         """
         dataset: Dict with 'features' and 'raw_prices' tensors
@@ -82,6 +85,10 @@ class MetaEnv:
         self.reward_lookback = reward_lookback
         self.portfolio_values = []  # For drawdown calculation
         self.recent_returns = []    # For Sharpe calculation
+
+        self.concentration_penalty = concentration_penalty
+        self.concentration_target = concentration_target
+        self.concentration_lambda = concentration_lambda
 
         self.eval_mode = eval_mode
 
@@ -328,6 +335,9 @@ class MetaEnv:
         # DSR scaling: TODO
         dsr_t = dsr_t * 2.0 #10.0
 
+        concentration_bonus = self._compute_concentration_bonus(weights)
+        dsr_t = dsr_t + concentration_bonus
+
         if self.current_step < 2:  # gate very-early steps
             dsr_t = torch.tensor(0.0, dtype=torch.float32, device=self.device)
 
@@ -398,8 +408,30 @@ class MetaEnv:
         else:
             sharpe_reward = 0.0
 
+        # Add concentration bonus
+        concentration_bonus = self._compute_concentration_bonus(weights)
+        sharpe_reward = sharpe_reward + concentration_bonus  # NEW
+
         return float(sharpe_reward), weights, float(w_cash_scalar_t.item() if torch.is_tensor(w_cash_scalar_t) else w_cash_scalar_t), float(turnover_t.item()), float(cost_t.item()), float(equal_weight_log_return.item()), float(relative_excess_log_return_t.item())
 
+    def _compute_concentration_bonus(self, weights):
+        """
+        Compute concentration penalty/bonus.
+        Herfindahl index: sum(w_i^2), ranges from 1/N (equal weight) to 1 (all in one asset)
+        Lower concentration = more diversification
+        
+        Returns:
+            bonus: positive if diversified, negative if concentrated
+        """
+        if not self.concentration_penalty:
+            return 0.0
+        
+        concentration = torch.sum(weights ** 2)
+        # Penalty for deviation from target
+        deviation = concentration - self.concentration_target
+        bonus = -self.concentration_lambda * deviation
+        
+        return float(bonus.item())
 
     def _compute_drawdown_reward(self, portfolio_weights):
         """Maximum drawdown-based reward."""
@@ -463,6 +495,9 @@ class MetaEnv:
             drawdown_reward = -max_drawdown
         else:
             drawdown_reward = 0.0
+        
+        concentration_bonus = self._compute_concentration_bonus(weights)
+        drawdown_reward = drawdown_reward + concentration_bonus  # NEW
 
         return float(drawdown_reward), weights, float(w_cash_scalar_t.item() if torch.is_tensor(w_cash_scalar_t) else w_cash_scalar_t), float(turnover_t.item()), float(cost_t.item()), float(equal_weight_log_return.item()), float(relative_excess_log_return_t.item())
 
