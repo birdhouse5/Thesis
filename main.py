@@ -618,7 +618,7 @@ def main():
             exp.inflation_rate = args.inflation_rate
 
         if args.enable_concentration_penalty:
-        exp.concentration_penalty = True
+            exp.concentration_penalty = True
             
     if args.encoder:
         experiments = [exp for exp in experiments if exp.encoder == args.encoder]
