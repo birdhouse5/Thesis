@@ -47,7 +47,6 @@ class PortfolioPolicy(nn.Module):
         # Actor: mean + log_std for Gaussian
         self.actor_mean = nn.Sequential(
             nn.Linear(hidden_dim // 2, num_assets),
-            nn.Tanh()  # ← bounding outputs to [-1, 1]
         )
         # self.actor_logstd = nn.Parameter(torch.zeros(num_assets)) TODO
         #self.actor_logstd = nn.Parameter(torch.zeros(num_assets) * -1.0)
