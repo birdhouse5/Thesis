@@ -86,7 +86,7 @@ class TrainingConfig:
     #use_cpu_context: bool
     n_assets_limit: Optional[int] = None
     rf_rate: float = 0.02
-    transaction_cost_rate: float = 0.001
+    transaction_cost_rate: float = 0.000
     force_recreate: bool = False
     reward_type: str = "dsr"
     reward_lookback: int = 20

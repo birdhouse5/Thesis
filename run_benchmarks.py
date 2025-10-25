@@ -44,11 +44,17 @@ class BuyAndHoldStrategy(BenchmarkStrategy):
         self.initial_weights = None
     
     def reset(self):
-        """Generate random initial weights."""
+        """Generate random initial weights with |weights| sum ≤ 1."""
         rng = np.random.RandomState(self.seed)
-        # Random weights from uniform [-1, 1]
         raw_weights = rng.uniform(-1, 1, self.num_assets)
+
+        # Scale down if total absolute exposure exceeds 1
+        abs_sum = np.sum(np.abs(raw_weights))
+        if abs_sum > 1.0:
+            raw_weights /= abs_sum  # cap gross exposure at 1
+
         self.initial_weights = torch.tensor(raw_weights, dtype=torch.float32, device=self.device)
+
     
     def get_action(self, obs: torch.Tensor, step: int) -> torch.Tensor:
         """Return initial weights (never rebalance)."""
@@ -179,11 +185,12 @@ def run_benchmark_backtest(
         
         # Get action from strategy
         raw_action = strategy.get_action(current_obs, t)
+        normalized_action, _ = normalize_with_budget_constraint(raw_action)
         
         # Compute reward (environment handles normalization)
         env.current_step = t
         reward, weights, w_cash, turnover, cost, equal_weight_return, relative_excess_return = \
-            env.compute_reward_with_capital(raw_action)
+            env.compute_reward_with_capital(normalized_action)
         
         # Track metrics
         excess_return = env.excess_log_returns[-1] if env.excess_log_returns else 0.0
@@ -314,34 +321,34 @@ def main():
     
     # 1. Buy and Hold (5 seeds)
     logger.info("\n=== Buy and Hold Strategy ===")
-    for seed in range(5):
+    for seed in range(100):
         strategy = BuyAndHoldStrategy(num_assets, seed=seed)
         results = run_benchmark_backtest(
             test_split, strategy, "buy_and_hold", args.asset_class, seed=seed
         )
         all_results.append(results)
     
-    # 2. Random Allocation (5 seeds)
-    logger.info("\n=== Random Allocation Strategy ===")
-    for seed in range(5):
-        strategy = RandomStrategy(num_assets, seed=seed)
-        results = run_benchmark_backtest(
-            test_split, strategy, "random_allocation", args.asset_class, seed=seed
-        )
-        all_results.append(results)
+    # # 2. Random Allocation (5 seeds)
+    # logger.info("\n=== Random Allocation Strategy ===")
+    # for seed in range(100):
+    #     strategy = RandomStrategy(num_assets, seed=seed)
+    #     results = run_benchmark_backtest(
+    #         test_split, strategy, "random_allocation", args.asset_class, seed=seed
+    #     )
+    #     all_results.append(results)
     
-    # 3. Equal Weight (deterministic, seed=0)
-    logger.info("\n=== Equal Weight Strategy ===")
-    strategy = EqualWeightStrategy(num_assets)
-    results = run_benchmark_backtest(
-        test_split, strategy, "equal_weight", args.asset_class, seed=0
-    )
-    all_results.append(results)
+    # # 3. Equal Weight (deterministic, seed=0)
+    # logger.info("\n=== Equal Weight Strategy ===")
+    # strategy = EqualWeightStrategy(num_assets)
+    # results = run_benchmark_backtest(
+    #     test_split, strategy, "equal_weight", args.asset_class, seed=0
+    # )
+    # all_results.append(results)
     
-    # Print summary
-    logger.info("\n" + "="*80)
-    logger.info("BENCHMARK SUMMARY")
-    logger.info("="*80)
+    # # Print summary
+    # logger.info("\n" + "="*80)
+    # logger.info("BENCHMARK SUMMARY")
+    # logger.info("="*80)
     
     # Group by strategy
     strategies = {}

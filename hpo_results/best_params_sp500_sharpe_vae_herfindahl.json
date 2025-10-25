@@ -1,0 +1,12 @@
+{
+  "study_name": "herfindahl_sp500_sharpe_vae",
+  "asset_class": "sp500",
+  "reward_type": "sharpe",
+  "encoder": "vae",
+  "best_value": 98.51418011188507,
+  "best_params": {
+    "concentration_target": 0.18963824732494333,
+    "concentration_lambda": 0.9984556954671461
+  },
+  "n_trials": 50
+}
