@@ -33,3 +33,8 @@ presentation_plan.md
 research_plan.md
 notes_on_results.txt
 experiment_documentation.txt
+figures/
+dataset_analysis/
+benchmark_buy_and_hold/
+benchmark_random_allocation/
+benchmark_equal_weight/
