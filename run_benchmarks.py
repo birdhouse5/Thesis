@@ -321,34 +321,34 @@ def main():
     
     # 1. Buy and Hold (5 seeds)
     logger.info("\n=== Buy and Hold Strategy ===")
-    for seed in range(100):
+    for seed in range(10):
         strategy = BuyAndHoldStrategy(num_assets, seed=seed)
         results = run_benchmark_backtest(
             test_split, strategy, "buy_and_hold", args.asset_class, seed=seed
         )
         all_results.append(results)
     
-    # # 2. Random Allocation (5 seeds)
-    # logger.info("\n=== Random Allocation Strategy ===")
-    # for seed in range(100):
-    #     strategy = RandomStrategy(num_assets, seed=seed)
-    #     results = run_benchmark_backtest(
-    #         test_split, strategy, "random_allocation", args.asset_class, seed=seed
-    #     )
-    #     all_results.append(results)
+    # 2. Random Allocation (5 seeds)
+    logger.info("\n=== Random Allocation Strategy ===")
+    for seed in range(10):
+        strategy = RandomStrategy(num_assets, seed=seed)
+        results = run_benchmark_backtest(
+            test_split, strategy, "random_allocation", args.asset_class, seed=seed
+        )
+        all_results.append(results)
     
-    # # 3. Equal Weight (deterministic, seed=0)
-    # logger.info("\n=== Equal Weight Strategy ===")
-    # strategy = EqualWeightStrategy(num_assets)
-    # results = run_benchmark_backtest(
-    #     test_split, strategy, "equal_weight", args.asset_class, seed=0
-    # )
-    # all_results.append(results)
+    # 3. Equal Weight (deterministic, seed=0)
+    logger.info("\n=== Equal Weight Strategy ===")
+    strategy = EqualWeightStrategy(num_assets)
+    results = run_benchmark_backtest(
+        test_split, strategy, "equal_weight", args.asset_class, seed=0
+    )
+    all_results.append(results)
     
-    # # Print summary
-    # logger.info("\n" + "="*80)
-    # logger.info("BENCHMARK SUMMARY")
-    # logger.info("="*80)
+    # Print summary
+    logger.info("\n" + "="*80)
+    logger.info("BENCHMARK SUMMARY")
+    logger.info("="*80)
     
     # Group by strategy
     strategies = {}

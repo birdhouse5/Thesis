@@ -100,12 +100,12 @@ class PortfolioPolicy(nn.Module):
         if self.long_only:
             bounded = torch.sigmoid(raw_actions)  # (0, 1) for long-only
             sum_weights = torch.sum(bounded, dim=-1, keepdim=True)
-            sum_weights = sum_weights + 1.0 + eps
+            sum_weights = sum_weights + eps
             weights = bounded / sum_weights
         else:
             bounded = torch.tanh(raw_actions)  # (-1, 1) for long-short
             abs_sum = torch.sum(torch.abs(bounded), dim=-1, keepdim=True)
-            abs_sum = abs_sum + 1.0 + eps
+            abs_sum = abs_sum + eps
             weights = bounded / abs_sum
 
         log_prob = dist.log_prob(raw_actions).sum(-1, keepdim=True)
