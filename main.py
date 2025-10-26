@@ -324,7 +324,8 @@ def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
         num_assets=cfg.num_assets,
         hidden_dim=cfg.hidden_dim,
         noise_factor=cfg.noise_factor,
-        random_policy=cfg.random_policy
+        random_policy=cfg.random_policy,
+        long_only=cfg.long_only
     ).to(device)
     
     logger.info(f"✅ Created policy with obs_shape={obs_shape}, latent_dim={cfg.latent_dim}")
@@ -579,7 +580,9 @@ def main():
     parser.add_argument("--n_assets", type=int, default=None,
                         help="Number of assets to use (default: all 30)")
     parser.add_argument("--enable_concentration_penalty", action="store_true",
-                        help="Enable concentration penalty to encourage diversification")              
+                        help="Enable concentration penalty to encourage diversification")
+    parser.add_argument("--long_only", action="store_true",  # ADD THIS
+                        help="Enable long-only portfolio (disable short positions)")              
 
     args = parser.parse_args()
 
@@ -619,6 +622,9 @@ def main():
 
         if args.enable_concentration_penalty:
             exp.concentration_penalty = True
+        
+        if args.long_only:
+            exp.long_only = True
             
     if args.encoder:
         experiments = [exp for exp in experiments if exp.encoder == args.encoder]

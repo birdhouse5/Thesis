@@ -96,6 +96,7 @@ class TrainingConfig:
     concentration_penalty: bool = False
     concentration_target: float = 0.10  # Target Herfindahl index (1/N for equal weight)
     concentration_lambda: float = 0.1   # Penalty strength
+    long_only: bool = False
     
     
     

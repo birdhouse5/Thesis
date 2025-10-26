@@ -9,7 +9,8 @@ class PortfolioPolicy(nn.Module):
     def __init__(self, obs_shape, latent_dim, num_assets,
                  hidden_dim=256, noise_factor=0.0, random_policy=False,
                  action_scale=1.0,
-                 min_logstd=-3.0, max_logstd=-0.3):
+                 min_logstd=-3.0, max_logstd=-0.3,
+                 long_only=False):
                  
         super().__init__()
         self.obs_shape = obs_shape
@@ -21,6 +22,7 @@ class PortfolioPolicy(nn.Module):
         self.action_scale = action_scale
         self.min_logstd = min_logstd
         self.max_logstd = max_logstd
+        self.long_only = long_only
 
         obs_flat_dim = obs_shape[0] * obs_shape[1]
 
@@ -91,14 +93,16 @@ class PortfolioPolicy(nn.Module):
         # Sample actions
         raw_actions = mean if deterministic else dist.rsample()
 
-        # Map to (-1, 1) range
-        bounded = torch.tanh(raw_actions)
-
-        # Normalize so total abs exposure <= 1
-        eps = 1e-8  # small constant for numerical safety
-        abs_sum = torch.sum(torch.abs(bounded), dim=-1, keepdim=True)
-        abs_sum = abs_sum + 1.0 + eps  # ensures denominator > 0
-        weights = bounded / abs_sum
+        if self.long_only:
+            bounded = torch.sigmoid(raw_actions)  # (0, 1) for long-only
+            sum_weights = torch.sum(bounded, dim=-1, keepdim=True)
+            sum_weights = sum_weights + 1.0 + eps
+            weights = bounded / sum_weights
+        else:
+            bounded = torch.tanh(raw_actions)  # (-1, 1) for long-short
+            abs_sum = torch.sum(torch.abs(bounded), dim=-1, keepdim=True)
+            abs_sum = abs_sum + 1.0 + eps
+            weights = bounded / abs_sum
 
         # cash = 1.0 - torch.sum(torch.abs(weights), dim=-1, keepdim=True)
         # cash = torch.clamp(cash, min=0.0)
