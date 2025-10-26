@@ -96,17 +96,23 @@ class PortfolioPolicy(nn.Module):
         # Define epsilon for numerical stability
         eps = 1e-8  # ADD THIS LINE
 
+
         # Map to portfolio weights
-        if self.long_only:
-            bounded = torch.sigmoid(raw_actions)  # (0, 1) for long-only
-            sum_weights = torch.sum(bounded, dim=-1, keepdim=True)
-            sum_weights = sum_weights + eps
-            weights = bounded / sum_weights
-        else:
-            bounded = torch.tanh(raw_actions)  # (-1, 1) for long-short
-            abs_sum = torch.sum(torch.abs(bounded), dim=-1, keepdim=True)
-            abs_sum = abs_sum + eps
-            weights = bounded / abs_sum
+        bounded = torch.sigmoid(raw_actions)  # (0, 1) for long-only
+        sum_weights = torch.sum(bounded, dim=-1, keepdim=True)
+        sum_weights = sum_weights + eps
+        weights = bounded / sum_weights
+
+        # if self.long_only:
+        #     bounded = torch.sigmoid(raw_actions)  # (0, 1) for long-only
+        #     sum_weights = torch.sum(bounded, dim=-1, keepdim=True)
+        #     sum_weights = sum_weights + eps
+        #     weights = bounded / sum_weights
+        # else:
+        #     bounded = torch.tanh(raw_actions)  # (-1, 1) for long-short
+        #     abs_sum = torch.sum(torch.abs(bounded), dim=-1, keepdim=True)
+        #     abs_sum = abs_sum + eps
+        #     weights = bounded / abs_sum
 
         log_prob = dist.log_prob(raw_actions).sum(-1, keepdim=True)
 
