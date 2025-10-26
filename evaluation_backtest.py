@@ -194,10 +194,10 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
         max_horizon=config.max_horizon,
         eta=getattr(config, 'eta', 0.05),
         rf_rate=getattr(config, 'rf_rate', 0.02),
-        transaction_cost_rate=getattr(config, 'transaction_cost_rate', 0.001),
+        transaction_cost_rate=getattr(config, 'transaction_cost_rate', 0.000),
         steps_per_year=252 if config.asset_class == 'sp500' else 35040,
         inflation_rate=getattr(config, 'inflation_rate', 0.0),  # Use config value
-        reward_type=getattr(config, 'reward_type', 'dsr'),
+        reward_type=getattr(config, 'reward_type', 'sharpe'),
         reward_lookback=getattr(config, 'reward_lookback', 20),
     )
 
@@ -305,7 +305,7 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
             daily_capital.append(env.current_capital)
             portfolio_values.append(env.current_capital / initial_capital)
 
-            if t % 100 == 0:
+            if t % 1 == 0: #TODO
                 current_return = (env.current_capital - initial_capital) / initial_capital
                 logger.info(f"  Step {t:4d}/{len(dataset)-1}: "
                           f"Return = {current_return:.3%}, "
