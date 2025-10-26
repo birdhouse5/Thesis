@@ -30,7 +30,9 @@
     "discount_factor": 0.9795403074531488,
     "ppo_minibatch_size": 128,
     "min_logstd": -3.812762631831736,
-    "max_logstd": 0.3273246185148746
+    "max_logstd": 0.3273246185148746,
+    "concentration_target": 0.18963824732494333,
+    "concentration_lambda": 0.9984556954671461
   },
   "note": "Merged from independent VAE and PPO optimizations"
 }
