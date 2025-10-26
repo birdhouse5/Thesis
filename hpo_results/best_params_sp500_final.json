@@ -1,0 +1,38 @@
+{
+  "study_name": "merged_vae_only_sp500_dsr_ppo_only_sp500_dsr_vae_with_vae",
+  "asset_class": "sp500",
+  "reward_type": "dsr",
+  "encoder": "vae",
+  "source": {
+    "vae_hpo": {
+      "value": 12.503491146862507,
+      "n_trials": 100
+    },
+    "ppo_hpo": {
+      "value": 10.356064601242542,
+      "n_trials": 100
+    }
+  },
+  "best_params": {
+    "latent_dim": 32,
+    "hidden_dim": 256,
+    "vae_lr": 3.16075785881701e-05,
+    "vae_beta": 0.001829495603195202,
+    "vae_update_freq": 1,
+    "vae_num_elbo_terms": 32,
+    "policy_lr": 0.00017148848455617258,
+    "ppo_clip_ratio": 0.19043171438917497,
+    "entropy_coef": 0.018249051757395808,
+    "ppo_epochs": 12,
+    "value_loss_coef": 0.8857978150233938,
+    "max_grad_norm": 1.3398266255635038,
+    "gae_lambda": 0.9804954715803365,
+    "discount_factor": 0.99494424306026,
+    "ppo_minibatch_size": 128,
+    "min_logstd": -2.706766263895414,
+    "max_logstd": 1.6129277564533553,
+    "concentration_target": 0.18963824732494333,
+    "concentration_lambda": 0.9984556954671461
+  },
+  "note": "Merged from independent VAE and PPO optimizations"
+}
