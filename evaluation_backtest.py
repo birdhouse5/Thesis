@@ -305,7 +305,7 @@ def run_sequential_backtest(datasets, policy, encoder, config, split='test') -> 
             daily_capital.append(env.current_capital)
             portfolio_values.append(env.current_capital / initial_capital)
 
-            if t % 1 == 0: #TODO
+            if t % 100 == 0: #TODO
                 current_return = (env.current_capital - initial_capital) / initial_capital
                 logger.info(f"  Step {t:4d}/{len(dataset)-1}: "
                           f"Return = {current_return:.3%}, "
