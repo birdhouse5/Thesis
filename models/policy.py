@@ -93,6 +93,10 @@ class PortfolioPolicy(nn.Module):
         # Sample actions
         raw_actions = mean if deterministic else dist.rsample()
 
+        # Define epsilon for numerical stability
+        eps = 1e-8  # ADD THIS LINE
+
+        # Map to portfolio weights
         if self.long_only:
             bounded = torch.sigmoid(raw_actions)  # (0, 1) for long-only
             sum_weights = torch.sum(bounded, dim=-1, keepdim=True)
@@ -103,9 +107,6 @@ class PortfolioPolicy(nn.Module):
             abs_sum = torch.sum(torch.abs(bounded), dim=-1, keepdim=True)
             abs_sum = abs_sum + 1.0 + eps
             weights = bounded / abs_sum
-
-        # cash = 1.0 - torch.sum(torch.abs(weights), dim=-1, keepdim=True)
-        # cash = torch.clamp(cash, min=0.0)
 
         log_prob = dist.log_prob(raw_actions).sum(-1, keepdim=True)
 
