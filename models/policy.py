@@ -10,7 +10,7 @@ class PortfolioPolicy(nn.Module):
                  hidden_dim=256, noise_factor=0.0, random_policy=False,
                  action_scale=1.0,
                  min_logstd=-3.0, max_logstd=-0.3,
-                 long_only=False):
+                 long_only=True):
                  
         super().__init__()
         self.obs_shape = obs_shape
