@@ -80,8 +80,8 @@ def evaluate(env, policy, encoder, config, mode, num_episodes: int = 50) -> Dict
                         latent = torch.zeros(1, config.latent_dim, device=device)
                 
                 # Get action from policy
-                #action, _, _, _ = policy.act(obs_tensor, latent, deterministic=True)
-                action, _, _, _ = policy.act(obs_tensor, latent, deterministic=False)
+                action, _, _, _ = policy.act(obs_tensor, latent, deterministic=True)
+                #action, _, _, _ = policy.act(obs_tensor, latent, deterministic=False)
                 
                 # Take environment step (tensor input)
                 next_obs, reward, done, info = env.step(action.squeeze(0))
