@@ -150,7 +150,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         batch_size=8192,
         vae_batch_size=1024,
         ppo_epochs=8, # TODO
-        entropy_coef=0.0005, # 0.001, #TODO # 0.0009083214087882104, # optuna result1 - best # 0.006439257494565313, # 0.047315891962627706, optuna 2 # 
+        entropy_coef=0.001, # 0.0005 #TODO # 0.0009083214087882104, # optuna result1 - best # 0.006439257494565313, # 0.047315891962627706, optuna 2 # 
         joint_loss_lambda=1.0,
         max_episodes=3000, #TODO
         early_stopping_patience=10,
@@ -179,7 +179,7 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         ppo_minibatch_size = 128,
         vae_num_elbo_terms = 8,
         min_logstd=-3.0,  # Conservative default (std ∈ [0.05, 0.74])
-        max_logstd=-0.3,
+        max_logstd=0.5,
         concentration_penalty=exp.concentration_penalty if exp.concentration_penalty is not None else False,
         #use_cpu_context = False
     )
