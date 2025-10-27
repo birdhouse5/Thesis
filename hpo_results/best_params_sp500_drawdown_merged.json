@@ -28,7 +28,9 @@
     "max_grad_norm": 1.9890830107206456,
     "gae_lambda": 0.9167535097327686,
     "discount_factor": 0.9880485118803071,
-    "ppo_minibatch_size": 128
+    "ppo_minibatch_size": 128,
+    "concentration_target": 0.18963824732494333,
+    "concentration_lambda": 0.9984556954671461
   },
   "note": "Merged from independent VAE and PPO optimizations"
 }
