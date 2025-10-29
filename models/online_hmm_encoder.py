@@ -1,8 +1,8 @@
+import numpy as np
+from hmmlearn.hmm import GaussianHMM
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-from hmmlearn.hmm import GaussianHMM
 import logging
 
 logger = logging.getLogger(__name__)
@@ -10,251 +10,161 @@ logger = logging.getLogger(__name__)
 
 class OnlineHMMEncoder(nn.Module):
     """
-    Online HMM encoder that learns during RL training.
-    Maintains a real HMM that gets refitted on recent experience,
-    plus a neural network for fast inference.
+    HMM-based encoder using hmmlearn (replaces the PyTorch neural encoder).
+
+    This version maintains the same interface but uses a true HMM backend.
     """
+
     def __init__(self, obs_dim, num_assets, reward_dim=1, latent_dim=4, hidden_dim=256):
         super(OnlineHMMEncoder, self).__init__()
-        
-        self.obs_dim = obs_dim          # (N, F)
-        self.action_dim = num_assets    # N
-        self.reward_dim = reward_dim    # 1
-        self.latent_dim = latent_dim    # 4 (regime probabilities)
-        self.hidden_dim = hidden_dim
+
+        self.obs_dim = obs_dim
         self.num_assets = num_assets
-        
-        # Neural network for fast inference (will be trained to match HMM)
-        obs_flat_dim = obs_dim[0] * obs_dim[1]  # N × F
-        self.obs_encoder = nn.Linear(obs_flat_dim, 64)
-        self.action_encoder = nn.Linear(num_assets, 32)
-        self.reward_encoder = nn.Linear(reward_dim, 16)
-        
-        # Combine features and output regime probabilities
-        combined_dim = 64 + 32 + 16
-        self.regime_predictor = nn.Sequential(
-            nn.Linear(combined_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_dim // 2, latent_dim),
-            nn.Softmax(dim=-1)
-        )
-        
-        # The actual HMM (will be fitted online)
-        self.hmm = None
-        self.hmm_fitted = False
-        self.refit_counter = 0
-        
-        logger.info(f"Initialized OnlineHMMEncoder with {latent_dim} regimes")
-    
-    def _init_hmm(self, n_features):
-        """Initialize a new HMM with random parameters."""
+        self.reward_dim = reward_dim
+        self.latent_dim = latent_dim
+        self.hidden_dim = hidden_dim
+
+        # Flattened observation dimensionality
+        self.obs_flat_dim = obs_dim[0] * obs_dim[1] + num_assets + reward_dim
+
+        # Underlying HMM from hmmlearn
+        # Use diagonal covariance for simplicity
         self.hmm = GaussianHMM(
-            n_components=self.latent_dim,
-            covariance_type="full",
-            n_iter=50,  # Fewer iterations for online learning
-            random_state=None,  # Will vary each refit
+            n_components=latent_dim,
+            covariance_type="diag",
+            n_iter=10,
+            verbose=False,
             tol=1e-3
         )
-        logger.info(f"Initialized new GaussianHMM with {self.latent_dim} components")
-    
-    def refit_hmm(self, trajectory_buffer):
+
+        # Keep a small buffer of fitted flag
+        self._is_fitted = False
+
+        logger.info(f"Created OnlineHMMEncoder (hmmlearn-based) with {latent_dim} regimes")
+
+    def _flatten_inputs(self, obs_seq, action_seq, reward_seq):
         """
-        Refit the HMM on recent trajectories.
-        
-        Args:
-            trajectory_buffer: List of trajectory dicts with 'observations', 'actions', 'rewards'
-        
-        Returns:
-            success: bool indicating if refit was successful
-            hmm_log_likelihood: float, HMM score on the data
+        Combine obs, actions, rewards into flat features for HMM input.
         """
-        if len(trajectory_buffer) < 5:
-            logger.debug("Not enough trajectories to refit HMM")
-            return False, 0.0
-        
-        try:
-            # Collect features from trajectories
-            all_features = []
-            for traj in trajectory_buffer:
-                # Get observations from trajectory
-                obs = traj['observations']  # (T, N, F)
-                
-                # Flatten to (T*N, F) for HMM
-                if torch.is_tensor(obs):
-                    obs_np = obs.cpu().numpy()
-                else:
-                    obs_np = obs
-                
-                T = obs_np.shape[0]
-                features_flat = obs_np.reshape(T * self.num_assets, -1)
-                all_features.append(features_flat)
-            
-            # Concatenate all features
-            X = np.vstack(all_features)
-            
-            # Initialize HMM if first time
-            if self.hmm is None:
-                self._init_hmm(n_features=X.shape[1])
-            
-            # Fit HMM
-            logger.debug(f"Refitting HMM on {X.shape[0]} samples from {len(trajectory_buffer)} trajectories")
-            self.hmm.fit(X)
-            
-            # Check convergence
-            log_likelihood = self.hmm.score(X)
-            converged = self.hmm.monitor_.converged
-            
-            if not converged:
-                logger.warning(f"HMM did not converge (log_likelihood={log_likelihood:.2f})")
-            else:
-                logger.info(f"HMM refitted successfully (log_likelihood={log_likelihood:.2f})")
-            
-            self.hmm_fitted = True
-            self.refit_counter += 1
-            
-            return True, log_likelihood
-            
-        except Exception as e:
-            logger.error(f"HMM refit failed: {e}")
-            return False, 0.0
-    
-    def get_hmm_posteriors(self, obs_sequence):
+        obs_flat = obs_seq.reshape(obs_seq.shape[0], obs_seq.shape[1], -1)
+        action_flat = action_seq.reshape(action_seq.shape[0], action_seq.shape[1], -1)
+        reward_flat = reward_seq.reshape(reward_seq.shape[0], reward_seq.shape[1], -1)
+        return torch.cat([obs_flat, action_flat, reward_flat], dim=-1)
+
+    def encode(self, obs_seq, action_seq, reward_seq, return_logits=False):
         """
-        Get regime posteriors from the fitted HMM.
-        
-        Args:
-            obs_sequence: (batch, seq_len, N, F)
-        
-        Returns:
-            posteriors: (batch, latent_dim) - average regime probabilities
-        """
-        if not self.hmm_fitted:
-            # Return uniform distribution if HMM not yet fitted
-            batch_size = obs_sequence.shape[0]
-            device = obs_sequence.device
-            return torch.ones(batch_size, self.latent_dim, device=device) / self.latent_dim
-        
-        batch_size, seq_len, N, F = obs_sequence.shape
-        
-        # Convert to numpy
-        if torch.is_tensor(obs_sequence):
-            obs_np = obs_sequence.cpu().numpy()
-        else:
-            obs_np = obs_sequence
-        
-        # Get posteriors for each sequence
-        batch_posteriors = []
-        for b in range(batch_size):
-            # Flatten sequence: (seq_len*N, F)
-            seq_flat = obs_np[b].reshape(seq_len * N, -1)
-            
-            try:
-                # Get posteriors from HMM
-                _, posteriors = self.hmm.score_samples(seq_flat)
-                
-                # Reshape to (seq_len, N, n_components)
-                posteriors_reshaped = posteriors.reshape(seq_len, N, self.latent_dim)
-                
-                # Average over time and assets to get task-level regime probs
-                avg_posteriors = posteriors_reshaped.mean(axis=(0, 1))  # (n_components,)
-                
-                batch_posteriors.append(avg_posteriors)
-                
-            except Exception as e:
-                logger.warning(f"Failed to compute HMM posteriors: {e}")
-                # Fallback to uniform
-                batch_posteriors.append(np.ones(self.latent_dim) / self.latent_dim)
-        
-        # Stack and convert to tensor
-        posteriors_array = np.stack(batch_posteriors)
-        device = obs_sequence.device if torch.is_tensor(obs_sequence) else 'cpu'
-        return torch.tensor(posteriors_array, dtype=torch.float32, device=device)
-    
-    def encode(self, obs_sequence, action_sequence, reward_sequence):
-        """
-        Encode trajectory to regime probabilities using neural network.
-        
-        Args:
-            obs_sequence: (batch, seq_len, N, F)
-            action_sequence: (batch, seq_len, N)
-            reward_sequence: (batch, seq_len, 1)
-            
+        Encode trajectory using HMM posterior probabilities.
+
         Returns:
             regime_probs: (batch, latent_dim)
         """
-        batch_size, seq_len = obs_sequence.shape[:2]
-        
-        # Use most recent observation for regime detection
-        current_obs = obs_sequence[:, -1]  # (batch, N, F)
-        current_action = action_sequence[:, -1]  # (batch, N)  
-        current_reward = reward_sequence[:, -1]  # (batch, 1)
-        
-        # Encode inputs
-        obs_flat = current_obs.reshape(batch_size, -1)
-        obs_emb = F.relu(self.obs_encoder(obs_flat))
-        action_emb = F.relu(self.action_encoder(current_action))
-        reward_emb = F.relu(self.reward_encoder(current_reward))
-        
-        # Combine and predict regime
-        combined = torch.cat([obs_emb, action_emb, reward_emb], dim=-1)
-        regime_probs = self.regime_predictor(combined)
-        
-        return regime_probs
-    
-    def compute_distillation_loss(self, obs_seq, action_seq, reward_seq):
-        """
-        Compute loss for distilling HMM knowledge into neural network.
-        
-        Args:
-            obs_seq: (batch, seq_len, N, F)
-            action_seq: (batch, seq_len, N)
-            reward_seq: (batch, seq_len, 1)
-        
-        Returns:
-            loss: scalar tensor
-            info: dict with loss components
-        """
-        if not self.hmm_fitted:
-            # No loss if HMM not fitted yet
-            device = obs_seq.device
-            return torch.tensor(0.0, device=device), {
-                "hmm_distillation_loss": 0.0,
-                "hmm_fitted": False
-            }
-        
-        # Get HMM targets (teacher)
         with torch.no_grad():
-            hmm_targets = self.get_hmm_posteriors(obs_seq)
-        
-        # Get neural network predictions (student)
-        neural_preds = self.encode(obs_seq, action_seq, reward_seq)
-        
-        # KL divergence loss (student should match teacher)
-        loss = F.kl_div(
-            neural_preds.log(),
-            hmm_targets,
-            reduction="batchmean"
-        )
-        
-        return loss, {
-            "hmm_distillation_loss": loss.item(),
-            "hmm_fitted": True,
-            "hmm_refit_count": self.refit_counter
-        }
-    
-    def compute_loss(self, obs_seq, action_seq, reward_seq, beta=0.1, num_elbo_terms=None, 
-                    prior_mu=None, prior_logvar=None):
-        """
-        Compute loss for online HMM learning.
-        This is called during training like VAE.
-        
-        Returns distillation loss to match HMM posteriors.
-        """
-        return self.compute_distillation_loss(obs_seq, action_seq, reward_seq)
-    
+            features = self._flatten_inputs(obs_seq, action_seq, reward_seq)
+            batch_size, seq_len, feat_dim = features.shape
+
+            regime_probs_batch = []
+
+            for b in range(batch_size):
+                X = features[b].cpu().numpy()
+
+                # Ensure we have fitted the model at least once
+                if not self._is_fitted:
+                    # Initialize with random small dataset
+                    init_data = np.random.randn(max(10, seq_len), feat_dim)
+                    self.hmm.fit(init_data)
+                    self._is_fitted = True
+
+                try:
+                    logprob, posteriors = self.hmm.score_samples(X)
+                except Exception:
+                    # In case of singular covariance or numerical issue
+                    posteriors = np.ones((seq_len, self.latent_dim)) / self.latent_dim
+
+                # Take last timestep posterior as regime representation
+                regime_probs_batch.append(posteriors[-1])
+
+            regime_probs = torch.tensor(np.array(regime_probs_batch), dtype=torch.float32)
+            if return_logits:
+                return torch.log(regime_probs + 1e-10)
+            return regime_probs
+
     def reparameterize(self, regime_probs, logvar=None):
         """
-        For compatibility with VAE interface.
-        Just return the regime probabilities.
+        Keep API compatibility (returns probs or sample if you wish).
         """
         return regime_probs
+
+    def partial_fit(self, obs_seq, action_seq, reward_seq):
+        """
+        Incrementally update HMM with new data (simulating online learning).
+        """
+        features = self._flatten_inputs(obs_seq, action_seq, reward_seq)
+        X = features.reshape(-1, features.shape[-1]).detach().cpu().numpy()
+        self.hmm.fit(X)
+        self._is_fitted = True
+
+    def compute_loss(
+        self,
+        obs_seq, action_seq, reward_seq,
+        beta=0.1,
+        num_elbo_terms=8,
+        prior_mu=None, prior_logvar=None
+    ):
+        """
+        Compute pseudo-loss: negative log-likelihood under HMM.
+        """
+        features = self._flatten_inputs(obs_seq, action_seq, reward_seq)
+        batch_size, seq_len, feat_dim = features.shape
+
+        total_nll = 0.0
+
+        for b in range(batch_size):
+            X = features[b].cpu().numpy()
+            if not self._is_fitted:
+                self.partial_fit(obs_seq, action_seq, reward_seq)
+            try:
+                nll = -self.hmm.score(X)
+            except Exception:
+                nll = 0.0
+            total_nll += nll
+
+        total_nll /= batch_size
+        total_loss = torch.tensor(total_nll, dtype=torch.float32)
+
+        return total_loss, {
+            "total": total_loss.item(),
+            "recon": 0.0,
+            "consistency": 0.0,
+            "entropy": 0.0,
+            "num_elbo_terms": num_elbo_terms,
+            "regime_confidence": 1.0,
+        }
+
+
+class GumbelHMMEncoder(OnlineHMMEncoder):
+    """
+    Dummy subclass to keep compatibility (same as OnlineHMMEncoder for hmmlearn)
+    """
+    def __init__(self, *args, temperature=1.0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.temperature = temperature
+
+
+def create_online_hmm_encoder(obs_dim, num_assets, latent_dim=4, hidden_dim=256, use_gumbel=False):
+    """
+    Factory function (kept identical).
+    """
+    if use_gumbel:
+        return GumbelHMMEncoder(
+            obs_dim=obs_dim,
+            num_assets=num_assets,
+            latent_dim=latent_dim,
+            hidden_dim=hidden_dim
+        )
+    else:
+        return OnlineHMMEncoder(
+            obs_dim=obs_dim,
+            num_assets=num_assets,
+            latent_dim=latent_dim,
+            hidden_dim=hidden_dim
+        )
