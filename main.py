@@ -574,7 +574,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp_name", type=str, default=None, help="Override experiment name")
     parser.add_argument("--force_recreate", action="store_true", help="Force dataset and MLflow overwrite")
-    parser.add_argument("--encoder", type=str, choices=["vae", "hmm", "none"], help="Encoder type to run")
+    parser.add_argument("--encoder", type=str, choices=["vae", "hmm_online", "hmm_offline", "none"], help="Encoder type to run")
     parser.add_argument("--datatype", type=str, choices=["sp500", "crypto"], help="Dataset type to run")
     parser.add_argument("--reward_type", type=str, choices=["dsr", "sharpe", "drawdown"], 
                     default="dsr", help="Reward function type")
