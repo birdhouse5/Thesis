@@ -1161,11 +1161,11 @@ class PPOTrainer:
 
                         torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
                         self.vae_optimizer.step()
-                        
+
                     else:
-                    # For non-gradient based encoders (e.g., hmmlearn HMM)
-                    if hasattr(self.vae, 'partial_fit'):
-                        self.vae.partial_fit(obs_batch, act_batch, rew_batch)
+                        # For non-gradient based encoders (e.g., hmmlearn HMM)
+                        if hasattr(self.vae, 'partial_fit'):
+                            self.vae.partial_fit(obs_batch, act_batch, rew_batch)
 
                     #logger.info(f"  ✓ VAE weights updated") 
 
