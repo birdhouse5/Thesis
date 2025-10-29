@@ -278,21 +278,24 @@ def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
         ).to(device)
         logger.info(f"✅ Created VAE encoder with latent_dim={cfg.latent_dim}")
     
-    elif cfg.encoder == "hmm_offline":
-        # Original offline HMM with pre-training (UNFAIR ADVANTAGE)
+    elif cfg.encoder == "hmm":
         from algorithms.pretrain_hmm import pretrain_hmm
         
-        logger.info("🔄 Running HMM pre-training (OFFLINE - has unfair advantage)...")
+        logger.info("🔄 Running HMM pre-training...")
+        
+        # Pass the full config to pre-training for consistency
         success, encoder_path = pretrain_hmm(
             asset_class=cfg.asset_class, 
             seed=cfg.seed,
-            config=cfg
+            config=cfg  # Pass full config for parameter consistency
         )
         
         if not success:
+            logger.error("❌ HMM pre-training failed")
             raise RuntimeError("HMM pre-training failed")
         
-        hmm_latent_dim = 4
+        # Create encoder with correct dimensions (4 states for HMM)
+        hmm_latent_dim = 4  # Override config for HMM
         encoder = HMMEncoder(
             obs_dim=obs_shape,
             num_assets=cfg.num_assets,
@@ -300,35 +303,17 @@ def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
             hidden_dim=cfg.hidden_dim
         ).to(device)
         
+        # Load pre-trained weights
         if encoder_path and Path(encoder_path).exists():
             encoder.load_state_dict(torch.load(encoder_path, map_location=device))
             logger.info(f"📥 Loaded pre-trained HMM weights from {encoder_path}")
+        else:
+            logger.warning(f"⚠️ Pre-trained weights not found, using random weights")
         
+        # Update cfg.latent_dim to match HMM for policy creation
         cfg.latent_dim = hmm_latent_dim
-        cfg.disable_vae = True  # Freeze encoder
         
-        logger.info(f"✅ Created offline HMM encoder (pre-trained, UNFAIR)")
-    
-    elif cfg.encoder == "hmm" or cfg.encoder == "hmm_online":
-        # NEW: Online HMM that learns during RL training (FAIR comparison)
-        from models.online_hmm_encoder import create_online_hmm_encoder
-        
-        logger.info("🔄 Creating online HMM encoder (learns during RL - FAIR)...")
-        
-        hmm_latent_dim = getattr(cfg, 'hmm_num_regimes', 4)
-        encoder = create_online_hmm_encoder(
-            obs_dim=obs_shape,
-            num_assets=cfg.num_assets,
-            latent_dim=hmm_latent_dim,
-            hidden_dim=cfg.hidden_dim,
-            use_gumbel=getattr(cfg, 'use_gumbel_hmm', False)
-        ).to(device)
-        
-        cfg.latent_dim = hmm_latent_dim
-        cfg.disable_vae = False  # Enable online learning
-        
-        logger.info(f"✅ Created online HMM encoder (online learning, FAIR)")
-    
+        logger.info(f"✅ Created HMM encoder with {hmm_latent_dim} states (pre-trained)")
     else:
         logger.info("✅ No encoder (encoder=none)")
     
@@ -342,6 +327,8 @@ def create_models(cfg: TrainingConfig, obs_shape) -> tuple:
         random_policy=cfg.random_policy,
         long_only=cfg.long_only
     ).to(device)
+    
+    logger.info(f"✅ Created policy with obs_shape={obs_shape}, latent_dim={cfg.latent_dim}")
     
     return encoder, policy
 
@@ -574,7 +561,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp_name", type=str, default=None, help="Override experiment name")
     parser.add_argument("--force_recreate", action="store_true", help="Force dataset and MLflow overwrite")
-    parser.add_argument("--encoder", type=str, choices=["vae", "hmm_online", "hmm_offline", "none"], help="Encoder type to run")
+    parser.add_argument("--encoder", type=str, choices=["vae", "hmm", "none"], help="Encoder type to run")
     parser.add_argument("--datatype", type=str, choices=["sp500", "crypto"], help="Dataset type to run")
     parser.add_argument("--reward_type", type=str, choices=["dsr", "sharpe", "drawdown"], 
                     default="dsr", help="Reward function type")

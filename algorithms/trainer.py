@@ -107,16 +107,7 @@ class PPOTrainer:
         # Optimizer: instantiate for both models
         self.policy_optimizer = Adam(policy.parameters(), lr=config.policy_lr)
         # Only create VAE optimizer if encoder has trainable parameters
-        if self.vae_enabled:
-            vae_params = list(vae.parameters())
-            if len(vae_params) > 0:
-                self.vae_optimizer = Adam(vae_params, lr=config.vae_lr)
-                logger.info(f"✅ Created VAE optimizer with {len(vae_params)} parameter groups")
-            else:
-                self.vae_optimizer = None
-                logger.info("⚠️  VAE has no trainable parameters (e.g., hmmlearn-based), skipping optimizer")
-        else:
-            self.vae_optimizer = None
+        self.vae_optimizer = Adam(vae.parameters(), lr=config.vae_lr) if self.vae_enabled else None
 
         # Experience buffers
         self.experience_buffer = ExperienceBuffer(config.batch_size)  # for PPO
@@ -1150,22 +1141,17 @@ class PPOTrainer:
                     )
                     
                     # VAE update
-                    if self.vae_optimizer is not None:
-                        self.vae_optimizer.zero_grad()
-                        vae_loss.backward()
+                    
+                    self.vae_optimizer.zero_grad()
+                    vae_loss.backward()
 
-                        # Log gradient norm before clipping
-                        vae_grad_norm = torch.nn.utils.clip_grad_norm_(self.vae.parameters(), float('inf'))
-                        # if vae_grad_norm > self.config.max_grad_norm * 2:  # Only log if concerning
-                        #     logger.warning(f"VAE grad norm: {vae_grad_norm:.2f} (clipping at {self.config.max_grad_norm})")
+                    # Log gradient norm before clipping
+                    vae_grad_norm = torch.nn.utils.clip_grad_norm_(self.vae.parameters(), float('inf'))
+                    # if vae_grad_norm > self.config.max_grad_norm * 2:  # Only log if concerning
+                    #     logger.warning(f"VAE grad norm: {vae_grad_norm:.2f} (clipping at {self.config.max_grad_norm})")
 
-                        torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
-                        self.vae_optimizer.step()
-
-                    else:
-                        # For non-gradient based encoders (e.g., hmmlearn HMM)
-                        if hasattr(self.vae, 'partial_fit'):
-                            self.vae.partial_fit(obs_batch, act_batch, rew_batch)
+                    torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
+                    self.vae_optimizer.step()
 
                     #logger.info(f"  ✓ VAE weights updated") 
 

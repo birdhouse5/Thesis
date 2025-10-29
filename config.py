@@ -21,9 +21,9 @@ class ExperimentConfig:
 # --- 2. Generator for all 60 configs ---
 def generate_experiment_configs(num_seeds: int = 10) -> List[ExperimentConfig]:
     assets = ["sp500", "crypto"]
-    encoders = ["vae", "none", "hmm_online", "hmm_offline"]  # Add both HMM variants
+    encoders = ["vae", "none", "hmm"]
     configs = []
-    
+
     for asset in assets:
         for encoder in encoders:
             for seed in range(num_seeds):
