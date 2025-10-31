@@ -1,5 +1,4 @@
-#import mlflow
-#import mlflow.pytorch
+
 from pathlib import Path
 from datetime import datetime
 import torch
@@ -155,7 +154,7 @@ def prepare_environments(cfg: TrainingConfig):
     
     # Create unified dataset - handles both crypto intelligent splitting and SP500
     if cfg.asset_class == "crypto":
-        # For crypto, use proportional splitting (more reliable than date-based)
+
         dataset = PortfolioDataset(
             asset_class=cfg.asset_class,
             data_path=cfg.data_path,
@@ -366,14 +365,6 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
     best_val_reward = float("-inf")
     patience_counter = 0
 
-    # === NEW: Initialize MLflow integration ===
-    # from mlflow_logger import MLflowIntegration
-    # mlflow_integration = MLflowIntegration(run_name=cfg.exp_name, config=vars(cfg))
-    # mlflow_integration.setup_mlflow()
-    # mlflow_integration.log_config()
-    # csv_logger = CSVLogger(run_name=cfg.exp_name, config=vars(cfg))
-    # csv_logger.setup_mlflow()
-    # csv_logger.log_config()
 
     try:
         # Setup
@@ -446,19 +437,6 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
                 tasks_trained += 1
                 pbar.update(1)
                 
-                # logger.info(f"=== main.py train_on_task RESULT DEBUG ===")
-                # logger.info(f"  Task: {tasks_trained}/{total_tasks}")
-                # logger.info(f"  Episodes trained: {episodes_trained}")
-                # logger.info(f"  Result keys: {list(result.keys())}")
-                # logger.info(f"  Result values sample:")
-                # for k, v in result.items():
-                #     if isinstance(v, (int, float, str, bool)):
-                #         logger.info(f"    {k}: {v}")
-                #     elif isinstance(v, list) and len(v) <= 5:
-                #         logger.info(f"    {k}: {v}")
-                #     else:
-                #         logger.info(f"    {k}: {type(v)} (len={len(v) if hasattr(v, '__len__') else 'N/A'})")
-
                 # Log to CSV
                 training_logger.log_task(tasks_trained, result)
                 
@@ -503,15 +481,10 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
         test_results = evaluate(test_env, policy, encoder, cfg, "test", cfg.test_episodes)
         backtest_results = run_sequential_backtest(datasets, policy, encoder, cfg, split='test')
 
-        #mlflow_integration.log_validation_results(episodes_trained, test_results)
-        #mlflow_integration.log_backtest_results(backtest_results)
 
         # Save final models + config
         model_dict = {"policy": policy, "encoder": encoder}
-        #mlflow_integration.log_essential_artifacts(model_dict, vars(cfg), cfg.exp_name)
-        #mlflow_integration.log_final_summary(True, episodes_trained)
 
-        #validation_logger.log_validation(episodes_trained, test_results)    
 
         final_results = {
             "episodes_trained": episodes_trained,
@@ -529,8 +502,6 @@ def run_training(cfg: TrainingConfig) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Training failed for {cfg.exp_name}: {str(e)}")
         logger.error(traceback.format_exc())
-        #mlflow_integration.log_final_summary(False, episodes_trained, error_msg=str(e))
-        #csv_logger.log_final_summary(False, episodes_trained, error_msg=str(e))
         return {
             "training_completed": False,
             "error": str(e),
@@ -586,16 +557,11 @@ def main():
 
     args = parser.parse_args()
 
-    # Setup MLflow before anything else
-    # logger.info("Setting up MLflow configuration...")
-    # backend = ensure_mlflow_setup()
-    # logger.info(f"MLflow configured with {backend} backend")
     logger.info("Using CSV logging backend")
 
     # Generate all experiment configurations
     experiments = generate_experiment_configs(num_seeds=10) # TODO 
-    # Apply CLI overrides
-    # Apply CLI overrides
+
     for exp in experiments:
         if args.exp_name:
             exp.exp_name = args.exp_name
@@ -631,12 +597,6 @@ def main():
     if args.datatype:
         experiments = [exp for exp in experiments if exp.asset_class == args.datatype]
 
-    # logger.info(f"Generated {len(experiments)} experiment configurations")
-    # logger.info("Experiment matrix:")
-    # logger.info("- Asset classes: SP500, Crypto")
-    # logger.info("- Encoders: VAE, None, HMM")
-    # logger.info("- Seeds: 0-9 (10 seeds per combination)")
-    # logger.info(f"- Total: {len(experiments)} experiments")
     
     # Store HPO path in experiments
     if args.load_hpo_params:
@@ -662,18 +622,5 @@ def main():
 if __name__ == "__main__":
     main()
 
-
-
-# full studies 
-# t1: sp500 DSR - done
-# t2: sp500 Sharpe - done
-
-# t1: crypto Sharpe HPO
-# t2: crypto 
-
-
-
-# t1: sp500 drawdown - running on new instance
-# t2 crypto drawdown
 
 

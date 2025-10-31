@@ -19,20 +19,8 @@ import time
 logger = logging.getLogger(__name__)
 
 # Constants from original data_preparation.py
-# SP500_TICKERS = [
-#     'IBM', 'MSFT', 'ORCL', 'INTC', 'HPQ', 'CSCO',  # Tech
-#     'JPM', 'BAC', 'WFC', 'C', 'AXP',              # Financial
-#     'JNJ', 'PFE', 'MRK', 'ABT',                   # Healthcare
-#     'KO', 'PG', 'WMT', 'PEP',                     # Consumer Staples
-#     'XOM', 'CVX', 'COP',                          # Energy
-#     'GE', 'CAT', 'BA',                            # Industrials
-#     'HD', 'MCD',                                  # Consumer Disc
-#     'SO', 'D',                                    # Utilities
-#     'DD'                                          # Materials
-# ]
-
 SP500_TICKERS = [
-    'IBM', 'ORCL', 'INTC', 'HPQ',                 # Tech
+    'IBM', 'MSFT', 'ORCL', 'INTC', 'HPQ', 'CSCO',  # Tech
     'JPM', 'BAC', 'WFC', 'C', 'AXP',              # Financial
     'JNJ', 'PFE', 'MRK', 'ABT',                   # Healthcare
     'KO', 'PG', 'WMT', 'PEP',                     # Consumer Staples
@@ -42,58 +30,6 @@ SP500_TICKERS = [
     'SO', 'D',                                    # Utilities
     'DD'                                          # Materials
 ]
-
-# SP500_TICKERS = [
-#     'IBM', #'MSFT', 'ORCL', 'INTC', 'HPQ', 'CSCO',  # Tech
-#     'JPM', #'BAC', 'WFC', 'C', 'AXP',              # Financial
-#     'JNJ', #'PFE', 'MRK', 'ABT',                   # Healthcare
-#     'KO', #'PG', 'WMT', 'PEP',                     # Consumer Staples
-#     'XOM', #'CVX', 'COP',                          # Energy
-#     'GE', #'CAT', 'BA',                            # Industrials
-#     'HD', #'MCD',                                  # Consumer Disc
-#     'SO', #'D',                                    # Utilities
-#     'DD'                                          # Materials
-# ]
-
-# Coverage window discovered by scanner: full range
-# CRYPTO_START_DATE = datetime(2019, 4, 18, 6, 0, 0)
-# CRYPTO_END_DATE = datetime(2025, 10, 3, 13, 45, 0)
-
-# moderate range (1 year)
-CRYPTO_START_DATE = datetime(2024, 1, 1, 0, 0, 0)
-CRYPTO_END_DATE = datetime(2025, 1, 1, 0, 0, 0)
-
-# 30 tickers
-CRYPTO_TICKERS = [
-    "BTCUSDT", "ETHUSDT", "BNBUSDT", "NEOUSDT", "LTCUSDT",
-    "QTUMUSDT", "ADAUSDT", "XRPUSDT", "IOTAUSDT", "TUSDUSDT",
-    "XLMUSDT", "ONTUSDT", "TRXUSDT", "ETCUSDT", "ICXUSDT",
-    "VETUSDT", "USDCUSDT", "LINKUSDT", "ONGUSDT", "HOTUSDT",
-    "ZILUSDT", "FETUSDT", "ZRXUSDT", "BATUSDT", "ZECUSDT",
-    "IOSTUSDT", "CELRUSDT", "DASHUSDT", "THETAUSDT", "ENJUSDT"
-]
-
-# 28 tickers
-# CRYPTO_TICKERS = [
-#     "BTCUSDT", "ETHUSDT", "BNBUSDT", "NEOUSDT", "LTCUSDT",
-#     "QTUMUSDT", "ADAUSDT", "XRPUSDT", "IOTAUSDT", 
-#     "XLMUSDT", "ONTUSDT", "TRXUSDT", "ETCUSDT", "ICXUSDT",
-#     "VETUSDT", "LINKUSDT", "ONGUSDT", "HOTUSDT",
-#     "ZILUSDT", "FETUSDT", "ZRXUSDT", "BATUSDT", "ZECUSDT",
-#     "IOSTUSDT", "CELRUSDT", "DASHUSDT", "THETAUSDT", "ENJUSDT"
-# ]
-
-
-# ETF_TICKERS = [
-    
-#     "SPY","QQQ","IWM","DIA","VTV","VUG",                            # US Market Style
-#     "EFA","EEM","EWJ","EWU","EWG","EWY","INDA","MCHI",              # Global Equities
-#     "TLT","IEF","SHY","AGG","LQD","HYG",                            # Bonds
-#     "GLD","SLV","DBC","USO","UNG"                                   # Commodities
-# ]
-
-
-BASE_URL = "https://api.binance.com/api/v3/klines"
 
 
 class DatasetSplit:
@@ -197,7 +133,6 @@ class PortfolioDataset:
         # Set up temporal splits
         self._setup_splits()
         
-        # If specific split requested, set convenience properties for backward compatibility
         if split:
             self._setup_single_split(split)
     
@@ -348,72 +283,6 @@ class PortfolioDataset:
         """Use only normalized features for consistent scaling"""
         normalized_cols = [col for col in self.full_data.columns if col.endswith('_norm')]
         return sorted(normalized_cols)
-    
-    # ========== MIGRATED FUNCTIONS FROM data_preparation.py ==========
-
-    # def _download_stock_data(self, tickers: List[str], start_date: str, end_date: str) -> pd.DataFrame:
-    #     """Download stock data using yfinance (safe version with yf.download)"""
-    #     logger.info(f"Downloading data for {len(tickers)} tickers from {start_date} to {end_date}")
-
-    #     all_data = []
-    #     failed_tickers = []
-
-    #     for i, ticker in enumerate(tickers):
-    #         try:
-    #             logger.info(f"  • {ticker} ({i+1}/{len(tickers)})")
-
-    #             # Use yf.download instead of Ticker().history to avoid curl/TLS issues
-    #             hist = yf.download(
-    #                 ticker,
-    #                 start=start_date,
-    #                 end=end_date,
-    #                 auto_adjust=True,
-    #                 progress=False,
-    #                 threads=False  # critical: avoids curl backend
-    #             )
-
-    #             if hist.empty:
-    #                 logger.warning(f"      No data found for {ticker}")
-    #                 failed_tickers.append(ticker)
-    #                 continue
-
-    #             # Reset index and add ticker column
-    #             hist = hist.reset_index()
-    #             hist['ticker'] = ticker
-
-    #             # Standardize column names
-    #             hist = hist.rename(columns={
-    #                 'Date': 'date',
-    #                 'Open': 'open',
-    #                 'High': 'high',
-    #                 'Low': 'low',
-    #                 'Close': 'close',
-    #                 'Volume': 'volume'
-    #             })
-
-    #             hist['adj_close'] = hist['close']  # already adjusted by yfinance
-
-    #             # Keep only relevant columns
-    #             hist = hist[['date', 'ticker', 'open', 'high', 'low', 'close', 'adj_close', 'volume']]
-    #             all_data.append(hist)
-
-    #         except Exception as e:
-    #             logger.error(f"     Failed to download {ticker}: {e}")
-    #             failed_tickers.append(ticker)
-    #             continue
-
-    #     if not all_data:
-    #         raise ValueError("No data was successfully downloaded")
-
-    #     # Combine and sort all tickers’ data
-    #     combined_data = pd.concat(all_data, ignore_index=True)
-    #     combined_data = combined_data.sort_values(['date', 'ticker']).reset_index(drop=True)
-
-    #     logger.info(f"Downloaded data: {combined_data.shape}")
-    #     if failed_tickers:
-    #         logger.warning(f"Failed tickers: {', '.join(failed_tickers)}")
-
-    #     return combined_data
 
 
     def _download_stock_data(self, tickers: List[str], start_date: str, end_date: str) -> pd.DataFrame:
@@ -472,73 +341,7 @@ class PortfolioDataset:
             logger.warning(f"Failed tickers: {', '.join(failed_tickers)}")
         
         return combined_data
-    
-    # def _sample_crypto(self, symbols: List[str], attempts: int = 3, days: int = 92, 
-    #                   interval: str = "15m", target_rows: int = 263520) -> pd.DataFrame:
-    #     """Sample crypto OHLCV data - migrated from data_preparation.py"""
-    #     for attempt in range(attempts):
-    #         logger.info(f"Crypto sampling attempt {attempt+1} ({interval})")
-    #         end = datetime.utcnow()
-    #         start_bound = datetime(2024, 4, 2)
-    #         max_start = end - timedelta(days=days)
-    #         if start_bound >= max_start:
-    #             start = start_bound
-    #         else:
-    #             start = start_bound + (max_start - start_bound) * random.random()
-    #         end = start + timedelta(days=days)
-
-    #         all_dfs, failed, illiquid = [], [], []
-    #         for sym in symbols:
-    #             df = self._fetch_klines(sym, interval, start, end)
-    #             expected_rows = days * (1440 // 15)  # 96 per day
-    #             if df is None or len(df) < expected_rows:
-    #                 failed.append(sym)
-    #                 continue
-    #             if df["volume"].sum() <= 0:
-    #                 illiquid.append(sym)
-    #                 continue
-    #             df["ticker"] = sym
-    #             all_dfs.append(df)
-            
-    #         if not failed and not illiquid:
-    #             full = pd.concat(all_dfs, ignore_index=True)
-    #             logger.info(f"✅ Crypto sampling success: {full.shape}")
-    #             return full.iloc[:target_rows]
-    #         else:
-    #             logger.info(f"Retrying due to failed/illiquid: {failed+illiquid}")
-        
-    #     raise RuntimeError(f"Failed after {attempts} attempts")
-    
-    # def _fetch_klines(self, symbol: str, interval: str, start: datetime, end: datetime) -> Optional[pd.DataFrame]:
-    #     """Fetch crypto klines from Binance - migrated from data_preparation.py"""
-    #     url = BASE_URL
-    #     params = {
-    #         "symbol": symbol,
-    #         "interval": interval,
-    #         "startTime": int(start.timestamp() * 1000),
-    #         "endTime": int(end.timestamp() * 1000),
-    #         "limit": 1000
-    #     }
-    #     all_data = []
-    #     while True:
-    #         resp = requests.get(url, params=params)
-    #         data = resp.json()
-    #         if not isinstance(data, list):
-    #             return None
-    #         all_data.extend(data)
-    #         if len(data) < 1000:
-    #             break
-    #         params["startTime"] = data[-1][6]
-    #     if not all_data:
-    #         return None
-    #     df = pd.DataFrame(all_data, columns=[
-    #         "openTime","open","high","low","close","volume",
-    #         "closeTime","qav","trades","tbbav","tbqav","ignore"
-    #     ])
-    #     df["date"] = pd.to_datetime(df["openTime"], unit="ms")
-    #     df = df[["date","open","high","low","close","volume"]]
-    #     df = df.astype({"open":float,"high":float,"low":float,"close":float,"volume":float})
-    #     return df
+  
     def _create_crypto_dataset(self) -> pd.DataFrame:
         """
         Create crypto dataset using chunked download.

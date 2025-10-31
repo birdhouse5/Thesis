@@ -6,8 +6,8 @@ from typing import List, Dict, Optional
 @dataclass
 class ExperimentConfig:
     seed: int
-    asset_class: str       # "sp500" | "crypto"
-    encoder: str           # "vae" | "none" | "hmm"
+    asset_class: str       
+    encoder: str           
     min_horizon: int = 150
     max_horizon: int = 200
     exp_name: Optional[str] = None
@@ -83,7 +83,6 @@ class TrainingConfig:
     eta: float
     ppo_minibatch_size: int
     inflation_rate: float   
-    #use_cpu_context: bool
     n_assets_limit: Optional[int] = None
     rf_rate: float = 0.02
     transaction_cost_rate: float = 0.000
@@ -94,8 +93,8 @@ class TrainingConfig:
     min_logstd: float = -3.0
     max_logstd: float = -0.3
     concentration_penalty: bool = False
-    concentration_target: float = 0.10  # Target Herfindahl index (1/N for equal weight)
-    concentration_lambda: float = 0.1   # Penalty strength
+    concentration_target: float = 0.10  
+    concentration_lambda: float = 0.1  
     long_only: bool = False
     
     
@@ -112,20 +111,20 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
     if exp.asset_class == "sp500":
         train_end, val_end = "2015-12-31", "2020-12-31"
         eta = 0.01
-    else:  # crypto
-        train_end, val_end = "2020-12-31", "2023-12-31" # Note: will be overridden by intelligent splitting
+    else:  
+        train_end, val_end = "2020-12-31", "2023-12-31" 
         eta = 0.1
 
     # encoder handling
     if exp.encoder == "vae":
         disable_vae = False
-        latent_dim = 32 # 64 optiuna result 2
+        latent_dim = 32 
     elif exp.encoder == "hmm":
         disable_vae = True
-        latent_dim = 4   # number of HMM states
-    else:  # none
+        latent_dim = 4   
+    else:  
         disable_vae = True
-        latent_dim = 0   # policy sees obs only
+        latent_dim = 0 
 
     default_name=f"{exp.asset_class}_{exp.encoder}_seed{exp.seed}"
 
@@ -137,20 +136,20 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         n_assets_limit=exp.n_assets,
         encoder=exp.encoder,
         disable_vae=disable_vae,
-        latent_dim=latent_dim, # optuna result1
-        hidden_dim=512, # optuna result1, # 768 optuna 2
-        vae_lr=0.00004409096982106036, #optuna result1 - best 0.0003569748519315124, #optuna 2             
-        policy_lr=0.00002329493575648219, #optuna result1 - best # 0.00010793575227642601, optuna 3 - bad # 0.00015584712043192588, optuna 2 # 
+        latent_dim=latent_dim,
+        hidden_dim=512, 
+        vae_lr=0.00004409096982106036,       
+        policy_lr=0.00002329493575648219,
         noise_factor=0.05, 
         random_policy=False,
-        vae_beta=0.0007435972826570025, # optuna result1 - best # 0.0709877778524465, optuna 2
-        vae_update_freq=1, # 5, updated to variBAD paper
+        vae_beta=0.0007435972826570025, 
+        vae_update_freq=1,
         seq_len=200,
         episodes_per_task=3,
         batch_size=8192,
         vae_batch_size=1024,
-        ppo_epochs=8, # TODO
-        entropy_coef=0.001, # 0.0005 #TODO # 0.0009083214087882104, # optuna result1 - best # 0.006439257494565313, # 0.047315891962627706, optuna 2 # 
+        ppo_epochs=8, 
+        entropy_coef=0.001, 
         joint_loss_lambda=1.0,
         max_episodes=9000, #TODO
         early_stopping_patience=10,
@@ -162,26 +161,26 @@ def experiment_to_training_config(exp: ExperimentConfig) -> TrainingConfig:
         num_assets=30,
         device="cuda",
         val_episodes=50,
-        test_episodes=100, #-> we do final test on these number of episodes
-        ppo_clip_ratio=0.19086925122925438, # optuna result1 - best # 0.13374380455551138, #0.1473333435286036, optuna 2 # 
-        value_loss_coef=1.0, #0.5, # optuna 2 0.9981350917703767, 
-        max_grad_norm=1.0, # let's try to fix  entropy TODO# 0.5, before
+        test_episodes=100,
+        ppo_clip_ratio=0.19086925122925438, 
+        value_loss_coef=1.0, 
+        max_grad_norm=1.0, 
         gae_lambda=0.95,
         discount_factor=0.99,
         min_horizon=exp.min_horizon,
         max_horizon=exp.max_horizon,
-        eta=0.1, # 0.026057381475720114 optuna result1 - best (now trying 0.1 - which arguably works better for our short horizon)
+        eta=0.1, 
         rf_rate=0.02,
         transaction_cost_rate=exp.transaction_cost_rate if exp.transaction_cost_rate is not None else 0.0,
         reward_type=exp.reward_type if hasattr(exp, 'reward_type') else "dsr",
-        reward_lookback=39, # optuna result1 - best
+        reward_lookback=39, 
         inflation_rate=exp.inflation_rate if exp.inflation_rate is not None else 0.0,
         ppo_minibatch_size = 128,
         vae_num_elbo_terms = 8,
-        min_logstd=-3.0,  # Conservative default (std ∈ [0.05, 0.74])
+        min_logstd=-3.0,  
         max_logstd=0.5,
         concentration_penalty=exp.concentration_penalty if exp.concentration_penalty is not None else False,
-        #use_cpu_context = False
+        
     )
 
     if hasattr(exp, '_hpo_path'):

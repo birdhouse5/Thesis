@@ -124,12 +124,7 @@ class ExperimentManager:
         start_time = time.time()
         
         try:
-        #with mlflow.start_run(run_name=exp_name):
-
-            #mlflow_integration.log_config()    
-            
             # Log system info
-            #mlflow_integration.log_system_info(initial_memory)
             csv_logger.log_config()
             csv_logger.log_system_info(initial_memory)
 

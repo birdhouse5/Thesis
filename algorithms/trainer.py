@@ -1,4 +1,3 @@
-# trainer.py - Optimized with fixed-length trajectory batching
 import gc
 from collections import deque
 from datetime import datetime
@@ -12,14 +11,12 @@ import torch
 import torch.nn.functional as F
 from torch.optim import Adam
 
-# Needed to clone environments for batched rollouts
 from environments.env import MetaEnv
 
 def log_memory(label):
     if torch.cuda.is_available():
         allocated = torch.cuda.memory_allocated() / 1024**3
         reserved = torch.cuda.memory_reserved() / 1024**3
-        #logger.info(f"[{label}] GPU: {allocated:.2f}GB alloc, {reserved:.2f}GB reserved")
 
 def diagnose_gpu_tensors():
     """Find all tensors on GPU"""
@@ -35,11 +32,6 @@ def diagnose_gpu_tensors():
     # Group by size
     tensors.sort(key=lambda x: x[2], reverse=True)
     total_mb = sum(t[2] for t in tensors)
-    
-    # logger.info(f"Found {len(tensors)} GPU tensors, total {total_mb:.2f}MB")
-    # logger.info("Top 10 largest:")
-    # for i, (typ, size, mb) in enumerate(tensors[:10]):
-    #     logger.info(f"  {i+1}. {typ} {size} = {mb:.2f}MB")
 
 
 class PerformanceDiagnostic:
@@ -78,10 +70,7 @@ class TimingContext:
 
 
 class PPOTrainer:
-    """
-    PPO Trainer for VariBAD Portfolio Optimization.
-    OPTIMIZED: Fixed-length trajectory batching for maximum speedup.
-    """
+    """PPO Trainer for VariBAD Portfolio Optimization."""
 
     def __init__(self, env, policy, vae, config):
         self.env = env
@@ -94,44 +83,26 @@ class PPOTrainer:
         self.device = torch.device(config.device)
 
         self.sequential_mode = False
-
-        # Vectorization knob
         self.num_envs = max(1, int(getattr(config, "num_envs", 1)))
-
-        # Check if we can use fixed-length optimization
         self.use_fixed_length = (config.min_horizon == config.max_horizon)
-
-        # Track VAE enablement
         self.vae_enabled = (vae is not None) and (not getattr(config, "disable_vae", False))
 
-        # Optimizer: instantiate for both models
         self.policy_optimizer = Adam(policy.parameters(), lr=config.policy_lr)
-        # Only create VAE optimizer if encoder has trainable parameters
         self.vae_optimizer = Adam(vae.parameters(), lr=config.vae_lr) if self.vae_enabled else None
 
         # Experience buffers
-        self.experience_buffer = ExperienceBuffer(config.batch_size)  # for PPO
-        self.vae_buffer = deque(maxlen=1000)  # TODO recent trajectories for VAE
+        self.experience_buffer = ExperienceBuffer(config.batch_size)
+        self.vae_buffer = deque(maxlen=1000)
 
-        # logger.info(f"=== Trainer Initialization ===")
-        # logger.info(f"  vae object: {vae is not None}")
-        # logger.info(f"  disable_vae flag: {getattr(config, 'disable_vae', False)}")
-        # logger.info(f"  vae_enabled: {self.vae_enabled}")
-        # logger.info(f"  vae_update_freq: {config.vae_update_freq}")
-        # logger.info(f"  vae_buffer maxlen: {self.vae_buffer}")
-
-        # Rolling stats (store Python floats to avoid CUDA logging issues)
         self.policy_losses = deque(maxlen=100)
         self.vae_losses = deque(maxlen=100)
         self.episode_rewards = deque(maxlen=100)
 
-        # Extra tracking (kept for potential analysis hooks)
         self.episode_details = []
         self.training_start_time = time.time()
         self.episode_start_time = None
         self.portfolio_metrics_history = []
 
-        # BAMDP tracking
         self.current_task_id = None
         self.persistent_context = None
         self.task_count = 0
@@ -139,9 +110,7 @@ class PPOTrainer:
 
 
     def train_on_task(self) -> Dict[str, float]:
-        """Train over multiple episodes on same task (BAMDP) - MEMORY OPTIMIZED"""
-        
-        #log_memory("Task start")
+        """Train over multiple episodes on same task (BAMDP)"""
         
         # Sample task once
         task = self.env.sample_task()
@@ -149,7 +118,6 @@ class PPOTrainer:
         self.env.set_task(task)
         self.task_count += 1
         
-        # Initialize context for this task (STORE ONLY INDICES, NOT TENSORS)
         context_start_step = 0
         context_obs_list = []  # Will store on CPU
         context_act_list = []
@@ -174,47 +142,32 @@ class PPOTrainer:
         
         # Multiple episodes on same task
         for episode_idx in range(self.config.episodes_per_task):
-            #log_memory(f"Episode {episode_idx} start")
-            
-            # Collect trajectory with MINIMAL context
             trajectory = self.collect_trajectory_with_context_v2(
                 context_obs_list, context_act_list, context_rew_list
             )
-            #log_memory(f"Episode {episode_idx} collected")
             
             episode_reward = float(trajectory["rewards"].sum().item())
             episode_rewards.append(episode_reward)
 
-            self.vae_buffer.append(trajectory)  # Store for VAE training
-            #logger.debug(f"  Added trajectory to VAE buffer (size: {len(self.vae_buffer)})")
-
-            # NEW: Track where this episode ends in the accumulated trajectory
+            self.vae_buffer.append(trajectory)
+            
             traj_length = len(trajectory["observations"])
             current_total = sum(len(t) for t in all_transitions["observations"])
             all_transitions["episode_boundaries"].append(current_total + traj_length - 1)
             
-            # Store priors (one per trajectory/episode)
             all_transitions["prior_mu"].append(trajectory["prior_mu"])
             all_transitions["prior_logvar"].append(trajectory["prior_logvar"])
             
-            # Accumulate transitions (keep on GPU for now)
             for key in all_transitions.keys():
                 if key in trajectory and key not in ["prior_mu", "prior_logvar"]:
                     all_transitions[key].append(trajectory[key])
             
-            # Update context (move to CPU immediately)
             T = len(trajectory["observations"])
-            #if self.config.use_cpu_context:
             for t in range(T):
                 context_obs_list.append(trajectory["observations"][t].detach().cpu())
                 context_act_list.append(trajectory["actions"][t].detach().cpu())
                 context_rew_list.append(trajectory["rewards"][t].detach().cpu())
-            # else:
-            #     context_obs_list.append(trajectory["observations"][t].detach())
-            #     context_act_list.append(trajectory["actions"][t].detach())
-            #     context_rew_list.append(trajectory["rewards"][t].detach())
             
-            # CRITICAL: Delete trajectory immediately after copying
             del trajectory
             torch.cuda.empty_cache()
         
@@ -227,26 +180,14 @@ class PPOTrainer:
         for boundary_idx in episode_boundaries[:-1]:  # All except last episode boundary
             all_transitions["dones"][boundary_idx] = False
         
-        # Single update on entire BAMDP trajectory
-        #log_memory("Before update")
         total_loss, update_info = self.update_ppo_and_vae(all_transitions)
-        #log_memory("After update")
 
         self.episode_count += self.config.episodes_per_task
         
-        # Build results BEFORE cleanup
+        # Build results
         final_capital = self.env.current_capital
         cumulative_return = final_capital / self.env.initial_capital - 1.0
         total_steps = int(all_transitions["rewards"].shape[0])
-        
-        # logger.info(f"=== train_on_task DEBUG (Task {self.task_count}) ===")
-        # logger.info(f"  Episodes per task: {self.config.episodes_per_task}")
-        # logger.info(f"  Total steps in task: {total_steps}")
-        # logger.info(f"  Episode rewards: {episode_rewards}")
-        # logger.info(f"  update_info keys: {list(update_info.keys())}")
-        # logger.info(f"  update_info values: {update_info}")
-        # logger.info(f"  Final capital: {final_capital}")
-        # logger.info(f"  Cumulative return: {cumulative_return}")
 
         results = {
             "policy_loss": update_info.get("policy_loss", 0.0),
@@ -264,13 +205,11 @@ class PPOTrainer:
             **update_info
         }
         
-        # AGGRESSIVE CLEANUP
         del all_transitions
         del context_obs_list
-        del context_act_list  
+        del context_act_list
         del context_rew_list
         
-        # Clear optimizers state periodically (every 10 tasks)
         if self.task_count % 10 == 0:
             self.policy_optimizer.zero_grad(set_to_none=True)
             for group in self.policy_optimizer.param_groups:
@@ -302,14 +241,10 @@ class PPOTrainer:
             torch.cuda.empty_cache()
         gc.collect()
         
-        #log_memory("After aggressive cleanup")
         return results
 
     def collect_trajectory_with_context_v2(self, context_obs, context_act, context_rew):
-        """
-        Collect trajectory with MINIMAL context usage.
-        Context lists are CPU-only and only used for VAE encoding.
-        """
+        """Collect trajectory with context for VAE encoding."""
         obs0 = self.env.reset()
         obs0 = obs0.to(self.device).to(torch.float32)
         obs_tensor = obs0.unsqueeze(0)
@@ -317,13 +252,10 @@ class PPOTrainer:
         max_horizon = int(self.config.max_horizon)
         obs_shape = tuple(obs0.shape)
         
-        # Compute prior from existing context
         if len(context_obs) == 0 or getattr(self.config, "disable_vae", False) or self.vae is None:
-            # First episode of task or no VAE - use N(0,I)
             prior_mu = torch.zeros(1, self.config.latent_dim, device=self.device)
             prior_logvar = torch.zeros(1, self.config.latent_dim, device=self.device)
         else:
-            # Encode existing context to get prior
             with torch.no_grad():
                 obs_seq = torch.stack(context_obs).to(self.device).unsqueeze(0)
                 act_seq = torch.stack(context_act).to(self.device).unsqueeze(0)
@@ -353,20 +285,17 @@ class PPOTrainer:
         done, step = False, 0
         
         while not done and step < max_horizon:
-            # Get latent with EXPLICIT cleanup
             latent = self._get_latent_from_context_v2(obs_tensor, context_obs, context_act, context_rew)
             
-            # Sample action
             with torch.no_grad():
                 weights, value_t, log_prob_t, raw_actions_t = self.policy.act(obs_tensor, latent, deterministic=False)
             
-            # Environment step
             next_obs, reward_scalar, done_flag, info = self.env.step(weights.squeeze(0))
-            normalized_weights = info['weights'].detach()  # Get actual portfolio weights used
+            normalized_weights = info['weights'].detach()
 
             # Store step data
             observations[step] = obs_tensor.squeeze(0)
-            actions[step] = normalized_weights.to(self.device)  # normalized (for consistency)
+            actions[step] = normalized_weights.to(self.device)
             raw_actions[step] = raw_actions_t.squeeze(0).to(self.device)
             values[step] = value_t.squeeze(0)
             log_probs[step] = log_prob_t.squeeze(0)
@@ -374,36 +303,11 @@ class PPOTrainer:
             rewards[step] = float(reward_scalar)
             dones[step] = bool(done_flag)
 
-            # # === ADD LOGGING EVERY 10 STEPS ===
-            # if step % 100 == 0:
-            #     w = normalized_weights.squeeze().cpu().numpy()
-            #     logger.info(f"\n{'='*80}")
-            #     logger.info(f"[TRAINING - Task {self.task_count}, Step {step}] Full Weight Array:")
-            #     logger.info(f"{'='*80}")
-                
-            #     # Print as formatted array with indices
-            #     for i in range(0, len(w), 5):  # 5 weights per row
-            #         row_weights = w[i:i+5]
-            #         indices = f"[{i:2d}-{min(i+4, len(w)-1):2d}]"
-            #         weights_str = "  ".join([f"{val:+.4f}" for val in row_weights])
-            #         logger.info(f"  {indices}: {weights_str}")
-                
-            #     # Summary stats
-            #     logger.info(f"{'-'*80}")
-            #     logger.info(f"  Summary: Min={w.min():.4f}, Max={w.max():.4f}, "
-            #             f"Mean={w.mean():.4f}, Std={w.std():.4f}")
-            #     logger.info(f"  Long={w[w > 0].sum():.4f}, Short={abs(w[w < 0]).sum():.4f}, "
-            #             f"Active (|w|>0.01)={np.sum(np.abs(w) > 0.01)}")
-            #     logger.info(f"{'='*80}\n")
-            # # === END LOGGING ===
-            
-            # Advance
             done = bool(done_flag)
             if not done:
                 obs_tensor = next_obs.to(self.device, dtype=torch.float32).unsqueeze(0)
             step += 1
             
-            # CCleanup
             del latent, weights, value_t, log_prob_t, raw_actions_t
         
         T = step if step > 0 else 1
@@ -421,7 +325,7 @@ class PPOTrainer:
         }
 
     def _get_latent_from_context_v2(self, obs_tensor, context_obs, context_act, context_rew):
-        """Get latent with EXPLICIT tensor lifecycle management."""
+        """Get latent encoding from context."""
         if self.vae is None:
             return torch.zeros(1, self.config.latent_dim, device=self.device)
         
@@ -435,14 +339,11 @@ class PPOTrainer:
         try:
             with torch.no_grad():
                 if self.config.encoder == "hmm":
-                    # Use the pre-trained HMM encoder as a frozen feature extractor
-                    regime_probs = self.vae.encode(obs_seq, act_seq, rew_seq)  # (1, 4)
+                    regime_probs = self.vae.encode(obs_seq, act_seq, rew_seq)
                     latent = regime_probs.detach()
                 elif getattr(self.config, "disable_vae", False):
-                    # Encoder is disabled
                     latent = torch.zeros(1, self.config.latent_dim, device=self.device)
                 else:
-                    # VAE path
                     mu, logvar, _ = self.vae.encode(obs_seq, act_seq, rew_seq)
                     latent = self.vae.reparameterize(mu, logvar).clone()
             
@@ -452,16 +353,12 @@ class PPOTrainer:
             logger.warning(f"VAE encoding failed: {e}, using zero latent")
             return torch.zeros(1, self.config.latent_dim, device=self.device)
         finally:
-            # EXPLICIT cleanup of temporary tensors
             del obs_seq, act_seq, rew_seq
             if 'mu' in locals():
                 del mu, logvar
 
     def collect_trajectory_with_context(self, persistent_context):
-        """
-        Collect trajectory with persistent context from previous episodes.
-        Context stored on CPU to prevent GPU memory accumulation.
-        """
+        """Collect trajectory with persistent context from previous episodes."""
         # Reset environment
         obs0 = self.env.reset()
         obs0 = obs0.to(self.device).to(torch.float32)
@@ -482,14 +379,11 @@ class PPOTrainer:
         done, step = False, 0
         
         while not done and step < max_horizon:
-            # Get latent using persistent context
             latent = self._get_latent_with_persistent_context(obs_tensor, persistent_context)
             
-            # Sample action
             with torch.no_grad():
                 actions_raw, value_t, log_prob_t = self.policy.act(obs_tensor, latent, deterministic=False)
             
-            # Environment step
             next_obs, reward_scalar, done_flag, info = self.env.step(actions_raw.squeeze(0))
             
             # Store step data
@@ -501,12 +395,10 @@ class PPOTrainer:
             rewards[step] = float(reward_scalar)
             dones[step] = bool(done_flag)
             
-            # Update persistent context (CPU storage)
             persistent_context["observations"].append(obs_tensor.squeeze(0).detach().cpu())
             persistent_context["actions"].append(actions_raw.squeeze(0).detach().cpu())
             persistent_context["rewards"].append(torch.tensor(reward_scalar, dtype=torch.float32))
             
-            # Advance
             done = bool(done_flag)
             if not done:
                 obs_tensor = next_obs.to(self.device, dtype=torch.float32).unsqueeze(0)
@@ -526,18 +418,15 @@ class PPOTrainer:
 
 
     def _get_latent_with_persistent_context(self, obs_tensor, persistent_context):
-        """Get latent encoding using persistent context (moves from CPU to GPU)."""
+        """Get latent encoding using persistent context."""
         if getattr(self.config, "disable_vae", False) or self.vae is None:
             return torch.zeros(1, self.config.latent_dim, device=self.device)
         
         if len(persistent_context["observations"]) == 0:
             return torch.zeros(1, self.config.latent_dim, device=self.device)
         
-        # Limit context window
         max_context_len = 200
         start_idx = max(0, len(persistent_context["observations"]) - max_context_len)
-        
-        # Move context from CPU to GPU for encoding
         obs_seq = torch.stack(persistent_context["observations"][start_idx:]).to(self.device).unsqueeze(0)
         act_seq = torch.stack(persistent_context["actions"][start_idx:]).to(self.device).unsqueeze(0)
         rew_seq = torch.stack(persistent_context["rewards"][start_idx:]).to(self.device).unsqueeze(0).unsqueeze(-1)
@@ -550,32 +439,21 @@ class PPOTrainer:
             logger.warning(f"VAE encoding failed: {e}, using zero latent")
             return torch.zeros(1, self.config.latent_dim, device=self.device)
 
-    # ---------------------------------------------------------------------
-    # Public training entry point
-    # ---------------------------------------------------------------------
-
     def train_episode(self) -> Dict[str, float]:
         """
         Train for one episode and return metrics.
         """
         diag = PerformanceDiagnostic()
 
-        # === Collect trajectory ===
         with diag.time_section("collect_single_trajectory"):
             tr = self.collect_trajectory()
             self.vae_buffer.append(tr)
-            logger.debug(f"  Added trajectory to VAE buffer (size now: {len(self.vae_buffer)})")
             self.experience_buffer.add_trajectory(tr)
 
-        # Aggregate reward for episode
         episode_reward_sum = float(tr["rewards"].sum().item()) if torch.is_tensor(tr["rewards"]) else float(sum(tr["rewards"]))
 
-        # === PPO update ===
         with diag.time_section("ppo_update"):
-            # update_ppo_and_vae performs its own optimization/update and returns metrics
             _, update_info = self.update_ppo_and_vae(tr)
-
-        # === Extract logging data ===
         detailed_logging = getattr(self.env, "eval_mode", False) and ("step_info_list" in tr)
         episode_data = None
         if detailed_logging:
@@ -610,11 +488,9 @@ class PPOTrainer:
                 episode_data["step_net_exposures"].append(step_info.get("net_exposure", 0.0))
                 episode_data["step_gross_exposures"].append(step_info.get("gross_exposure", 0.0))
                 episode_data["step_rel_excess_returns"].append(step_info.get("relative_excess_log_return", 0.0))
-                episode_data["step_dsr_alpha"].append(step_info.get("dsr_alpha", 0.0))
-                episode_data["step_dsr_beta"].append(step_info.get("dsr_beta", 0.0))
+                    episode_data["step_dsr_alpha"].append(step_info.get("dsr_alpha", 0.0))
+                    episode_data["step_dsr_beta"].append(step_info.get("dsr_beta", 0.0))
 
-        # === Final episode-level values ===
-        # Aggregates available regardless of detailed logging
         final_capital = float(getattr(self.env, "current_capital", 0.0))
         cumulative_return = final_capital / self.env.initial_capital - 1.0 if final_capital else 0.0
         final_weights_tensor = getattr(self.env, "prev_weights", None)
@@ -629,7 +505,6 @@ class PPOTrainer:
             net_exposure = 0.0
             gross_exposure = 0.0
 
-        # === Loss tracking ===
         policy_loss = update_info.get("policy_loss", 0.0)
         vae_loss = update_info.get("vae_loss", 0.0)
         value_loss = update_info.get("value_loss", 0.0)
@@ -643,61 +518,43 @@ class PPOTrainer:
 
         self.episode_count += 1
 
-        # === Build results ===
-        # Optional: include final_weights for logger consumers
         final_weights = final_weights_tensor.detach().cpu().tolist() if torch.is_tensor(final_weights_tensor) else None
 
         results = {
             "policy_loss": policy_loss,
             "vae_loss": vae_loss,
-            "value_loss": value_loss,     
-            "entropy": entropy,        
+            "value_loss": value_loss,
+            "entropy": entropy,
             "total_steps": int(self.total_steps),
-
-            # Portfolio metrics
             "episode_final_capital": final_capital,
             "episode_total_return": cumulative_return,
-            # Aggregates
             "episode_sum_reward": episode_reward_sum,
             "episode_long_exposure": long_exposure,
             "episode_short_exposure": short_exposure,
             "episode_net_exposure": net_exposure,
             "episode_gross_exposure": gross_exposure,
             "final_weights": final_weights,
-
-            # Rolling stats
             "recent_avg_episode_reward": float(np.mean(list(self.episode_rewards))) if self.episode_rewards else 0.0,
             "recent_std_episode_reward": float(np.std(list(self.episode_rewards))) if len(self.episode_rewards) > 1 else 0.0,
             "recent_avg_policy_loss": float(np.mean(list(self.policy_losses))) if self.policy_losses else 0.0,
             "recent_avg_vae_loss": float(np.mean(list(self.vae_losses))) if self.vae_losses else 0.0,
-
-            # VAE breakdown
             **vae_loss_components,
-
-            # Misc
             "episode_count": int(self.episode_count),
             "steps_per_episode": (int(tr["rewards"].shape[0]) if isinstance(tr["rewards"], torch.Tensor) else len(tr["rewards"])),
             "num_episodes_in_batch": 1,
-            # Include detailed step data only in eval mode
             "step_data": episode_data if detailed_logging else None,
         }
 
         return results
 
 
-    # ---------------------------------------------------------------------
-    # Trajectory collection (single)
-    # ---------------------------------------------------------------------
     def collect_trajectory(self):
-        # Reset and prepare shapes
-        obs0 = self.env.reset()  # tensor [N, F] on env.device
+        obs0 = self.env.reset()
         obs0 = obs0.to(self.device).to(torch.float32)
-        obs_tensor = obs0.unsqueeze(0)  # [1, N, F]
+        obs_tensor = obs0.unsqueeze(0)
 
         max_horizon = int(self.config.max_horizon)
         obs_shape = tuple(obs0.shape)
-
-        # Preallocate tensors
         observations = torch.zeros((max_horizon,) + obs_shape, dtype=torch.float32, device=self.device)
         actions      = torch.zeros((max_horizon, self.config.num_assets), dtype=torch.float32, device=self.device)
         raw_actions  = torch.zeros((max_horizon, self.config.num_assets), dtype=torch.float32, device=self.device)
@@ -711,17 +568,12 @@ class PPOTrainer:
         done, step = False, 0
 
         while not done and step < max_horizon:
-            # === Latent context ===
             latent = self._get_latent_for_step(obs_tensor, context)
 
-            # === Sample action ===
             with torch.no_grad():
                 actions_raw, value_t, log_prob_t, raw_actions_t = self.policy.act(obs_tensor, latent, deterministic=False)
 
-            # === Environment step with tensor action ===
             next_obs, reward_scalar, done_flag, info = self.env.step(actions_raw.squeeze(0))
-
-            # === Write step data ===
             observations[step] = obs_tensor.squeeze(0)
             actions[step]      = actions_raw.squeeze(0).to(self.device)
             raw_actions[step]  = raw_actions_t.squeeze(0).to(self.device)
@@ -731,12 +583,10 @@ class PPOTrainer:
             rewards[step]      = float(reward_scalar)
             dones[step]        = bool(done_flag)
 
-            # Update context for VAE (keep as tensors)
             context["observations"].append(obs_tensor.squeeze(0).detach())
             context["actions"].append(actions_raw.squeeze(0).detach())
             context["rewards"].append(torch.tensor(reward_scalar, dtype=torch.float32, device=self.device))
 
-            # Advance
             done = bool(done_flag)
             if not done:
                 obs_tensor = next_obs.to(self.device, dtype=torch.float32).unsqueeze(0)
@@ -757,11 +607,7 @@ class PPOTrainer:
 
 
 
-    # ---------------------------------------------------------------------
-    # Environment cloning
-    # ---------------------------------------------------------------------
     def _clone_env(self) -> MetaEnv:
-        # Rebuild MetaEnv with same dataset + parameters
         src = self.env
         return MetaEnv(
             dataset={"features": src.dataset["features"], "raw_prices": src.dataset["raw_prices"]},
@@ -773,7 +619,7 @@ class PPOTrainer:
 
 
     def _batch_vae_encode(self, ctx_obs_tensor, ctx_act_tensor, ctx_rew_tensor, ctx_lengths, done):
-        """VAE encoding for variable-length sequences"""
+        """VAE encoding for variable-length sequences."""
         B = ctx_obs_tensor.shape[0]
         active_mask = (ctx_lengths > 0) & (~torch.from_numpy(done).to(ctx_lengths.device))
         
@@ -820,30 +666,12 @@ class PPOTrainer:
             "dones": [True]
         }
         
-        # === NEW: Add empty step info list ===
         traj["step_info_list"] = [{}]
-        # Single empty step info
         
         return traj
-
-    # ---------------------------------------------------------------------
-    # PPO / VAE updates (unchanged)
-    # ---------------------------------------------------------------------
     
     def compute_gae(self, rewards, values, dones, last_value=0.0):
-        """
-        Generalized Advantage Estimation (Schulman et al., 2016).
-        Computes normalized advantages and returns.
-
-        Args:
-            rewards: tensor (T,)
-            values: tensor (T,)
-            dones: tensor (T,) of 0/1 or bool
-            last_value: bootstrap value for final step (default 0)
-
-        Returns:
-            advantages, returns (both tensors shape (T,))
-        """
+        """Generalized Advantage Estimation."""
         gamma = self.config.discount_factor
         lam = self.config.gae_lambda
         T = len(rewards)
@@ -870,17 +698,15 @@ class PPOTrainer:
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         adv_std = advantages.std()
-        if adv_std < 1e-4:  # Changed from 1e-8 to 1e-4
+        if adv_std < 1e-4:
             logger.warning(f"Advantage std too small ({adv_std:.2e}), using zeros")
             advantages = torch.zeros_like(advantages)
         else:
-            # Normalize with clipping
             advantages = (advantages - advantages.mean()) / (adv_std + 1e-6)
-            advantages = torch.clamp(advantages, -10.0, 10.0)  # Clamp after normalization
+            advantages = torch.clamp(advantages, -10.0, 10.0)
         
 
-        # 🔥 Scale advantage magnitude to strengthen PPO signal TODO
-        adv_scale = 1.0 # 5.0 too strong??
+        adv_scale = 1.0
         advantages = advantages * adv_scale
 
 
@@ -889,9 +715,8 @@ class PPOTrainer:
 
 
     def update_ppo_and_vae(self, traj):
-        """PPO with mini-batching + VAE update - MEMORY OPTIMIZED"""
+        """PPO with mini-batching + VAE update."""
         
-        # Prepare data with DETACH
         obs = traj["observations"].detach()
         actions = traj["actions"].detach()
         raw_actions = traj["raw_actions"].detach()
@@ -906,21 +731,11 @@ class PPOTrainer:
             last_value = last_value.detach().to(self.device)
         
 
-        # logger.info(f"=== PRE-GAE DIAGNOSTICS ===")
-        # logger.info(f"Rewards: mean={rewards.mean():.6f}, std={rewards.std():.6f}, min={rewards.min():.6f}, max={rewards.max():.6f}")
-        # logger.info(f"Values: mean={values.mean():.6f}, std={values.std():.6f}")
-        
         # Compute advantages once
         advantages, returns = self.compute_gae(rewards, values, dones, last_value)
 
-        # logger.info(f"=== POST-GAE DIAGNOSTICS ===")
-        # logger.info(f"Raw advantages (pre-detach): mean={advantages.mean():.6f}, std={advantages.std():.6f}, min={advantages.min():.6f}, max={advantages.max():.6f}")
-
         advantages = advantages.detach()
         returns = returns.detach()
-
-        # After computing advantages
-        #logger.info(f"Diagnostics - Episode {self.episode_count}:")
 
         # Safely compute logstd statistics depending on policy type
         with torch.no_grad():
@@ -931,11 +746,6 @@ class PPOTrainer:
                 sample_obs = torch.randn(8, *self.policy.obs_shape, device=self.device)
                 sample_latent = torch.randn(8, self.policy.latent_dim if self.policy.latent_dim > 0 else 1, device=self.device)
                 _, logstd, _ = self.policy.forward(sample_obs, sample_latent)
-
-        # logger.info(f"  actor_logstd range: [{logstd.min():.2f}, {logstd.max():.2f}]")
-        # logger.info(f"  std range: [{logstd.exp().min():.4f}, {logstd.exp().max():.4f}]")
-        # logger.info(f"  advantages: mean={advantages.mean():.4f}, std={advantages.std():.4f}, max={advantages.abs().max():.4f}")
-        # logger.info(f"  rewards: mean={rewards.mean():.4f}, std={rewards.std():.4f}")
 
 
         first_epoch_metrics = {
@@ -948,11 +758,9 @@ class PPOTrainer:
         # Mini-batch setup
         batch_size = min(self.config.ppo_minibatch_size, len(obs))
         num_samples = len(obs)
-        #logger.info(f"PPO update: trajectory size={len(obs)}, mini-batch={batch_size}")
         
         final_ratio_mean = 1.0
         
-        # PPO UPDATE with explicit cleanup
         for epoch in range(self.config.ppo_epochs):
             indices = torch.randperm(num_samples, device=self.device)
             
@@ -969,20 +777,13 @@ class PPOTrainer:
                 batch_advantages = advantages[batch_indices]
                 batch_returns = returns[batch_indices]
                 
-                # Forward pass
                 new_values, new_logp, entropy = self.policy.evaluate_actions(
                     batch_obs, batch_latents, batch_raw_actions
                 )
                 new_values = new_values.squeeze(-1)
                 new_logp = new_logp.squeeze(-1)
                 entropy = entropy.squeeze(-1)
-
-                # min_entropy_threshold = 1.0  # Minimum acceptable entropy per action dim
-                # if entropy.mean() < min_entropy_threshold:
-                #     logger.warning(f"Entropy too low ({entropy.mean():.3f}), skipping update")
-                #     continue
                 
-                # PPO losses
                 ratio = torch.exp(new_logp - batch_old_logp)
                 ratio = torch.clamp(ratio, 0.1, 10.0)
                 eps = self.config.ppo_clip_ratio
@@ -990,30 +791,21 @@ class PPOTrainer:
                 surr2 = torch.clamp(ratio, 1.0 - eps, 1.0 + eps) * batch_advantages
                 policy_loss = -torch.min(surr1, surr2).mean()
                 value_loss = F.mse_loss(new_values, batch_returns)
-                entropy_loss = -entropy.mean() # not normalized
-                #entropy_loss = -entropy.mean() / (abs(policy_loss.item()) + 1e-6) # normalized
+                entropy_loss = -entropy.mean()
                 
-                # Entropy coefficient annealing
-                progress = min(1.0, self.episode_count / float(self.config.max_episodes))
-                #current_entropy_coef = self.config.entropy_coef * (1.0 - 0.1 * progress) # lowered entropy coefficient decay from 0.9 to 0.5. Now down to 0.2
-                current_entropy_coef = self.config.entropy_coef # annealing removed
-
+                current_entropy_coef = self.config.entropy_coef
 
                 ppo_loss = (policy_loss +
                 self.config.value_loss_coef * value_loss +
                 current_entropy_coef * entropy_loss)
-
-                # ppo_loss = (policy_loss + 
-                #         self.config.value_loss_coef * value_loss + 
-                #         self.config.entropy_coef * entropy_loss)
                 
                 # Capture first batch metrics
-                if epoch == 0 and start_idx == 0:
-                    first_epoch_metrics.update({
+                    if epoch == 0 and start_idx == 0:
+                        first_epoch_metrics.update({
                         "policy_loss": float(policy_loss.item()),
                         "value_loss": float(value_loss.item()),
                         "entropy": float(entropy.mean().item()),
-                        "advantages_mean": float(advantages.mean().item()), #TODO
+                        "advantages_mean": float(advantages.mean().item()),
                         "advantages_std": float(advantages.std().item()),
                         "advantages_min": float(advantages.min().item()),
                         "advantages_max": float(advantages.max().item()),
@@ -1025,66 +817,27 @@ class PPOTrainer:
                 self.policy_optimizer.zero_grad()
                 ppo_loss.backward()
 
-                # if hasattr(self.policy, "actor_logstd"):
-                #     grad = self.policy.actor_logstd.grad
-                #     if grad is None:
-                #         logger.info(f"----------------------------actor_logstd.grad = None (no gradient)----------------------------")
-                #     else:
-                #         logger.info(f"----------------------------actor_logstd grad norm: {grad.norm().item()} ----------------------------")
-
-                # Log gradient norm before clipping
                 policy_grad_norm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), float('inf'))
-                # if policy_grad_norm > self.config.max_grad_norm * 2:  # Only log if concerning
-                #     logger.warning(f"Policy grad norm: {policy_grad_norm:.2f} (clipping at {self.config.max_grad_norm})")
 
                 torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm)
                 self.policy_optimizer.step()
-                
-                # Log actor_logstd gradients (supports both old and new architectures)
-                if hasattr(self.policy, "actor_logstd"):  # old global version
-                    logstd_grad = self.policy.actor_logstd.grad
-                    # if logstd_grad is not None:
-                    #     logger.info(f"actor_logstd grad: {logstd_grad.mean():.4f} ± {logstd_grad.std():.4f}")
-                elif hasattr(self.policy, "actor_logstd_head"):  # new per-state version
-                    grads = []
-                    for p in self.policy.actor_logstd_head.parameters():
-                        if p.grad is not None:
-                            grads.append(p.grad.view(-1))
-                    if grads:
-                        all_grads = torch.cat(grads)
-                #         logger.info(f"actor_logstd_head grad: {all_grads.mean():.4f} ± {all_grads.std():.4f}")
 
-                    
-                # # Log loss components
-                # logger.info(f"Policy loss: {policy_loss.item():.4f}")
-                # logger.info(f"Entropy loss: {entropy_loss.item():.4f} (coef={current_entropy_coef})")
-                # logger.info(f"Value loss: {value_loss.item():.4f}")
-
-                # CRITICAL: Explicit cleanup of batch tensors
                 del new_values, new_logp, entropy, surr1, surr2, ratio
                 del policy_loss, value_loss, entropy_loss, ppo_loss
                 del batch_obs, batch_actions, batch_latents, batch_old_logp
                 del batch_advantages, batch_returns
             
-            # Cleanup after epoch
             del indices
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         
-        if self.vae_enabled:
-            logger.debug(f"VAE enabled, checking update condition: episode_count={self.episode_count}, vae_update_freq={self.config.vae_update_freq}, modulo={self.episode_count % self.config.vae_update_freq}")
-
-
         # VAE UPDATE with aggressive cleanup
         vae_loss_val = 0.0
         if self.vae_enabled and (self.episode_count % self.config.vae_update_freq == 0):
-            #logger.info(f"=== VAE Update Triggered (Episode {self.episode_count}) ===")
             min_buffer_size = 8
-            vae_batch_size = min(16, len(self.vae_buffer))  # Reduced from 32
+            vae_batch_size = min(16, len(self.vae_buffer))
             
             if len(self.vae_buffer) >= min_buffer_size:
-                #logger.info(f"=== VAE Update (Episode {self.episode_count}) ===")
-                #logger.info(f"  Buffer size: {len(self.vae_buffer)}, Batch size: {vae_batch_size}")
                 try:
                     indices = np.random.choice(len(self.vae_buffer), vae_batch_size, replace=False)
                     
@@ -1125,13 +878,11 @@ class PPOTrainer:
                     obs_batch = torch.stack(batch_obs)
                     act_batch = torch.stack(batch_act)
                     rew_batch = torch.stack(batch_rew).unsqueeze(-1)
-                    prior_mu_batch = torch.stack(batch_prior_mu)  # [batch, latent_dim]
-                    prior_logvar_batch = torch.stack(batch_prior_logvar)  # [batch, latent_dim]
+                    prior_mu_batch = torch.stack(batch_prior_mu)
+                    prior_logvar_batch = torch.stack(batch_prior_logvar)
                     
-                    # Delete intermediate lists
                     del batch_obs, batch_act, batch_rew, batch_prior_mu, batch_prior_logvar
                     
-                    # Train VAE with recursive priors
                     vae_loss, vae_info = self.vae.compute_loss(
                         obs_batch, act_batch, rew_batch, 
                         beta=self.config.vae_beta,
@@ -1140,20 +891,13 @@ class PPOTrainer:
                         prior_logvar=prior_logvar_batch
                     )
                     
-                    # VAE update
-                    
                     self.vae_optimizer.zero_grad()
                     vae_loss.backward()
 
-                    # Log gradient norm before clipping
                     vae_grad_norm = torch.nn.utils.clip_grad_norm_(self.vae.parameters(), float('inf'))
-                    # if vae_grad_norm > self.config.max_grad_norm * 2:  # Only log if concerning
-                    #     logger.warning(f"VAE grad norm: {vae_grad_norm:.2f} (clipping at {self.config.max_grad_norm})")
 
                     torch.nn.utils.clip_grad_norm_(self.vae.parameters(), self.config.max_grad_norm)
                     self.vae_optimizer.step()
-
-                    #logger.info(f"  ✓ VAE weights updated") 
 
                     vae_loss_val = float(vae_loss.item())
                     first_epoch_metrics.update({f"vae_{k}": v for k, v in vae_info.items()})
@@ -1195,15 +939,7 @@ class PPOTrainer:
         advantages = torch.zeros_like(rewards)
         returns = torch.zeros_like(rewards)
 
-        with torch.no_grad():
-            sample_size = min(128, len(obs))
-            _, _, sample_entropy = self.policy.evaluate_actions(
-                obs[:sample_size], 
-                latents[:sample_size], 
-                actions[:sample_size]
-            )
-            current_entropy = sample_entropy.mean().item()
-            #logger.info(f"📊 Current policy entropy: {current_entropy:.3f}")
+        pass
 
         gae = 0.0
         next_value = 0.0
@@ -1277,37 +1013,10 @@ class PPOTrainer:
             logger.warning(f"Latent encoding failed: {e}, using zero latent")
             return torch.zeros(1, self.config.latent_dim, device=self.device)
 
-    # def _get_latent_for_step(self, obs_tensor, trajectory_context):
-    #     """Get latent encoding for current step, supporting both episodic and sequential modes."""
-    #     if getattr(self.config, "disable_vae", False):
-    #         return torch.zeros(1, self.config.latent_dim, device=self.device)
-        
-    #     # Choose context source based on mode
-    #     if self.sequential_mode and len(self.rolling_context) > 0:
-    #         # Sequential mode: use rolling context
-    #         context_list = list(self.rolling_context)
-    #         obs_seq = torch.stack([ctx['observations'] for ctx in context_list]).unsqueeze(0)
-    #         act_seq = torch.stack([ctx['actions'] for ctx in context_list]).unsqueeze(0)
-    #         rew_seq = torch.stack([ctx['rewards'] for ctx in context_list]).unsqueeze(0).unsqueeze(-1)
-    #     elif len(trajectory_context["observations"]) == 0:
-    #         # No context available
-    #         return torch.zeros(1, self.config.latent_dim, device=self.device)
-    #     else:
-    #         # Episodic mode: use trajectory context
-    #         obs_seq = torch.stack(trajectory_context["observations"]).unsqueeze(0)
-    #         act_seq = torch.stack(trajectory_context["actions"]).unsqueeze(0)
-    #         rew_seq = torch.stack(trajectory_context["rewards"]).unsqueeze(0).unsqueeze(-1)
-        
-    #     try:
-    #         mu, logvar, _ = self.vae.encode(obs_seq, act_seq, rew_seq)
-    #         return self.vae.reparameterize(mu, logvar)
-    #     except Exception as e:
-    #         logger.warning(f"VAE encoding failed: {e}, using zero latent")
-    #         return torch.zeros(1, self.config.latent_dim, device=self.device)
-
+ 
 
 # ---------------------------------------------------------------------
-# Experience buffer (unchanged)
+# Experience buffer
 # ---------------------------------------------------------------------
 class ExperienceBuffer:
     """Buffer for storing PPO training data."""

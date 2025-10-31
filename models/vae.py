@@ -192,12 +192,6 @@ class VAE(nn.Module):
         total_loss = avg_recon_obs + avg_recon_reward + beta * avg_kl
         
         logger = logging.getLogger(__name__)
-        # logger.info(f"=== VAE.compute_loss DEBUG ===")
-        # logger.info(f"  Input shapes: obs={obs_seq.shape}, actions={action_seq.shape}, rewards={reward_seq.shape}")
-        # logger.info(f"  Num ELBO terms requested: {num_elbo_terms}")
-        # logger.info(f"  Timesteps sampled: {timesteps}")
-        # logger.info(f"  Prior provided: {prior_mu is not None}")
-        # logger.info(f"  Returning info dict keys: {list(info_dict.keys()) if 'info_dict' in locals() else 'NOT YET CREATED'}")
 
         return total_loss, {
             "total": total_loss.item(),
@@ -344,32 +338,6 @@ class RewardDecoder(nn.Module):
             nn.Linear(hidden_dim, 1),
         )
         
-    # def forward(self, latent, current_obs, action, next_obs):
-    #     """
-    #     Predict reward for transition.
-        
-    #     Args:
-    #         latent: (batch, latent_dim) - task embedding
-    #         current_obs: (batch, N, F) - current observation  
-    #         action: (batch, N) - portfolio weights
-    #         next_obs: (batch, N, F) - next observation
-            
-    #     Returns:
-    #         reward_pred: (batch, 1) - predicted reward
-    #     """
-    #     batch_size = latent.shape[0]
-        
-    #     # Flatten observations
-    #     current_obs_flat = current_obs.reshape(batch_size, -1)  # (batch, N×F)
-    #     next_obs_flat = next_obs.reshape(batch_size, -1)        # (batch, N×F)
-        
-    #     # Concatenate all inputs
-    #     decoder_input = torch.cat([latent, current_obs_flat, action, next_obs_flat], dim=-1)
-        
-    #     # Predict reward
-    #     reward_pred = self.decoder(decoder_input)
-
-    #     return reward_pred
         
     def forward_seq(self, latent, obs_seq, action_seq, next_obs_seq):
         """
